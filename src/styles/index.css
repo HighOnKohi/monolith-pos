@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/*
+ * Global base styles for Monolith
+ * Tailwind CSS v4 — CSS-first configuration
+ */
+
+@theme {
+  --color-primary: #14274E;
+  --color-secondary: #394867;
+  --color-accent: #E9C46A;
+  --color-background: #F1F6F9;
+  --color-muted: #9BA4B4;
+  --color-danger: #C94A4A;
+}
+
+/* Box sizing */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Remove default margin and padding */
+* {
+  margin: 0;
+  padding: 0;
+}
+
+/* Smooth rendering */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Full height document */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Body defaults */
+body {
+  background-color: var(--color-background);
+  color: var(--color-primary);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+/* Accessible focus styles */
+:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
