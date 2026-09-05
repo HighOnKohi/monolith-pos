@@ -64,7 +64,7 @@ body,
 body {
   background-color: #dce4ef;
   color: var(--color-primary);
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 1rem;
   line-height: 1.5;
 }
@@ -103,7 +103,7 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--color-muted); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-secondary); }
 
-/* ── Smooth POS Animations ── */
+/* ── Smooth POS Animations & Transitions ── */
 
 @keyframes orderTabBlink {
   0%, 100% {
@@ -111,7 +111,7 @@ body {
     filter: drop-shadow(0 0 0 rgba(201, 74, 74, 0));
   }
   50% {
-    transform: scale(1.18);
+    transform: scale(1.16);
     filter: drop-shadow(0 0 10px rgba(201, 74, 74, 0.85));
   }
 }
@@ -153,6 +153,39 @@ body {
   }
 }
 
+@keyframes sheetSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes modalPopIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes backdropFadeIn {
+  0% {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    backdrop-filter: blur(6px);
+  }
+}
+
 @keyframes fadeInScale {
   from {
     opacity: 0;
@@ -162,6 +195,23 @@ body {
     opacity: 1;
     transform: scale(1);
   }
+}
+
+@keyframes itemBounce {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.15); }
+  70% { transform: scale(0.96); }
+  100% { transform: scale(1); }
+}
+
+@keyframes pulseSubtle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.02); }
+}
+
+@keyframes shimmerGlow {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
 .animate-order-blink {
@@ -180,7 +230,51 @@ body {
   animation: slideUpFade 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-.animate-fade-in {
-  animation: fadeInScale 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.animate-sheet-up {
+  animation: sheetSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+.animate-modal-pop {
+  animation: modalPopIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-backdrop-fade {
+  animation: backdropFadeIn 0.25s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fadeInScale 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-bounce-tap {
+  animation: itemBounce 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-subtle-pulse {
+  animation: pulseSubtle 2s ease-in-out infinite;
+}
+
+/* ── Interactive tactile utilities ── */
+.interactive-card {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+}
+
+.interactive-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 24px -4px rgba(20, 39, 78, 0.12);
+}
+
+.interactive-button {
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.interactive-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(20, 39, 78, 0.1);
+}
+
+.interactive-button:active {
+  transform: scale(0.96);
+}
+
 

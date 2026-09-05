@@ -78,15 +78,15 @@ export function AssistanceModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
+        className="fixed inset-0 bg-[#14274E]/45 backdrop-blur-md animate-backdrop-fade"
         onClick={onClose}
       />
 
       {/* Modal / Bottom Sheet */}
-      <div className="relative w-full max-w-lg bg-white rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl z-10 max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom duration-200">
+      <div className="relative w-full max-w-lg bg-white rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl z-10 max-h-[90vh] overflow-y-auto animate-sheet-up sm:animate-modal-pop">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-[#9BA4B4]/15">
           <div className="flex items-center gap-2.5">
@@ -104,7 +104,7 @@ export function AssistanceModal({
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-full hover:bg-[#F1F6F9] text-[#9BA4B4] transition-colors"
+            className="p-2 rounded-full hover:bg-[#F1F6F9] text-[#9BA4B4] active:scale-90 transition-all cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -154,10 +154,10 @@ export function AssistanceModal({
                   type="button"
                   onClick={() => setSelectedType(opt.type)}
                   className={[
-                    'p-3.5 rounded-2xl border text-left transition-all duration-150 flex items-start gap-3',
+                    'p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-start gap-3 interactive-card cursor-pointer',
                     isSelected
                       ? 'border-[#14274E] bg-[#14274E]/5 ring-2 ring-[#14274E]/20 shadow-xs'
-                      : 'border-[#9BA4B4]/30 hover:border-[#14274E]/40 bg-white',
+                      : 'border-[#9BA4B4]/30 hover:border-[#14274E]/40 bg-white shadow-2xs',
                   ].join(' ')}
                 >
                   <div
@@ -171,7 +171,7 @@ export function AssistanceModal({
                     <Icon className="w-5 h-5" />
                   </div>
                   <div>
-                    <span className="text-sm font-bold text-[#14274E] block">
+                    <span className="text-sm font-extrabold text-[#14274E] block">
                       {opt.title}
                     </span>
                     <span className="text-[11px] text-[#9BA4B4] leading-tight block mt-0.5 line-clamp-2">
@@ -201,12 +201,12 @@ export function AssistanceModal({
                 : 'e.g. Please send a server to our table'
             }
             maxLength={150}
-            className="w-full px-3.5 py-2.5 rounded-xl border border-[#9BA4B4]/40 text-sm text-[#14274E] placeholder-[#9BA4B4] focus:outline-hidden focus:border-[#14274E] focus:ring-1 focus:ring-[#14274E]"
+            className="w-full px-3.5 py-2.5 rounded-xl border border-[#9BA4B4]/40 text-sm text-[#14274E] placeholder-[#9BA4B4] focus:outline-hidden focus:border-[#14274E] focus:ring-2 focus:ring-[#14274E]/20 transition-all"
           />
         </div>
 
         {errorMessage && (
-          <div className="mt-3 p-3 rounded-xl bg-red-50 border border-red-200 flex items-center gap-2 text-xs font-bold text-red-700">
+          <div className="mt-3 p-3 rounded-xl bg-red-50 border border-red-200 flex items-center gap-2 text-xs font-bold text-red-700 animate-fade-in">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{errorMessage}</span>
           </div>
@@ -217,7 +217,7 @@ export function AssistanceModal({
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-3 px-4 rounded-xl border border-[#9BA4B4]/40 text-sm font-bold text-[#394867] hover:bg-[#F1F6F9] transition-colors"
+            className="flex-1 py-3 px-4 rounded-xl border border-[#9BA4B4]/40 text-sm font-bold text-[#394867] hover:bg-[#F1F6F9] active:scale-95 transition-all cursor-pointer"
           >
             Cancel
           </button>
@@ -225,7 +225,7 @@ export function AssistanceModal({
             type="button"
             disabled={isSubmitting}
             onClick={handleSubmit}
-            className="flex-1 py-3 px-4 rounded-xl bg-[#14274E] hover:bg-[#14274E]/95 text-white text-sm font-bold active:scale-98 transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-60"
+            className="flex-1 py-3 px-4 rounded-xl bg-[#14274E] hover:bg-[#14274E]/95 text-white text-sm font-extrabold interactive-button flex items-center justify-center gap-2 shadow-sm disabled:opacity-60 cursor-pointer"
           >
             {isSubmitting ? (
               <>

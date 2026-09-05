@@ -58,3 +58,28 @@ export async function fetchAllBillRequests(): Promise<BillRequest[]> {
   if (error) throw error
   return (data ?? []).map((row) => mapBillRequest(row as Record<string, unknown>))
 }
+
+export async function updateBillRequestStatus(
+  requestId: number,
+  status: BillStatus,
+  tableId?: number,
+): Promise<void> {
+  const { error } = await supabase
+    .from('Bill_Requests')
+    .update({ STATUS: status })
+    .eq('REQUEST_ID', requestId)
+
+  if (error) throw error
+
+  if (status === 'PAID' && tableId) {
+    try {
+      await supabase
+        .from('Restaurant_Tables')
+        .update({ BILL_OUT_REQUESTED: false })
+        .eq('TABLE_ID', tableId)
+    } catch (err) {
+      console.warn('Failed to clear table bill out status:', err)
+    }
+  }
+}
+

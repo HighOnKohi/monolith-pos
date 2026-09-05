@@ -26,12 +26,15 @@ export function MobileBottomNav({
         <button
           onClick={() => onTabChange('menu')}
           className={[
-            'relative flex flex-col items-center justify-center w-full h-full space-y-1 transition-transform active:scale-95',
+            'relative flex flex-col items-center justify-center w-full h-full space-y-1 transition-all duration-200 active:scale-90 cursor-pointer select-none',
             activeTab === 'menu' ? 'text-[#14274E]' : 'text-[#9BA4B4] hover:text-[#394867]',
           ].join(' ')}
         >
-          <Utensils className={['w-6 h-6 transition-transform duration-200', activeTab === 'menu' ? 'scale-110' : ''].join(' ')} />
-          <span className={['text-[11px] tracking-wide', activeTab === 'menu' ? 'font-extrabold text-[#14274E]' : 'font-semibold'].join(' ')}>
+          {activeTab === 'menu' && (
+            <span className="absolute top-0 w-8 h-1 bg-[#14274E] rounded-full animate-fade-in" />
+          )}
+          <Utensils className={['w-5 h-5 transition-transform duration-200', activeTab === 'menu' ? 'scale-110' : ''].join(' ')} />
+          <span className={['text-[11px] tracking-wide', activeTab === 'menu' ? 'font-black text-[#14274E]' : 'font-semibold'].join(' ')}>
             Menu
           </span>
         </button>
@@ -40,15 +43,18 @@ export function MobileBottomNav({
         <button
           onClick={() => onTabChange('orders')}
           className={[
-            'relative flex flex-col items-center justify-center w-full h-full space-y-1 transition-all active:scale-95',
+            'relative flex flex-col items-center justify-center w-full h-full space-y-1 transition-all duration-200 active:scale-90 cursor-pointer select-none',
             activeTab === 'orders' ? 'text-[#14274E]' : 'text-[#9BA4B4] hover:text-[#394867]',
             hasOrderStatusChange ? 'animate-order-blink text-[#C94A4A]' : '',
           ].join(' ')}
         >
+          {activeTab === 'orders' && !hasOrderStatusChange && (
+            <span className="absolute top-0 w-8 h-1 bg-[#14274E] rounded-full animate-fade-in" />
+          )}
           <div className="relative">
             <ReceiptText
               className={[
-                'w-6 h-6 transition-transform duration-200',
+                'w-5 h-5 transition-transform duration-200',
                 activeTab === 'orders' ? 'scale-110 text-[#14274E]' : '',
                 hasOrderStatusChange ? 'text-[#C94A4A]' : '',
               ].join(' ')}
@@ -72,7 +78,7 @@ export function MobileBottomNav({
               hasOrderStatusChange
                 ? 'font-black text-[#C94A4A]'
                 : activeTab === 'orders'
-                ? 'font-extrabold text-[#14274E]'
+                ? 'font-black text-[#14274E]'
                 : 'font-semibold',
             ].join(' ')}
           >

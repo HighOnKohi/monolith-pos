@@ -22,26 +22,49 @@ export function useMenu(): UseMenuResult {
   useEffect(() => {
     let cancelled = false
 
-    async function load() {
-      setLoadState('loading')
-      setError(null)
+    async function load(isInitial = false) {
+      if (isInitial) {
+        setLoadState('loading')
+        setError(null)
+      }
       try {
         const fetchedItems = await fetchMenuItems()
         const fetchedCategories = await fetchCategories(fetchedItems)
         if (cancelled) return
         setItems(fetchedItems)
         setCategories(fetchedCategories)
-        setLoadState(fetchedItems.length === 0 ? 'empty' : 'loaded')
+        if (isInitial) {
+          setLoadState(fetchedItems.length === 0 ? 'empty' : 'loaded')
+        }
       } catch (err) {
         if (cancelled) return
         console.error('[useMenu] Failed to load menu:', err)
-        setError('Unable to load the menu. Please try again.')
-        setLoadState('error')
+        if (isInitial) {
+          setError('Unable to load the menu. Please try again.')
+          setLoadState('error')
+        }
       }
     }
 
-    load()
-    return () => { cancelled = true }
+    load(true)
+
+    // Constantly sync menu items & stock every 5000ms in background
+    const interval = setInterval(() => {
+      load(false)
+    }, 5000)
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        load(false)
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [revision])
 
   return {

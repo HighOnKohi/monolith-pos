@@ -44,14 +44,18 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
             {compressed.orderCount} {compressed.orderCount === 1 ? 'batch' : 'batches'} • {compressed.totalItemCount} {compressed.totalItemCount === 1 ? 'item' : 'items'} total
           </p>
         </div>
-        {canBillOut && (
+        {canBillOut ? (
           <button
             onClick={onRequestBill}
-            className="bg-[#14274E] hover:bg-[#14274E]/90 text-white px-4 py-2 rounded-xl text-xs font-bold active:scale-95 transition-all shadow-sm flex items-center gap-1.5"
+            className="bg-[#14274E] hover:bg-[#14274E]/90 text-white px-4 py-2.5 rounded-xl text-xs font-black interactive-button shadow-sm flex items-center gap-1.5 animate-fade-in cursor-pointer"
           >
-            <Receipt className="w-3.5 h-3.5" />
+            <Receipt className="w-3.5 h-3.5 text-[#E9C46A]" />
             <span>Request Bill</span>
           </button>
+        ) : (
+          <span className="text-[10px] font-extrabold text-[#394867] bg-[#F1F6F9] px-3 py-1.5 rounded-xl border border-[#9BA4B4]/25 text-right shadow-2xs">
+            Bill out available once served
+          </span>
         )}
       </div>
 
@@ -59,9 +63,9 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
       <OrderStatusTracker status={compressed.overallStatus} />
 
       {/* Consolidated Items Summary (Compressed View) */}
-      <div className="bg-white rounded-2xl shadow-sm border border-[#9BA4B4]/20 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-[#9BA4B4]/20 overflow-hidden interactive-card">
         <div className="px-4 py-3 border-b border-[#9BA4B4]/15 bg-[#F1F6F9]/50 flex items-center justify-between">
-          <span className="text-xs font-bold uppercase tracking-wider text-[#14274E] flex items-center gap-1.5">
+          <span className="text-xs font-extrabold uppercase tracking-wider text-[#14274E] flex items-center gap-1.5">
             <Utensils className="w-3.5 h-3.5 text-[#E9C46A]" />
             Consolidated Dishes
           </span>
@@ -72,28 +76,30 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
 
         <div className="divide-y divide-[#9BA4B4]/15 px-4">
           {compressed.items.map((item) => (
-            <div key={item.itemId} className="py-3 flex items-center justify-between gap-3">
+            <div key={item.itemId} className="py-3 flex items-center justify-between gap-3 hover:bg-[#F1F6F9]/30 transition-colors rounded-xl px-1">
               <div className="flex items-center gap-2.5 min-w-0">
                 <span className="w-6 h-6 rounded-lg bg-[#14274E]/10 text-[#14274E] font-black text-xs flex items-center justify-center shrink-0">
                   {item.quantity}x
                 </span>
                 <div className="min-w-0">
-                  <p className="text-sm font-bold text-[#14274E] truncate">
+                  <p className="text-sm font-extrabold text-[#14274E] truncate">
                     {item.name}
                   </p>
                   <div className="flex items-center gap-2 mt-0.5">
                     {item.servedCount > 0 && (
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded">
+                      <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                         {item.servedCount} Served
                       </span>
                     )}
                     {item.preparingCount > 0 && (
-                      <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded">
+                      <span className="text-[10px] font-extrabold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60 flex items-center gap-1 animate-subtle-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
                         {item.preparingCount} Cooking
                       </span>
                     )}
                     {item.pendingCount > 0 && (
-                      <span className="text-[10px] font-bold text-[#394867] bg-[#F1F6F9] px-1.5 py-0.2 rounded">
+                      <span className="text-[10px] font-bold text-[#394867] bg-[#F1F6F9] px-2 py-0.5 rounded-md border border-[#9BA4B4]/20">
                         {item.pendingCount} Placed
                       </span>
                     )}
@@ -101,11 +107,11 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
                 </div>
               </div>
               <div className="text-right shrink-0">
-                <span className="text-sm font-extrabold text-[#14274E]">
+                <span className="text-sm font-black text-[#14274E]">
                   ₱{item.total.toFixed(2)}
                 </span>
                 {item.quantity > 1 && (
-                  <p className="text-[10px] text-[#9BA4B4]">
+                  <p className="text-[10px] text-[#9BA4B4] font-medium">
                     ₱{item.price.toFixed(2)} ea
                   </p>
                 )}
@@ -117,8 +123,8 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
         {/* Grand Total Footer */}
         <div className="px-4 py-3 bg-[#F1F6F9]/80 border-t border-[#9BA4B4]/20 flex items-center justify-between">
           <div>
-            <span className="text-xs text-[#9BA4B4] font-semibold block">Table Grand Total</span>
-            <span className="text-xs text-[#394867]">Includes applicable taxes</span>
+            <span className="text-xs text-[#9BA4B4] font-bold block">Table Grand Total</span>
+            <span className="text-[11px] text-[#394867]">Includes applicable taxes</span>
           </div>
           <span className="text-xl font-black text-[#14274E]">
             ₱{compressed.totalBill.toFixed(2)}
@@ -130,7 +136,7 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
       <div className="bg-white rounded-2xl border border-[#9BA4B4]/20 shadow-xs overflow-hidden">
         <button
           onClick={() => setShowBatches((prev) => !prev)}
-          className="w-full px-4 py-3 flex items-center justify-between text-left text-xs font-bold text-[#394867] hover:bg-[#F1F6F9] transition-colors"
+          className="w-full px-4 py-3 flex items-center justify-between text-left text-xs font-extrabold text-[#394867] hover:bg-[#F1F6F9] transition-colors cursor-pointer"
         >
           <span className="flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-[#9BA4B4]" />
@@ -144,7 +150,7 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
         </button>
 
         {showBatches && (
-          <div className="p-3 bg-[#F1F6F9]/40 divide-y divide-[#9BA4B4]/15 border-t border-[#9BA4B4]/15">
+          <div className="border-t border-[#9BA4B4]/15 divide-y divide-[#9BA4B4]/15 px-4 animate-fade-in">
             {compressed.rawOrders.map((order, idx) => (
               <div key={order.orderId} className="py-2.5 first:pt-0 last:pb-0">
                 <div className="flex justify-between items-center text-xs mb-1">

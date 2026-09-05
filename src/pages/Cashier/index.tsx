@@ -1,52 +1,120 @@
-import { useState, useEffect } from 'react'
-import { Receipt, Clock, CheckCircle2, BellRing, UserCheck, Droplets, UtensilsCrossed, MessageSquare } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import {
+  Receipt,
+  Clock,
+  CheckCircle2,
+  BellRing,
+  UserCheck,
+  Droplets,
+  UtensilsCrossed,
+  MessageSquare,
+  ChefHat,
+  Check,
+  CreditCard,
+  Printer,
+  RefreshCw,
+} from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
 import { supabase } from '@/lib/supabase'
-import { fetchAllBillRequests } from '@/services/billService'
+import { fetchAllBillRequests, updateBillRequestStatus } from '@/services/billService'
 import { resolveTableAssistance } from '@/services/assistanceService'
+import { fetchOrdersByTable } from '@/services/orderService'
 import type { BillRequest, PaymentMethod, BillStatus } from '@/types/bill'
 import { PAYMENT_METHOD_LABEL } from '@/types/bill'
 import type { AssistanceRequest } from '@/types/assistance'
+import type { Order } from '@/types/order'
+
+interface SelectedTableBill {
+  tableId: number
+  billRequestId?: number
+  orders: Order[]
+  subtotal: number
+  tax: number
+  total: number
+  paymentMethod?: PaymentMethod
+}
 
 export default function CashierPage() {
   const [billRequests, setBillRequests] = useState<BillRequest[]>([])
   const [assistanceRequests, setAssistanceRequests] = useState<AssistanceRequest[]>([])
+  const [verifiedOrders, setVerifiedOrders] = useState<Order[]>([])
+  const [selectedTableBill, setSelectedTableBill] = useState<SelectedTableBill | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // 1. Load initial bill requests and tables with active requests
+  // 1. Load initial bill requests, verified orders, and tables with active requests
+  const loadInitialData = useCallback(async (silent = false) => {
+    if (!silent) setIsLoading(true)
+    try {
+      // Bill Requests
+      const bData = await fetchAllBillRequests()
+      setBillRequests(bData)
+
+      // Verified Orders from Kitchen awaiting cashier acknowledgment
+      const { data: vData } = await supabase
+        .from('Restaurant_Orders')
+        .select('*')
+        .eq('ORDER_STATUS', 'VERIFIED')
+        .order('ORDER_ID', { ascending: false })
+
+      if (vData) {
+        setVerifiedOrders(
+          vData.map((row) => ({
+            orderId: Number(row['ORDER_ID']),
+            tableId: Number(row['TABLE_ID']),
+            orderStatus: row['ORDER_STATUS'],
+            orderType: row['ORDER_TYPE'],
+            totalBill: Number(row['TOTAL_BILL'] ?? 0),
+            createdAt: row['TIME'],
+          }))
+        )
+      }
+
+      // Check for tables that currently have HAS_REQUEST
+      const { data: tData } = await supabase
+        .from('Restaurant_Tables')
+        .select('TABLE_ID, TABLE_NUM, STATUS, BILL_OUT_REQUESTED')
+        .eq('STATUS', 'HAS_REQUEST')
+
+      if (tData && tData.length > 0) {
+        const active: AssistanceRequest[] = tData.map((t) => ({
+          id: `table_req_${t.TABLE_ID}`,
+          tableId: Number(t.TABLE_ID),
+          tableNum: Number(t.TABLE_NUM),
+          type: t.BILL_OUT_REQUESTED ? 'BILL_OUT' : 'WAITER',
+          title: t.BILL_OUT_REQUESTED ? 'Bill Out Assistance' : 'Table Assistance Needed',
+          status: 'PENDING',
+          requestedAt: new Date().toISOString(),
+        }))
+        setAssistanceRequests(active)
+      } else {
+        setAssistanceRequests([])
+      }
+    } catch (err) {
+      console.error(err)
+    } finally {
+      if (!silent) setIsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
-    fetchAllBillRequests()
-      .then(setBillRequests)
-      .catch(console.error)
-      .finally(() => setIsLoading(false))
+    loadInitialData(false)
 
-    // Check for tables that currently have HAS_REQUEST
-    supabase
-      .from('Restaurant_Tables')
-      .select('TABLE_ID, TABLE_NUM, STATUS, BILL_OUT_REQUESTED')
-      .eq('STATUS', 'HAS_REQUEST')
-      .then(
-        ({ data }) => {
-          if (data && data.length > 0) {
-            const active: AssistanceRequest[] = data.map((t) => ({
-              id: `table_req_${t.TABLE_ID}`,
-              tableId: Number(t.TABLE_ID),
-              tableNum: Number(t.TABLE_NUM),
-              type: t.BILL_OUT_REQUESTED ? 'BILL_OUT' : 'WAITER',
-              title: t.BILL_OUT_REQUESTED ? 'Bill Out Assistance' : 'Table Assistance Needed',
-              status: 'PENDING',
-              requestedAt: new Date().toISOString(),
-            }))
-            setAssistanceRequests(active)
-          }
-        },
-        (err: unknown) => console.error(err)
-      )
+    // Constantly fetch updates every 2500ms in background
+    const interval = setInterval(() => {
+      loadInitialData(true)
+    }, 2500)
 
-    // 2. Realtime subscription for Bill Requests
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadInitialData(true)
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    // Realtime subscription for Bill Requests
     const billChannel = supabase
       .channel('cashier-bill-requests')
       .on(
@@ -88,7 +156,19 @@ export default function CashierPage() {
       )
       .subscribe()
 
-    // 3. Realtime subscription for Table Assistance Broadcasts & Postgres changes
+    // Realtime subscription for Verified Kitchen Orders
+    const ordersChannel = supabase
+      .channel('cashier-orders-channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        () => {
+          loadInitialData(true)
+        }
+      )
+      .subscribe()
+
+    // Realtime subscription for Table Assistance Broadcasts
     const assistChannel = supabase
       .channel('table-assistance')
       .on('broadcast', { event: 'assistance_request' }, (payload) => {
@@ -104,29 +184,92 @@ export default function CashierPage() {
       })
       .subscribe()
 
-    // Listen to Restaurant_Tables changes
-    const tableChangeChannel = supabase
-      .channel('cashier-tables-changes')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'Restaurant_Tables' },
-        (payload) => {
-          const row = payload.new as Record<string, unknown>
-          const tableId = Number(row['TABLE_ID'])
-          const status = String(row['STATUS'])
-          if (status !== 'HAS_REQUEST') {
-            setAssistanceRequests((prev) => prev.filter((r) => r.tableId !== tableId))
-          }
-        }
-      )
-      .subscribe()
-
     return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       supabase.removeChannel(billChannel)
+      supabase.removeChannel(ordersChannel)
       supabase.removeChannel(assistChannel)
-      supabase.removeChannel(tableChangeChannel)
     }
-  }, [])
+  }, [loadInitialData])
+
+  // Handlers for Bill Requests
+  const handleAcknowledgeBillRequest = async (
+    requestId: number,
+    currentStatus: BillStatus,
+    tableId: number,
+    e?: React.MouseEvent
+  ) => {
+    e?.stopPropagation()
+    const nextStatus: BillStatus = currentStatus === 'REQUESTED' ? 'PROCESSING' : 'PAID'
+    try {
+      await updateBillRequestStatus(requestId, nextStatus, tableId)
+      if (nextStatus === 'PAID') {
+        setBillRequests((prev) => prev.filter((r) => r.requestId !== requestId))
+        if (selectedTableBill?.billRequestId === requestId) {
+          setSelectedTableBill(null)
+        }
+      } else {
+        setBillRequests((prev) =>
+          prev.map((r) => (r.requestId === requestId ? { ...r, status: nextStatus } : r))
+        )
+      }
+    } catch (err) {
+      console.error('Failed to update bill request:', err)
+    }
+  }
+
+  // Handler for Kitchen-Verified Orders
+  const handleAcknowledgeVerifiedOrder = async (orderId: number) => {
+    try {
+      await supabase
+        .from('Restaurant_Orders')
+        .update({ ORDER_STATUS: 'PREPARING' })
+        .eq('ORDER_ID', orderId)
+
+      setVerifiedOrders((prev) => prev.filter((o) => o.orderId !== orderId))
+    } catch (err) {
+      console.error('Failed to acknowledge verified order:', err)
+    }
+  }
+
+  // Select Table for Bill Breakdown
+  const handleSelectBillTable = async (req: BillRequest) => {
+    try {
+      const orders = await fetchOrdersByTable(req.tableId)
+      const total = orders.reduce((sum, o) => sum + (o.totalBill || 0), 0)
+      const subtotal = total / 1.05
+      const tax = total - subtotal
+
+      setSelectedTableBill({
+        tableId: req.tableId,
+        billRequestId: req.requestId,
+        orders,
+        subtotal,
+        tax,
+        total,
+        paymentMethod: req.paymentMethod,
+      })
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  // Complete Payment from Current Bill Card
+  const handleCompletePayment = async () => {
+    if (!selectedTableBill) return
+    if (selectedTableBill.billRequestId) {
+      await updateBillRequestStatus(
+        selectedTableBill.billRequestId,
+        'PAID',
+        selectedTableBill.tableId
+      )
+      setBillRequests((prev) =>
+        prev.filter((r) => r.requestId !== selectedTableBill.billRequestId)
+      )
+    }
+    setSelectedTableBill(null)
+  }
 
   const handleResolveAssistance = async (tableId: number) => {
     setAssistanceRequests((prev) => prev.filter((r) => r.tableId !== tableId))
@@ -144,13 +287,24 @@ export default function CashierPage() {
   }
 
   return (
-    <div className="cashier-page-container space-y-5">
+    <div className="space-y-5 animate-fade-in">
       <PageHeader
         title="Cashier Interface"
-        description="Check out tables, manage bills, print receipts & handle customer calls."
+        description="Check out tables, acknowledge verified orders & process live bill requests."
+        action={
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void loadInitialData()}
+            className="flex items-center gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Refresh</span>
+          </Button>
+        }
       />
 
-      {/* Real-time Assistance Requests Banner / Section */}
+      {/* Real-time Assistance Requests Section */}
       <Card className="border-l-4 border-l-red-500 bg-linear-to-r from-red-50/20 to-transparent">
         <CardHeader
           title="Customer Assistance Calls"
@@ -167,7 +321,7 @@ export default function CashierPage() {
               {assistanceRequests.map((req) => (
                 <div
                   key={req.id}
-                  className="p-3.5 rounded-2xl bg-white border-2 border-red-200 shadow-sm flex flex-col justify-between"
+                  className="p-3.5 rounded-2xl bg-white border-2 border-red-200 shadow-sm flex flex-col justify-between interactive-card"
                 >
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
@@ -194,7 +348,7 @@ export default function CashierPage() {
                     <Button
                       variant="primary"
                       size="sm"
-                      className="w-full text-xs py-1.5"
+                      className="w-full text-xs py-1.5 interactive-button"
                       onClick={() => handleResolveAssistance(req.tableId)}
                     >
                       Acknowledge & Clear
@@ -207,10 +361,66 @@ export default function CashierPage() {
         </div>
       </Card>
 
+      {/* Kitchen-Verified Orders Section (Incoming from Kitchen) */}
+      <Card className="border-l-4 border-l-blue-500">
+        <CardHeader
+          title="Kitchen-Verified Orders (Awaiting Cashier Confirmation)"
+          description="Orders checked and accepted by kitchen staff, ready for cashier acknowledgement"
+        />
+        <div className="p-4">
+          {verifiedOrders.length === 0 ? (
+            <div className="py-6 text-center text-[#9BA4B4] text-xs font-semibold flex items-center justify-center gap-2">
+              <ChefHat className="w-4 h-4 text-[#9BA4B4]" />
+              <span>No new verified orders from the kitchen awaiting cashier review.</span>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {verifiedOrders.map((order) => (
+                <div
+                  key={order.orderId}
+                  className="p-3.5 rounded-2xl bg-white border-2 border-blue-200 shadow-sm flex flex-col justify-between interactive-card"
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-extrabold text-[#14274E] text-sm">
+                        Table {order.tableId}
+                      </span>
+                      <span className="text-[10px] font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-md">
+                        Order #{order.orderId}
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-[#394867]">
+                      Total: ₱{order.totalBill.toFixed(2)}
+                    </p>
+                    <p className="text-[11px] text-[#9BA4B4] mt-0.5">
+                      Type: {order.orderType}
+                    </p>
+                  </div>
+                  <div className="mt-3 pt-2 border-t border-[#9BA4B4]/15">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className="w-full text-xs py-1.5 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1"
+                      onClick={() => handleAcknowledgeVerifiedOrder(order.orderId)}
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Acknowledge Order</span>
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+
       <div className="grid gap-5 lg:grid-cols-2">
         {/* Incoming Bill Requests */}
         <Card className="border-l-4 border-l-[#E9C46A]">
-          <CardHeader title="Incoming Bill Requests" description="Customers requesting to pay" />
+          <CardHeader
+            title="Incoming Bill Requests"
+            description="Customers requesting checkout (Click row to inspect bill)"
+          />
           
           <div className="p-1">
             {isLoading ? (
@@ -219,54 +429,148 @@ export default function CashierPage() {
               <EmptyState
                 icon={CheckCircle2}
                 title="No pending bill requests"
-                description="When customers request the bill from their device, they will appear here."
+                description="When customers request the bill from their device once served, they appear here."
               />
             ) : (
               <div className="divide-y divide-secondary/10">
-                {billRequests.map((req) => (
-                  <div key={req.requestId} className="p-4 hover:bg-secondary/5 transition-colors flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-primary flex items-center gap-2">
-                        Table {req.tableId}
-                        <span className="text-xs bg-[#F1F6F9] px-2 py-0.5 rounded-full text-[#9BA4B4]">
-                          {req.status === 'PROCESSING' ? 'Processing' : 'New Request'}
-                        </span>
-                      </h4>
-                      <div className="flex items-center gap-3 text-sm text-muted mt-1">
-                        <span className="flex items-center gap-1">
-                          <Receipt className="w-4 h-4" />
-                          {PAYMENT_METHOD_LABEL[req.paymentMethod]}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-4 h-4" />
-                          {new Date(req.requestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                {billRequests.map((req) => {
+                  const isSelected = selectedTableBill?.billRequestId === req.requestId
+                  return (
+                    <div
+                      key={req.requestId}
+                      onClick={() => handleSelectBillTable(req)}
+                      className={[
+                        'p-4 transition-colors flex items-center justify-between cursor-pointer',
+                        isSelected
+                          ? 'bg-[#14274E]/10 ring-1 ring-[#14274E]'
+                          : 'hover:bg-secondary/5',
+                      ].join(' ')}
+                    >
+                      <div>
+                        <h4 className="font-bold text-primary flex items-center gap-2">
+                          Table {req.tableId}
+                          <span
+                            className={[
+                              'text-xs px-2 py-0.5 rounded-full font-bold',
+                              req.status === 'PROCESSING'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-blue-100 text-blue-800',
+                            ].join(' ')}
+                          >
+                            {req.status === 'PROCESSING' ? 'Processing' : 'New Request'}
+                          </span>
+                        </h4>
+                        <div className="flex items-center gap-3 text-sm text-muted mt-1">
+                          <span className="flex items-center gap-1 font-semibold text-[#14274E]">
+                            <Receipt className="w-4 h-4 text-[#E9C46A]" />
+                            {PAYMENT_METHOD_LABEL[req.paymentMethod]}
+                          </span>
+                          <span className="flex items-center gap-1 text-xs">
+                            <Clock className="w-3.5 h-3.5" />
+                            {new Date(req.requestedAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          className="text-xs"
+                          onClick={(e) =>
+                            handleAcknowledgeBillRequest(
+                              req.requestId,
+                              req.status,
+                              req.tableId,
+                              e
+                            )
+                          }
+                        >
+                          {req.status === 'REQUESTED' ? 'Acknowledge' : 'Complete / Paid'}
+                        </Button>
                       </div>
                     </div>
-                    <Button variant="primary" size="sm">
-                      {req.status === 'REQUESTED' ? 'Acknowledge' : 'Process'}
-                    </Button>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
         </Card>
 
-        {/* Current bill + payment actions */}
+        {/* Current Bill Breakdown & Checkout Card */}
         <Card>
-          <CardHeader title="Current Bill" description="Select a table to view its bill" />
-          <div className="space-y-2 py-4">
-            {['Subtotal', 'Tax', 'Total'].map((label) => (
-              <div key={label} className="flex justify-between text-sm">
-                <span className="text-muted">{label}</span>
-                <span className="font-medium text-primary">—</span>
+          <CardHeader
+            title={
+              selectedTableBill
+                ? `Current Bill — Table ${selectedTableBill.tableId}`
+                : 'Current Bill'
+            }
+            description={
+              selectedTableBill
+                ? `Payment method: ${selectedTableBill.paymentMethod ? PAYMENT_METHOD_LABEL[selectedTableBill.paymentMethod] : 'Cash'}`
+                : 'Select an incoming bill request from the left to view breakdown'
+            }
+          />
+
+          <div className="p-5">
+            {selectedTableBill ? (
+              <div className="space-y-4">
+                {/* Orders count */}
+                <div className="p-3 bg-[#F1F6F9] rounded-xl text-xs font-bold text-[#394867] flex justify-between">
+                  <span>Active Batches: {selectedTableBill.orders.length}</span>
+                  <span>Status: Ready for Payment</span>
+                </div>
+
+                <div className="space-y-2 py-2 border-t border-b border-secondary/10">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted">Subtotal</span>
+                    <span className="font-semibold text-primary">
+                      ₱{selectedTableBill.subtotal.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted">Tax (5%)</span>
+                    <span className="font-semibold text-primary">
+                      ₱{selectedTableBill.tax.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-base font-black pt-1 border-t border-secondary/10">
+                    <span className="text-[#14274E]">Grand Total</span>
+                    <span className="text-[#14274E] text-lg">
+                      ₱{selectedTableBill.total.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="flex-1 flex items-center justify-center gap-1"
+                    onClick={() => window.print()}
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Receipt</span>
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-1"
+                    onClick={handleCompletePayment}
+                  >
+                    <CreditCard className="w-4 h-4" />
+                    <span>Complete Payment</span>
+                  </Button>
+                </div>
               </div>
-            ))}
-          </div>
-          <div className="flex gap-2 pt-2 border-t border-secondary/10">
-            <Button variant="secondary" size="sm" disabled className="flex-1">Print Receipt</Button>
-            <Button variant="primary" size="sm" disabled className="flex-1">Complete Payment</Button>
+            ) : (
+              <div className="py-16 text-center text-muted text-sm">
+                Select a table request above to load its bill summary and complete payment.
+              </div>
+            )}
           </div>
         </Card>
       </div>

@@ -30,7 +30,7 @@ export function MenuGrid({
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3 px-4 pb-36 pt-2">
+    <div className="grid grid-cols-2 gap-3 px-4 pb-48 pt-2">
       {items.map((item) => (
         <MenuItemCard
           key={item.id}

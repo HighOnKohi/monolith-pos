@@ -55,13 +55,73 @@ export function useOrders(tableId: number | null): UseOrdersResult {
   const [latestStatusUpdate, setLatestStatusUpdate] = useState<OrderStatusNotification | null>(null)
   const [hasUnreadStatusChange, setHasUnreadStatusChange] = useState(false)
 
-  // Initial fetch of existing orders for this table
+  // Shared function to update orders and detect status changes
+  const applyFetchedOrders = useCallback(
+    (newOrders: Order[]) => {
+      setOrders((prev) => {
+        // Compare previous orders with new orders to trigger live notifications
+        for (const newOrder of newOrders) {
+          const existing = prev.find((o) => o.orderId === newOrder.orderId)
+          if (existing && existing.orderStatus !== newOrder.orderStatus) {
+            const info = STATUS_MESSAGES[newOrder.orderStatus] || {
+              title: 'Order Status Updated',
+              message: `Order #${newOrder.orderId} is now ${newOrder.orderStatus}.`,
+            }
+
+            if (tableId) {
+              setLatestStatusUpdate({
+                orderId: newOrder.orderId,
+                tableId,
+                status: newOrder.orderStatus,
+                title: info.title,
+                message: info.message,
+                timestamp: new Date().toISOString(),
+              })
+              setHasUnreadStatusChange(true)
+            }
+          }
+        }
+        return newOrders
+      })
+    },
+    [tableId],
+  )
+
+  // Fetch function
+  const refreshOrders = useCallback(async () => {
+    if (!tableId) return
+    try {
+      const fresh = await fetchOrdersByTable(tableId)
+      applyFetchedOrders(fresh)
+    } catch (err) {
+      console.error('[useOrders] fetch error', err)
+    }
+  }, [tableId, applyFetchedOrders])
+
+  // Initial fetch + Constant background polling (every 2.5s) + Visibility sync
   useEffect(() => {
     if (!tableId) return
-    fetchOrdersByTable(tableId)
-      .then(setOrders)
-      .catch((err) => console.error('[useOrders] fetch error', err))
-  }, [tableId])
+
+    refreshOrders()
+
+    // Constantly fetch updates every 2500ms
+    const interval = setInterval(() => {
+      refreshOrders()
+    }, 2500)
+
+    // Immediate sync when tab becomes visible again
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshOrders()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [tableId, refreshOrders])
 
   // Realtime subscription to order status updates
   useEffect(() => {
@@ -77,40 +137,8 @@ export function useOrders(tableId: number | null): UseOrdersResult {
           table: 'Restaurant_Orders',
           filter: `TABLE_ID=eq.${tableId}`,
         },
-        (payload) => {
-          const row = payload.new as Record<string, unknown>
-          const updatedId = Number(row['ORDER_ID'])
-          const newStatus = row['ORDER_STATUS'] as OrderStatus
-
-          setOrders((prev) => {
-            const existing = prev.find((o) => o.orderId === updatedId)
-            // Trigger alert notification only if status has actually changed
-            if (existing && existing.orderStatus !== newStatus) {
-              const info = STATUS_MESSAGES[newStatus] || {
-                title: 'Order Status Updated',
-                message: `Order #${updatedId} is now ${newStatus}.`,
-              }
-
-              setLatestStatusUpdate({
-                orderId: updatedId,
-                tableId,
-                status: newStatus,
-                title: info.title,
-                message: info.message,
-                timestamp: new Date().toISOString(),
-              })
-              setHasUnreadStatusChange(true)
-            }
-
-            return prev.map((o) =>
-              o.orderId === updatedId ? { ...o, orderStatus: newStatus } : o,
-            )
-          })
-
-          // Sync full order item details
-          fetchOrdersByTable(tableId)
-            .then(setOrders)
-            .catch(console.error)
+        () => {
+          refreshOrders()
         },
       )
       .on(
@@ -121,16 +149,13 @@ export function useOrders(tableId: number | null): UseOrdersResult {
           table: 'Order_Items',
         },
         () => {
-          // Re-sync on line item status changes
-          fetchOrdersByTable(tableId)
-            .then(setOrders)
-            .catch(console.error)
+          refreshOrders()
         },
       )
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [tableId])
+  }, [tableId, refreshOrders])
 
   const placeOrder = useCallback(
     async (items: CartItem[], diningType: DiningType, total: number): Promise<boolean> => {

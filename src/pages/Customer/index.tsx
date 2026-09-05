@@ -20,15 +20,16 @@ import { useRealtimeMenu, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 import { useCart } from '@/hooks/useCart'
 import { useOrders } from '@/hooks/useOrders'
 import { useBillRequest } from '@/hooks/useBillRequest'
-import { getCachedTableAssistance } from '@/services/assistanceService'
+import { getCachedTableAssistance, clearCachedTableAssistance } from '@/services/assistanceService'
+import { supabase } from '@/lib/supabase'
 import type { MenuItem } from '@/types/menu'
 import type { PaymentMethod } from '@/types/bill'
 import type { AssistanceRequest } from '@/types/assistance'
 
 export default function CustomerPage() {
   const { tableId } = useParams<{ tableId: string }>()
-  const parsedTableId = tableId ? Number(tableId.replace(/\D/g, '')) : null
-  const tableLabel = parsedTableId ? `Table ${parsedTableId}` : 'Unknown Table'
+  const parsedTableId = tableId ? (Number(tableId.replace(/\D/g, '')) || 1) : 1
+  const tableLabel = `Table ${parsedTableId}`
 
   // Global States
   const [activeTab, setActiveTab] = useState<TabType>('menu')
@@ -42,10 +43,61 @@ export default function CustomerPage() {
   const [isAssistOpen, setIsAssistOpen] = useState(false)
   const [activeAssistance, setActiveAssistance] = useState<AssistanceRequest | null>(null)
 
-  // Initialize cached assistance state
+  // Initialize cached assistance state & Realtime assistance resolution subscription
   useEffect(() => {
-    if (parsedTableId) {
-      setActiveAssistance(getCachedTableAssistance(parsedTableId))
+    if (!parsedTableId) return
+
+    setActiveAssistance(getCachedTableAssistance(parsedTableId))
+
+    // Realtime channel for staff assistance resolution broadcasts and table updates
+    const channel = supabase
+      .channel(`table-assistance-customer-${parsedTableId}`)
+      .on('broadcast', { event: 'assistance_resolved' }, (payload) => {
+        const resolvedTableId = payload?.payload?.tableId
+        if (resolvedTableId === parsedTableId) {
+          clearCachedTableAssistance(parsedTableId)
+          setActiveAssistance(null)
+        }
+      })
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'Restaurant_Tables',
+          filter: `TABLE_ID=eq.${parsedTableId}`,
+        },
+        (payload) => {
+          const newStatus = payload.new?.STATUS
+          if (newStatus && newStatus !== 'HAS_REQUEST') {
+            clearCachedTableAssistance(parsedTableId)
+            setActiveAssistance(null)
+          }
+        },
+      )
+      .subscribe()
+
+    // Background poll every 3 seconds to guarantee cache consistency
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from('Restaurant_Tables')
+          .select('STATUS')
+          .eq('TABLE_ID', parsedTableId)
+          .maybeSingle()
+
+        if (data && data.STATUS !== 'HAS_REQUEST') {
+          clearCachedTableAssistance(parsedTableId)
+          setActiveAssistance(null)
+        }
+      } catch {
+        // Ignore network hiccups during background sync
+      }
+    }, 3000)
+
+    return () => {
+      clearInterval(interval)
+      supabase.removeChannel(channel)
     }
   }, [parsedTableId])
 
@@ -53,8 +105,6 @@ export default function CustomerPage() {
   const { items, categories, loadState } = useMenu()
   const {
     items: cartItems,
-    diningType,
-    setDiningType,
     addItem,
     updateNotes,
     removeItem,
@@ -114,6 +164,12 @@ export default function CustomerPage() {
     })
   }, [liveItems, searchQuery, selectedCategory, dietaryFilter])
 
+  // Active unserved orders count
+  const activeOrderCount = useMemo(
+    () => orders.filter((o) => o.orderStatus !== 'SERVED').length,
+    [orders],
+  )
+
   // Tab change with unread badge clearing
   const handleTabChange = (tab: TabType) => {
     setActiveTab(tab)
@@ -124,7 +180,7 @@ export default function CustomerPage() {
 
   // Handlers
   const handlePlaceOrder = async () => {
-    const success = await placeOrder(cartItems, diningType, total)
+    const success = await placeOrder(cartItems, 'dine-in', total)
     if (success) {
       clearCart()
       handleTabChange('orders')
@@ -172,6 +228,9 @@ export default function CustomerPage() {
               tableLabel={tableLabel}
               onOpenAssist={() => setIsAssistOpen(true)}
               hasActiveAssist={Boolean(activeAssistance)}
+              onOpenOrders={() => handleTabChange('orders')}
+              activeOrderCount={activeOrderCount}
+              hasOrderStatusChange={hasUnreadStatusChange}
             />
             <SearchBar
               value={searchQuery}
@@ -194,15 +253,6 @@ export default function CustomerPage() {
             onItemIncrease={(item) => increaseQty(item.id)}
             onItemDecrease={(item) => decreaseQty(item.id)}
           />
-
-          <CartSummary
-            itemCount={itemCount}
-            total={total}
-            diningType={diningType}
-            onDiningTypeChange={setDiningType}
-            onPlaceOrder={handlePlaceOrder}
-            isSubmitting={isSubmittingOrder}
-          />
         </div>
       )}
 
@@ -213,6 +263,9 @@ export default function CustomerPage() {
               tableLabel={tableLabel}
               onOpenAssist={() => setIsAssistOpen(true)}
               hasActiveAssist={Boolean(activeAssistance)}
+              onOpenOrders={() => handleTabChange('orders')}
+              activeOrderCount={activeOrderCount}
+              hasOrderStatusChange={hasUnreadStatusChange}
             />
           </div>
           <ActiveOrders
@@ -266,11 +319,21 @@ export default function CustomerPage() {
         />
       )}
 
+      {/* Floating Place Order Holder - appears above the nav bar whenever items are selected */}
+      <CartSummary
+        itemCount={itemCount}
+        total={total}
+        onPlaceOrder={handlePlaceOrder}
+        onClear={clearCart}
+        isSubmitting={isSubmittingOrder}
+      />
+
+      {/* Mobile Bottom Navigation - permanent at bottom of page overlapping content */}
       <MobileBottomNav
         activeTab={activeTab}
         onTabChange={handleTabChange}
         onOpenAssist={() => setIsAssistOpen(true)}
-        activeOrderCount={orders.filter(o => o.orderStatus !== 'SERVED').length}
+        activeOrderCount={activeOrderCount}
         hasActiveAssist={Boolean(activeAssistance)}
         hasOrderStatusChange={hasUnreadStatusChange}
       />

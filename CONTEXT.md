@@ -14,16 +14,44 @@
 | Project | Monolith |
 | Type | Web-based Point-of-Sale (POS) System |
 | Deployment | Vercel |
-| Backend | Supabase (planned, not connected) |
+| Backend | Supabase (PostgreSQL, Auth, Realtime, Storage) |
 
 ---
 
 ## Current Development Stage
 
-**Project skeleton / foundation.**
+**Full multi-interface operational POS system with real-time sync & background polling.**
 
-The architecture, tooling, and routing have been established.
-No POS features, authentication, or business logic have been implemented.
+Core restaurant operational workflows are fully connected to Supabase:
+- **Customer QR Ordering Interface (`/customer/:tableId`)**:
+  - Direct 1-tap "Add to Dish" adding without modal disruption
+  - Image tap opens item detail modal for cooking notes
+  - Floating Place Order holder card overlapping the menu above the bottom navbar (`fixed bottom-[80px] inset-x-0 z-30 pointer-events-none`)
+  - Takeout toggle removed; table QR orders default to dine-in
+  - Clear Cart action with live total calculation (inclusive of 5% tax)
+  - Top header Orders navigation button with order count badge & live status change indicator
+  - Best Sellers tab & dynamic category badge sorting
+  - Compressed Orders Hub combining multiple table tickets into a single unified summary
+  - Assist Request modal with 5 options (Water, Waiter, Utensils/Napkins, Bill Out, Other)
+  - Realtime order status changes with animated slide-down toasts and pulsing/blinking Orders tab
+  - Conditional Bill Out (button only enabled/visible once all active table orders are `SERVED`)
+  - Live staff assistance acknowledgement resolution sync via broadcast & 3s polling
+- **Kitchen Management Interface (`/kitchen`)**:
+  - Kitchen-first workflow: new orders (`REQUESTED`) appear in the kitchen for stock checks before Cashier review
+  - Order acceptance (`REQUESTED` -> `VERIFIED`) which alerts cashier and customer
+  - Order rejection/cancellation with reason prompt and optional global "Out of Stock" marking (`Menu_Items.ITEM_STATUS = 'OUT_OF_STOCK'`)
+  - Kitchen order progression: `VERIFIED` -> `PREPARING` -> `READY` -> `SERVED`
+  - Daily served items log / stats counter
+- **Cashier Interface (`/cashier`)**:
+  - Table Assistance Requests feed with functional "Acknowledge" action
+  - Bill Requests feed with bill breakdown and "Complete / Paid" action
+  - Kitchen-Verified Orders overview and acknowledgment
+- **Table Layout Management (`/tables`)**:
+  - Live floor plan layout with capacity indicators and assistance call badges
+- **Dual-Channel Synchronization**:
+  - Supabase Realtime Channels (WebSockets) for instant UI reactions
+  - Silent Background Polling (2.5s - 5s intervals) across all active views to ensure zero-flicker resilience against dropped or delayed socket events
+  - Visibility change re-sync when tabs regain focus
 
 ---
 
@@ -36,16 +64,13 @@ No POS features, authentication, or business logic have been implemented.
 - **React Router** 7 (`createBrowserRouter`, Data API)
 - **Tailwind CSS** 4 (CSS-first, `@tailwindcss/vite` plugin)
 - **Lucide React** — icons
+- **Google Fonts** — Plus Jakarta Sans
 
 ### Auth / Backend
-- **Supabase** (`@supabase/supabase-js`) — Auth connected (email/password)
+- **Supabase** (`@supabase/supabase-js`) — Auth connected (email/password), PostgreSQL, Realtime
 
 ### Hosting
 - **Vercel** — SPA rewrite configured in `vercel.json`
-
-### Backend *(planned)*
-- **Supabase** — PostgreSQL, Auth, Row Level Security, Realtime, Storage
-- Not connected. Client not created. No migrations or schemas defined.
 
 ---
 
@@ -77,6 +102,7 @@ No POS features, authentication, or business logic have been implemented.
 | `Restaurant_Orders` | Orders per table | `ORDER_ID`, `TABLE_ID`, `ORDER_STATUS`, `ORDER_TYPE`, `TOTAL_BILL` |
 | `Order_Items` | Line items within an order | `ORDER_ITEM_ID`, `ORDER_ID`, `ITEM_ID`, `ORDER_ITEM_STATUS` |
 | `Discounts` | Discounts on orders/items | `DISCOUNT_ID`, `ORDER_ID`, `PWD`, `SENIOR`, `CUSTOM_PERCENT`, `PESO_DISCOUNT` |
+| `Bill_Requests` | Customer bill checkout requests | `REQUEST_ID`, `TABLE_ID`, `ORDER_ID`, `PAYMENT_METHOD`, `STATUS`, `REQUESTED_AT` |
 
 ### Status Enums (enforced via CHECK constraints)
 
@@ -84,10 +110,12 @@ No POS features, authentication, or business logic have been implemented.
 |---|---|---|
 | `Restaurant_Tables` | `STATUS` | `AVAILABLE`, `RESERVED`, `OCCUPIED`, `HAS_REQUEST` |
 | `Menu_Items` | `ITEM_STATUS` | `AVAILABLE`, `OUT_OF_STOCK` |
-| `Restaurant_Orders` | `ORDER_STATUS` | `REQUESTED`, `VERIFIED`, `PREPARING`, `READY` |
+| `Restaurant_Orders` | `ORDER_STATUS` | `REQUESTED`, `VERIFIED`, `PREPARING`, `READY`, `SERVED`, `CANCELLED` |
 | `Restaurant_Orders` | `ORDER_TYPE` | `DINE-IN`, `TAKEOUT` |
 | `Restaurant_Orders` | `REQUESTED_FROM` | `Cashier`, `Customer` |
 | `Order_Items` | `ORDER_ITEM_STATUS` | `PENDING`, `PREPARING`, `SERVED` |
+| `Bill_Requests` | `PAYMENT_METHOD` | `CASH`, `CREDIT_CARD`, `INSTAPAY_QR` |
+| `Bill_Requests` | `STATUS` | `REQUESTED`, `PROCESSING`, `PAID`, `CANCELLED` |
 
 ---
 
@@ -96,48 +124,38 @@ No POS features, authentication, or business logic have been implemented.
 ```text
 monolith-pos/
 ├── public/
-│   └── favicon.svg
 ├── src/
-│   ├── assets/              # Static assets
+│   ├── assets/              # Static assets & logos
 │   ├── components/
-│   │   ├── ui/              # Primitive UI components (empty)
-│   │   ├── layout/          # Layout components (empty)
-│   │   └── common/          # Shared components (empty)
-│   ├── config/
-│   │   └── app.ts           # Non-secret constants (APP_NAME, APP_VERSION)
-│   ├── contexts/            # React Context providers (empty)
-│   ├── hooks/               # Custom hooks (empty)
-│   ├── layouts/
-│   │   └── RootLayout.tsx   # Minimal shell layout (renders <Outlet />)
-│   ├── lib/                 # Library initialization (empty; Supabase client goes here)
+│   │   ├── auth/            # ProtectedRoute
+│   │   ├── common/          # PageLoader
+│   │   ├── customer/        # Mobile customer ordering components
+│   │   ├── layout/          # AppHeader, AppSidebar, NavigationItem
+│   │   └── ui/              # Button, Card, Input, EmptyState, PageHeader
+│   ├── config/              # app.ts, navigation.ts
+│   ├── contexts/            # AuthContext.tsx
+│   ├── hooks/               # useAuth, useMenu, useCart, useOrders, useBillRequest, useRealtimeMenu
+│   ├── layouts/             # AppLayout.tsx, RootLayout.tsx
+│   ├── lib/                 # supabase.ts singleton
 │   ├── pages/
-│   │   ├── Home/            # Placeholder — /
-│   │   ├── Login/           # Placeholder — /login
-│   │   ├── Dashboard/       # Placeholder — /dashboard
-│   │   ├── POS/             # Placeholder — /pos
-│   │   └── NotFound/        # 404 for unmatched routes
-│   ├── routes/
-│   │   └── index.tsx        # Centralized createBrowserRouter config
-│   ├── services/            # Business/service layer (empty)
-│   ├── styles/
-│   │   └── index.css        # Global styles + Tailwind v4 import
-│   ├── types/
-│   │   └── index.ts         # Shared TypeScript types (empty barrel)
-│   ├── utils/               # Pure utilities (empty)
-│   ├── App.tsx              # Root component — renders <RouterProvider>
-│   └── main.tsx             # Entry point — mounts React into #root
-├── index.html               # Vite HTML entry
-├── .env.example             # Env var template (no real credentials)
-├── .gitignore
-├── CONTEXT.md               # This file
-├── README.md
-├── eslint.config.js         # ESLint flat config (React + TypeScript)
-├── package.json
-├── tsconfig.json            # Project references root
-├── tsconfig.app.json        # Strict TS config for src/
-├── tsconfig.node.json       # TS config for vite.config.ts
-├── vite.config.ts           # Vite config with Tailwind + React plugins
-└── vercel.json              # SPA rewrite rule
+│   │   ├── AccountManager/
+│   │   ├── Analytics/
+│   │   ├── Cashier/         # Acknowledge assistance, bills, orders
+│   │   ├── Customer/        # Mobile table QR ordering
+│   │   ├── Kitchen/         # Kitchen-first stock verification & queue
+│   │   ├── Login/           # Real Supabase login
+│   │   ├── MenuManager/
+│   │   ├── NotFound/
+│   │   ├── OrderLogs/
+│   │   └── TableManager/    # Live table map & service alerts
+│   ├── routes/              # Centralized createBrowserRouter config
+│   ├── services/            # orderService, menuService, billService, assistanceService
+│   ├── styles/              # index.css (Tailwind v4 + custom micro-animations)
+│   ├── types/               # TypeScript interfaces
+│   ├── App.tsx              # Root component
+│   └── main.tsx             # Entry point
+├── Context/                 # Database schema & migrations
+└── ...
 ```
 
 ---
@@ -145,52 +163,60 @@ monolith-pos/
 ## Implemented
 
 - [x] React 19 + Vite 6 + TypeScript (strict)
-- [x] React Router 7 with `createBrowserRouter`
-- [x] Route-level lazy loading (`React.lazy` + `Suspense` on all pages)
+- [x] React Router 7 with `createBrowserRouter` + lazy loading
 - [x] Tailwind CSS 4 (CSS-first via `@tailwindcss/vite`)
-- [x] Placeholder pages: `/`, `/login`, `/dashboard`, `/pos`, `404`
+- [x] Google Fonts (Plus Jakarta Sans) & micro-animations
+- [x] Supabase Auth (email/password login/logout)
+- [x] AppLayout with mobile drawer + desktop persistent navigation
+- [x] Customer QR Ordering Interface (`/customer/:tableId`):
+  - Direct 1-tap dish add to cart
+  - Image-only popup for detail customization
+  - Floating Place Order holder card overlapping the menu above the bottom navbar (`fixed bottom-[80px] inset-x-0 z-30`)
+  - Takeout toggle removed; clean dine-in default
+  - Clear cart action with live total calculation
+  - Top header Orders access button with unread change badge
+  - Best sellers category & badge sorting
+  - Compressed unified table orders hub
+  - 5-option Assistance Request modal
+  - Live animated order status notifications
+  - Conditional Bill Out button
+  - Instant assistance resolution sync
+- [x] Kitchen Management Interface (`/kitchen`):
+  - Kitchen-first stock checking for new orders
+  - Order accept (`VERIFIED`) or cancel with reasons
+  - Global item out-of-stock toggle
+  - Live cooking queue progression (`PREPARING` -> `READY` -> `SERVED`)
+- [x] Cashier Interface (`/cashier`):
+  - Live table assistance acknowledge button
+  - Bill settlement workflow with payment methods
+  - Kitchen-verified order monitoring
+- [x] Table Manager Interface (`/tables`):
+  - Real-time floor plan layout with service alert badges
+- [x] Dual-channel sync (Supabase Realtime + silent polling every 2.5s-5s + visibility sync)
 - [x] Vercel SPA routing (`vercel.json` rewrite rule)
-- [x] Environment variable template (`.env.example`)
-- [x] ESLint flat config
-- [x] Git configuration (`.gitignore`)
-- [x] `CONTEXT.md`
-- [x] `README.md`
+- [x] Environment variable configuration (`.env`)
+- [x] ESLint flat config passing with 0 errors
 
-## Not Implemented
+## Not Implemented / Backlog
 
-- [ ] POS / kitchen / cashier business logic
-- [ ] Database tables / RLS policies
-- [ ] Supabase Realtime subscriptions
-- [ ] Supabase Storage
-- [ ] Role-based access control
-- [ ] Menu / table / order CRUD
-- [ ] Analytics charts
-- [ ] External integrations (printers, barcode scanners, payment terminals)
+- [ ] Menu / category CRUD in MenuManager
+- [ ] Analytics charts & reports
+- [ ] Staff account creation / role management in AccountManager
+- [ ] Order historical audit logs in OrderLogs
+- [ ] External hardware integrations (receipt printers, barcode scanners)
 
 ---
 
 ## Architectural Decisions
 
-### React 19 + Vite 6
-Lightweight SPA architecture. Vite provides fast HMR in development and efficient production builds. Chosen for performance on low-end hardware.
+### Dual-Channel Realtime + Silent Background Polling
+To achieve 100% data reliability across tablets and smartphones in noisy restaurant environments, the application uses Supabase Postgres changes and broadcast channels for immediate reactions, paired with a non-intrusive 2.5s-5s silent background poll. Background polling never resets page load spinners, preventing any screen flickering.
 
-### React Router 7 — `createBrowserRouter`
-Uses the Data API router (not the legacy `<Routes>` component API). Enables clean route-level lazy loading and centralized configuration. All routes defined in `src/routes/index.tsx`.
+### Floating Customer Checkout Bar
+The Place Order card floats directly above the bottom navigation bar (`fixed bottom-[80px] inset-x-0 z-30`), overlapping the scrolling menu content. This ensures the bottom navigation bar (`MobileBottomNav`) remains permanently accessible at all times, without taking up permanent full-bleed screen space or hiding essential table navigation.
 
-### Tailwind CSS 4 — CSS-first configuration
-No `tailwind.config.js`. Configuration done in CSS via `@import "tailwindcss"` in `src/styles/index.css`. Plugin: `@tailwindcss/vite`.
-
-### Lazy-loaded pages
-All page components are wrapped in `React.lazy()` + `<Suspense>`. This ensures route-level code splitting is active from the beginning and will scale cleanly as more pages are added.
-
-### Supabase (planned)
-Supabase will provide the backend. Intentionally not connected during the foundation stage to keep dependencies minimal and avoid premature architecture coupling. When connected, the Supabase client will be initialized in `src/lib/`.
-
-### Vercel
-Deployment target. SPA rewrite in `vercel.json` ensures client-side routes do not result in 404 errors when accessed directly.
-
-### `@` path alias
-All `src/` imports use `@/` alias (e.g., `import RootLayout from '@/layouts/RootLayout'`). Configured in both `vite.config.ts` and `tsconfig.app.json`.
+### Kitchen-First Verification Workflow
+Orders submitted by customers enter `REQUESTED` status and are routed to the Kitchen display first. The kitchen verifies ingredients before accepting the order (`VERIFIED`), which then notifies the Cashier and Customer. If ingredients are missing, the kitchen can cancel the order with a reason and mark the item globally out of stock.
 
 ---
 
@@ -198,21 +224,10 @@ All `src/` imports use `@/` alias (e.g., `import RootLayout from '@/layouts/Root
 
 | Variable | Description | Status |
 |---|---|---|
-| `VITE_SUPABASE_URL` | Supabase project URL | Planned |
-| `VITE_SUPABASE_ANON_KEY` | Supabase anonymous key | Planned |
+| `VITE_SUPABASE_URL` | Supabase project URL | ✅ Connected |
+| `VITE_SUPABASE_ANON_KEY` | Supabase anonymous key | ✅ Connected |
 
 > Never expose `SUPABASE_SERVICE_ROLE_KEY` or any privileged key to browser code.
-
----
-
-## Project Constraints
-
-- Prioritize performance on low-end PCs.
-- Keep dependencies minimal — do not install libraries speculatively.
-- Modification of UI/UX, layouts, and functionalities is explicitly allowed and encouraged to match reference designs or improve the mobile experience.
-- Do not expose backend secrets to browser code.
-- Web-only application — no Tauri, Electron, or native packaging.
-- Deployment target is Vercel only.
 
 ---
 
@@ -224,47 +239,19 @@ All `src/` imports use `@/` alias (e.g., `import RootLayout from '@/layouts/Root
 
 ---
 
-## Known Issues
-
-None currently known.
-
----
-
 ## Development History
 
-### 2026-09-05 — Restaurant Management Skeleton + Auth
+### 2026-09-06 — Live Sync, Realtime Workflow & UI Optimization
+- Floating place order holder card overlapping the menu above the bottom navbar (`fixed bottom-[80px] inset-x-0 z-30 pointer-events-none`)
+- Permanent bottom navigation bar (`MobileBottomNav`) retained for uninterrupted access to Menu, Orders, and Assist
+- Removed takeout toggle from customer ordering; defaulted table QR orders to dine-in
+- Added Clear Cart action and persistent Orders access button in customer header
+- Connected realtime broadcast and background polling for instant staff assistance resolution
+- Implemented dual-channel live sync across Customer, Kitchen, Cashier, and Table Management (Supabase Realtime + silent polling every 2.5s-5s + visibility re-fetch)
+- Kitchen-first order verification with stock checking, order cancellation with reasons, and global out-of-stock propagation
+- Conditional Bill Out logic (available only once all table orders are marked as served)
+- Micro-animations, Google Fonts typography, and status change pulse badges
 
-- Installed `@supabase/supabase-js` and `lucide-react`
-- Connected Supabase Auth (email/password login/logout)
-- Built `AuthContext`, `useAuth`, `ProtectedRoute`
-- Built `AppLayout`, `AppHeader`, `AppSidebar` (mobile drawer + desktop persistent)
-- Built navigation from centralized `src/config/navigation.ts`
-- Created 8 page skeletons: Kitchen, Cashier, Customer, Tables, Menu, Analytics, Accounts, Order Logs
-- Built UI design system: `Button`, `Input`, `Card`, `PageHeader`, `EmptyState`
-- Rewrote routes: protected routes, public login, `/` → `/kitchen` redirect
-- Removed old placeholder pages (Home, Dashboard, POS)
-- Created `PROJECT_CONTEXT.md`
-
-### 2026-09-05 — Initial Foundation
-
-- Created project skeleton.
-- Configured React 19, Vite 6, TypeScript 5 (strict).
-- Configured React Router 7 with `createBrowserRouter` and lazy-loaded pages.
-- Configured Tailwind CSS 4 (CSS-first).
-- Set up placeholder pages: `/`, `/login`, `/dashboard`, `/pos`, `404`.
-- Configured Vercel SPA routing (`vercel.json`).
-- Added environment variable template (`.env.example`).
-- Configured ESLint (flat config).
-- Created `.gitignore`.
-- Created `README.md`.
-- Created `CONTEXT.md`.
-
----
-
-## Notes for Future Development
-
-1. Read this file before making any changes.
-2. Inspect the actual source files before making assumptions.
-3. Compare this file with the actual repository if in doubt — the repository is the source of truth.
-4. Only implement what has been explicitly requested.
-5. Update this file after any meaningful architectural change, feature addition, dependency change, or integration.
+### 2026-09-05 — Foundation & Authentication
+- Project initialized with React 19, Vite 6, Tailwind CSS 4, and TypeScript
+- Connected Supabase Auth and built navigation shell with 8 page skeletons

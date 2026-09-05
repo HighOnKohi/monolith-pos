@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { BillRequest, BillStatus, PaymentMethod } from '@/types/bill'
+import type { BillRequest, PaymentMethod } from '@/types/bill'
 import { createBillRequest, fetchActiveBillRequest } from '@/services/billService'
 
 interface UseBillRequestResult {
@@ -16,13 +16,38 @@ export function useBillRequest(tableId: number | null): UseBillRequestResult {
   const [isRequesting, setIsRequesting] = useState(false)
   const [requestError, setRequestError] = useState<string | null>(null)
 
-  // Fetch existing active bill request on mount
+  const refreshBillRequest = useCallback(async () => {
+    if (!tableId) return
+    try {
+      const active = await fetchActiveBillRequest(tableId)
+      setBillRequest(active)
+    } catch (err) {
+      console.error('[useBillRequest] fetch error', err)
+    }
+  }, [tableId])
+
+  // Initial fetch + Constant background polling (every 2.5s) + Visibility sync
   useEffect(() => {
     if (!tableId) return
-    fetchActiveBillRequest(tableId)
-      .then(setBillRequest)
-      .catch((err) => console.error('[useBillRequest] fetch error', err))
-  }, [tableId])
+
+    refreshBillRequest()
+
+    const interval = setInterval(() => {
+      refreshBillRequest()
+    }, 2500)
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshBillRequest()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [tableId, refreshBillRequest])
 
   // Realtime subscription to bill request status changes
   useEffect(() => {
@@ -33,24 +58,19 @@ export function useBillRequest(tableId: number | null): UseBillRequestResult {
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
           table: 'Bill_Requests',
           filter: `TABLE_ID=eq.${tableId}`,
         },
-        (payload) => {
-          const row = payload.new as Record<string, unknown>
-          setBillRequest((prev) =>
-            prev
-              ? { ...prev, status: row['STATUS'] as BillStatus }
-              : null,
-          )
+        () => {
+          refreshBillRequest()
         },
       )
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [tableId])
+  }, [tableId, refreshBillRequest])
 
   const requestBill = useCallback(
     async (paymentMethod: PaymentMethod, orderId?: number): Promise<boolean> => {

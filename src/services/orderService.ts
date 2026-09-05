@@ -180,7 +180,8 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
     overallStatus = 'VERIFIED'
   }
 
-  const canBillOut = orders.length > 0
+  // Bill out is only enabled once ALL table orders are completed/marked as SERVED
+  const canBillOut = orders.length > 0 && orders.every((o) => o.orderStatus === 'SERVED')
 
   return {
     tableId,

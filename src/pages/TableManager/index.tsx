@@ -20,8 +20,8 @@ export default function TableManagerPage() {
   const [selectedTable, setSelectedTable] = useState<TableData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  const loadTables = useCallback(async () => {
-    setIsLoading(true)
+  const loadTables = useCallback(async (silent = false) => {
+    if (!silent) setIsLoading(true)
     try {
       const { data, error } = await supabase
         .from('Restaurant_Tables')
@@ -35,12 +35,24 @@ export default function TableManagerPage() {
     } catch (err) {
       console.error('Failed to load tables:', err)
     } finally {
-      setIsLoading(false)
+      if (!silent) setIsLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    loadTables()
+    loadTables(false)
+
+    // Constantly fetch table updates every 3000ms in background
+    const interval = setInterval(() => {
+      loadTables(true)
+    }, 3000)
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadTables(true)
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     // Realtime subscription for table updates & assistance
     const channel = supabase
@@ -78,6 +90,8 @@ export default function TableManagerPage() {
       .subscribe()
 
     return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       supabase.removeChannel(channel)
     }
   }, [loadTables])
@@ -112,7 +126,7 @@ export default function TableManagerPage() {
         title="Table Manager"
         description="Live floor plan layout, customer service calls & table statuses."
         action={
-          <Button size="sm" variant="secondary" onClick={loadTables} className="flex items-center gap-1.5">
+          <Button size="sm" variant="secondary" onClick={() => void loadTables()} className="flex items-center gap-1.5">
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Refresh</span>
           </Button>

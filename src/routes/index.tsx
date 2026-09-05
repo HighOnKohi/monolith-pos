@@ -37,6 +37,10 @@ export const router = createBrowserRouter([
         element: wrap(LoginPage),
       },
       {
+        path: 'customer',
+        element: <Navigate to="/customer/table-1" replace />,
+      },
+      {
         path: 'customer/:tableId',
         element: wrap(CustomerPage),
       },

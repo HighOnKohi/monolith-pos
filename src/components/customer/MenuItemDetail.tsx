@@ -43,9 +43,9 @@ export function MenuItemDetail({
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-[#14274E]/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 z-40 bg-[#14274E]/45 backdrop-blur-md animate-backdrop-fade" onClick={onClose} />
 
-      <div className="fixed bottom-0 inset-x-0 z-50 bg-white rounded-t-3xl shadow-2xl max-h-[90vh] flex flex-col">
+      <div className="fixed bottom-0 inset-x-0 z-50 bg-white rounded-t-3xl shadow-[0_-12px_40px_rgba(20,39,78,0.2)] max-h-[90vh] flex flex-col animate-sheet-up">
         {/* Handle */}
         <div className="flex justify-center pt-3 pb-1 shrink-0">
           <div className="w-10 h-1 bg-[#9BA4B4]/40 rounded-full" />
@@ -55,7 +55,7 @@ export function MenuItemDetail({
         <div className="absolute top-4 right-4 z-10 shrink-0">
           <button
             onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md active:scale-95 transition-transform"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-md hover:bg-black/70 active:scale-90 transition-all cursor-pointer shadow-xs"
           >
             <X className="h-5 w-5" />
           </button>

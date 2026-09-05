@@ -19,14 +19,14 @@
 
 ## Current Development Stage
 
-**Frontend skeleton with Supabase Authentication.**
+**Full multi-interface operational POS system with real-time sync & background polling.**
 
-- Project architecture established
-- Supabase Auth connected (email/password)
-- Application layout (header + sidebar) implemented
-- Navigation driven by centralized config
-- 8 page route skeletons created
-- No POS business logic implemented yet
+- Project architecture & Supabase Auth established
+- Customer QR Ordering interface (`/customer/:tableId`) operational with floating order summary card overlapping menu above navbar, direct dish adding, best sellers sorting, compressed orders hub, live status notifications, and conditional bill out
+- Kitchen Management interface (`/kitchen`) operational with kitchen-first order verification, stock validation, global out-of-stock marking, cancellation reason logging, and order progression
+- Cashier interface (`/cashier`) operational with table assistance acknowledgement, verified order monitoring, and bill settlement
+- Table Manager interface (`/tables`) with live floor plan layout and assistance call badges
+- Dual-channel sync: Supabase Realtime (WebSockets) + silent background polling (2.5s - 5s) across all active views ensuring zero-flicker resilience
 
 ---
 
@@ -127,7 +127,7 @@ An order placed for a specific table.
 | `TABLE_ID` | bigint (FK) | → `Restaurant_Tables.TABLE_ID` |
 | `REQUESTED_FROM` | text | `Cashier` \| `Customer`, default `None` |
 | `ORDER_TYPE` | text | `DINE-IN` \| `TAKEOUT`, default `Dine-in` |
-| `ORDER_STATUS` | text | `REQUESTED` \| `VERIFIED` \| `PREPARING` \| `READY` |
+| `ORDER_STATUS` | text | `REQUESTED` \| `VERIFIED` \| `PREPARING` \| `READY` \| `SERVED` \| `CANCELLED` |
 | `SUBTOTAL_BILL` | double precision | Pre-discount subtotal, default `0` |
 | `TOTAL_BILL` | double precision | Post-discount total, default `0` |
 | `TIME` | timestamp | Order timestamp |
@@ -344,8 +344,6 @@ None currently known.
 
 ---
 
-## Implementation Status
-
 ### Implemented
 - [x] React 19 + Vite 6 + TypeScript (strict)
 - [x] Tailwind CSS 4 + design color palette
@@ -358,44 +356,57 @@ None currently known.
 - [x] AppLayout (header + sidebar)
 - [x] AppSidebar (mobile drawer + desktop persistent)
 - [x] Navigation from centralized config
-- [x] All 8 page route skeletons
 - [x] UI design system (Button, Input, Card, PageHeader, EmptyState)
-- [x] Vercel SPA routing
-- [x] ESLint + TypeScript strict
+- [x] Customer QR Ordering Interface (`/customer/:tableId`, redirect `/customer` -> `/customer/table-1`):
+  - Direct "Add to Dish" adding without opening modal
+  - Modal customization triggered on image click
+  - Floating Place Order holder card overlapping the menu above the bottom navbar (`fixed bottom-[80px] inset-x-0 z-30`), keeping the navbar permanently accessible and replacing takeout clutter with dine-in default
+  - Clear cart action with live total calculation (inclusive of 5% tax)
+  - Top header Orders navigation button with order count badge & live status change indicator
+  - Best Sellers tab & dynamic category badge sorting
+  - Compressed Orders Hub combining multiple table tickets into a single unified summary
+  - Assist Request modal with 5 options (Water, Waiter, Utensils/Napkins, Bill Out, Other)
+  - Realtime order status changes with animated slide-down toasts and pulsing/blinking Orders tab
+  - Conditional Bill Out (button only enabled/visible once all active table orders are `SERVED`)
+  - Live staff assistance acknowledgement resolution sync via broadcast & 3s polling
+- [x] Kitchen Management Interface (`/kitchen`):
+  - Kitchen-first workflow: new orders (`REQUESTED`) appear in the kitchen for stock checks before Cashier review
+  - Order acceptance (`REQUESTED` -> `VERIFIED`) which alerts cashier and customer
+  - Order rejection/cancellation with reason prompt and optional global "Out of Stock" marking (`Menu_Items.ITEM_STATUS = 'OUT_OF_STOCK'`)
+  - Kitchen order progression: `VERIFIED` -> `PREPARING` -> `READY` -> `SERVED`
+  - Daily served items log / stats counter
+- [x] Cashier Interface (`/cashier`):
+  - Table Assistance Requests feed with functional "Acknowledge" action
+  - Bill Requests feed with bill breakdown and "Complete / Paid" action
+  - Kitchen-Verified Orders overview and acknowledgment
+- [x] Table Layout Management (`/tables`) with live assistance indicators
+- [x] Supabase Realtime Channels + Silent Background Polling (2.5s - 5s) across all interfaces ensuring zero-flicker live sync and visibility re-sync
 
-### Not Implemented
-- [ ] Kitchen order management
-- [ ] Cashier / billing / payments
-- [ ] Customer QR ordering
-- [ ] Table layout management
-- [ ] Menu / category CRUD
+### Next Steps / Backlog
+- [ ] Menu / category CRUD in MenuManager
 - [ ] Analytics data + charts
-- [ ] Staff account management
-- [ ] Role-based access control
-- [ ] Order auditing / logs
-- [ ] Supabase database tables / RLS
-- [ ] Supabase Realtime subscriptions
-- [ ] Supabase Storage
+- [ ] Staff account management in AccountManager
+- [ ] Role-based access control (RBAC)
+- [ ] Order auditing / logs in OrderLogs
 
 ---
 
 ## Development History
 
-### 2026-09-05 — Initial Foundation
-- Created React/Vite/TypeScript project skeleton
-- Configured Tailwind CSS 4, React Router 7, ESLint, Vercel deployment
+### 2026-09-06 — Live Sync, Realtime Workflow & UI Optimization
+- Floating place order holder card overlapping the menu above the bottom navbar (`fixed bottom-[80px] inset-x-0 z-30 pointer-events-none`)
+- Permanent bottom navigation bar (`MobileBottomNav`) retained for uninterrupted access to Menu, Orders, and Assist
+- Removed takeout toggle from customer ordering; defaulted table QR orders to dine-in
+- Added Clear Cart action and persistent Orders access button in customer header
+- Connected realtime broadcast and background polling for instant staff assistance resolution
+- Implemented dual-channel live sync across Customer, Kitchen, Cashier, and Table Management (Supabase Realtime + silent polling every 2.5s-5s + visibility re-fetch)
+- Kitchen-first order verification with stock checking, order cancellation with reasons, and global out-of-stock propagation
+- Conditional Bill Out logic (available only once all table orders are marked as served)
+- Micro-animations, Google Fonts typography, and status change pulse badges
 
-### 2026-09-05 — Restaurant Management Skeleton + Auth
-- Installed `@supabase/supabase-js` and `lucide-react`
-- Connected Supabase Auth (email/password)
-- Built AuthContext, useAuth, ProtectedRoute
-- Built AppLayout, AppHeader, AppSidebar
-- Built NavigationItem driven by centralized `navigation.ts`
-- Built 8 page skeletons (Kitchen, Cashier, Customer, Tables, Menu, Analytics, Accounts, Order Logs)
-- Built UI design system components (Button, Input, Card, PageHeader, EmptyState)
-- Updated color palette and focus/scrollbar styles
-- Updated routes: protected routes, public login, `/` → `/kitchen` redirect
-- Removed old placeholder pages (Home, Dashboard, POS)
+### 2026-09-05 — Initial Foundation & Restaurant Skeletons
+- Created React 19 / Vite 6 / TypeScript project with Tailwind CSS 4
+- Connected Supabase Auth (email/password) and created 8 page route skeletons
 
 ---
 
