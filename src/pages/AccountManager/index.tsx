@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 
 export default function AccountManagerPage() {
   return (
-    <div className="account-manager-page-container space-y-5">
+    <div className="account-manager-page-container staff-page space-y-5">
       <PageHeader
         title="Account Manager"
         description="Staff credentials and access permissions."

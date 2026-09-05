@@ -277,4 +277,218 @@ body {
   transform: scale(0.96);
 }
 
+/* ── Staff POS interface ── */
+.staff-shell .website-container {
+  width: calc(100% - 32px);
+  max-width: 1680px;
+  height: calc(100vh - 32px);
+  background: #f5f7fb;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 24px;
+  box-shadow: 0 18px 48px rgba(20, 39, 78, 0.14);
+}
 
+.staff-shell aside[aria-label="Application navigation"] {
+  background: #ffffff;
+  border-color: #edf0f5;
+}
+
+.staff-shell aside nav {
+  padding: 0.75rem 0.9rem 1.25rem;
+}
+
+.staff-shell aside nav > div {
+  margin-bottom: 1.25rem;
+}
+
+.staff-shell aside nav p {
+  color: #9aa6ba;
+  font-size: 0.625rem;
+  letter-spacing: 0.12em;
+}
+
+.staff-shell aside a {
+  border-radius: 11px;
+}
+
+.staff-shell aside a > div {
+  height: 2rem;
+  width: 2rem;
+  border: 0;
+  background: transparent;
+}
+
+.staff-shell aside a[class*="bg-primary"] {
+  background: #142f62;
+  color: #ffffff;
+  box-shadow: 0 7px 15px rgba(20, 47, 98, 0.18);
+}
+
+.staff-shell aside a[class*="bg-primary"] > div {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.staff-shell aside a:not([class*="bg-primary"]):hover {
+  background: #f3f6fa;
+}
+
+.staff-shell .staff-workspace {
+  min-width: 0;
+  background: #f5f7fb;
+}
+
+.staff-shell main > .staff-page {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.staff-shell .staff-page:not(.menu-manager-page-container) {
+  padding: clamp(1.25rem, 2.5vw, 2.25rem);
+}
+
+.staff-shell .page-header {
+  align-items: center;
+  min-height: 58px;
+  padding: 0 0 1rem;
+  border-color: #e5eaf1;
+}
+
+.staff-shell .page-header h1 {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  color: #132d5c;
+}
+
+.staff-shell .page-header p {
+  margin-top: 0.2rem;
+  color: #8692a6;
+  font-size: 0.75rem;
+}
+
+.staff-shell .app-card {
+  border: 1px solid #e8edf3;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 5px 18px rgba(33, 55, 88, 0.035);
+}
+
+.staff-shell .app-card h3 {
+  color: #132d5c;
+  font-weight: 750;
+}
+
+.staff-shell .app-card h3 + p,
+.staff-shell .app-card .text-muted {
+  color: #8d99aa;
+}
+
+.staff-shell .app-button {
+  min-height: 34px;
+  border-radius: 9px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.staff-shell .app-button.bg-primary {
+  background: #142f62;
+}
+
+.staff-shell .app-button.bg-primary:hover {
+  background: #21447f;
+}
+
+.staff-shell .app-button.bg-background {
+  background: #ffffff;
+  border-color: #dfe6ef;
+  color: #344a70;
+}
+
+.staff-shell .empty-state {
+  min-height: 170px;
+}
+
+.staff-shell .empty-state > div {
+  background: #f0f4f8;
+}
+
+.staff-shell .empty-state p:first-child {
+  color: #344a70;
+  font-weight: 700;
+}
+
+.staff-shell .empty-state p:last-child {
+  color: #929eb0;
+}
+
+.staff-shell .kitchen-page-container > .grid > button {
+  min-height: 108px;
+  border-width: 1px;
+  border-radius: 15px;
+  box-shadow: 0 5px 18px rgba(33, 55, 88, 0.035);
+}
+
+.staff-shell .kitchen-page-container .app-card > .p-5,
+.staff-shell .cashier-page-container .app-card > .p-4,
+.staff-shell .table-manager-page-container .app-card > .p-5 {
+  padding: 1.1rem;
+}
+
+.staff-shell .kitchen-page-container .grid > div.rounded-2xl,
+.staff-shell .cashier-page-container .grid > div.rounded-2xl,
+.staff-shell .table-manager-page-container .grid > div.rounded-2xl {
+  border-radius: 15px;
+  box-shadow: none;
+}
+
+.staff-shell .table-manager-page-container .app-card {
+  min-height: 100%;
+}
+
+.staff-shell .table-manager-page-container .grid > div.rounded-2xl {
+  min-height: 126px;
+}
+
+.staff-shell .analytics-page-container > .grid:first-of-type .app-card {
+  min-height: 112px;
+  background: linear-gradient(135deg, #ffffff 0%, #fafbfd 100%);
+}
+
+.staff-shell .analytics-page-container > .grid:first-of-type .app-card p:first-child {
+  color: #8491a5;
+  font-weight: 650;
+}
+
+.staff-shell .analytics-page-container > .grid:first-of-type .app-card p:last-child {
+  color: #132d5c;
+  font-size: 1.75rem;
+  font-weight: 800;
+}
+
+.staff-shell .order-logs-page-container button[disabled] {
+  border-color: #e0e6ee;
+  background: #f8fafc;
+  color: #8d99aa;
+  border-radius: 8px;
+}
+
+@media (max-width: 1023px) {
+  .staff-shell .website-container {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .staff-shell .staff-page:not(.menu-manager-page-container) {
+    padding: 1rem;
+  }
+
+  .staff-shell .page-header {
+    align-items: flex-start;
+  }
+}

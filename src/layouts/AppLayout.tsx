@@ -8,12 +8,11 @@ export default function AppLayout() {
   const handleSidebarClose = useCallback(() => setSidebarOpen(false), [])
 
   return (
-    <div className = "website"> 
+    <div className="website staff-shell">
       <div className="website-container">
         <AppSidebar open={sidebarOpen} onClose={handleSidebarClose} />
 
-        <div className="flex flex-1 flex-col overflow-hidden">
-
+        <div className="staff-workspace flex flex-1 flex-col overflow-hidden">
           <main className="flex-1 overflow-hidden">
             <Outlet />
           </main>

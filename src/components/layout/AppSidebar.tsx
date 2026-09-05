@@ -20,10 +20,10 @@ export function AppSidebar(props: AppSidebarProps) {
       ].join(' ')}
       aria-label="Application navigation"
     >
-      {/* Sidebar header */}
-      <div className="flex h-14 shrink-0 items-center justify-between px-4 border-b border-secondary/15 overflow-hidden">
+      <div className="flex h-[72px] shrink-0 items-center px-5 overflow-hidden">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-sm font-black text-white shadow-sm">M</span>
         {!collapsed && (
-          <span className="text-sm font-bold tracking-tight text-primary">Monolith</span>
+          <span className="ml-2.5 text-base font-extrabold tracking-tight text-primary">Monolith</span>
         )}
       </div>
 

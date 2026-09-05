@@ -40,7 +40,7 @@ export function Button({
     <button
       disabled={disabled ?? loading}
       className={[
-        'inline-flex items-center justify-center gap-2 rounded-lg font-medium',
+        'app-button inline-flex items-center justify-center gap-2 rounded-lg font-medium',
         'transition-all duration-150 cursor-pointer',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
         variantStyles[variant],
