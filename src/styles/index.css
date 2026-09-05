@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+
+
 /*
  * Global base styles for Monolith
  * Tailwind CSS v4 — CSS-first configuration
@@ -24,7 +26,7 @@
 /* Remove default margin and padding */
 * {
   margin: 0;
-  padding: 0;
+  padding: 10;
 }
 
 /* Smooth rendering */
@@ -43,7 +45,7 @@ body,
 
 /* Body defaults */
 body {
-  background-color: var(--color-background);
+  background-color: #dce4ef;
   color: var(--color-primary);
   font-family: ui-sans-serif, system-ui, sans-serif;
   font-size: 1rem;
@@ -54,6 +56,27 @@ body {
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+.website {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Main app container — floats inside the body with margins on all sides */
+.website-container {
+  display: flex;
+  height: 97%;
+  width: 99%;
+  margin: auto;
+  overflow: hidden;
+  border-radius: 2rem;
+  background-color: var(--color-background);
+  box-shadow: 0 8px 40px rgba(20, 39, 78, 0.15);
 }
 
 /* Thin scrollbar */

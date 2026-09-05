@@ -4,18 +4,21 @@ import { type NavItem } from '@/config/navigation'
 interface NavigationItemProps {
   item: NavItem
   onNavigate?: () => void
+  collapsed?: boolean
 }
 
-export function NavigationItem({ item, onNavigate }: NavigationItemProps) {
+export function NavigationItem({ item, onNavigate, collapsed }: NavigationItemProps) {
   const Icon = item.icon
 
   return (
     <NavLink
       to={item.path}
       onClick={onNavigate}
+      title={collapsed ? item.title : undefined}
       className={({ isActive }) =>
         [
-          'flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors duration-150',
+          'flex items-center rounded-lg px-3 py-2.5 transition-colors duration-150',
+          collapsed ? 'justify-center gap-0' : 'gap-3',
           isActive
             ? 'bg-primary/8 text-primary'
             : 'text-secondary hover:bg-secondary/8 hover:text-primary',
@@ -34,12 +37,14 @@ export function NavigationItem({ item, onNavigate }: NavigationItemProps) {
           >
             <Icon className="h-4 w-4" strokeWidth={1.75} />
           </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold leading-tight truncate">{item.title}</p>
-            <p className="text-xs text-muted leading-tight truncate mt-0.5">
-              {item.description}
-            </p>
-          </div>
+          {!collapsed && (
+            <div className="min-w-0">
+              <p className="text-sm font-semibold leading-tight truncate">{item.title}</p>
+              <p className="text-xs text-muted leading-tight truncate mt-0.5">
+                {item.description}
+              </p>
+            </div>
+          )}
         </>
       )}
     </NavLink>
