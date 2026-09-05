@@ -21,6 +21,9 @@ export interface OrderItem {
   quantity: number
   notes?: string
   status: string
+  name?: string
+  price?: number
+  imageUrl?: string
 }
 
 export interface Order {
@@ -32,3 +35,26 @@ export interface Order {
   createdAt?: string
   items?: OrderItem[]
 }
+
+export interface CompressedOrderItem {
+  itemId: string
+  name: string
+  price: number
+  quantity: number
+  total: number
+  pendingCount: number
+  preparingCount: number
+  servedCount: number
+}
+
+export interface CompressedTableOrder {
+  tableId: number
+  totalBill: number
+  totalItemCount: number
+  orderCount: number
+  overallStatus: OrderStatus
+  items: CompressedOrderItem[]
+  rawOrders: Order[]
+  canBillOut: boolean
+}
+

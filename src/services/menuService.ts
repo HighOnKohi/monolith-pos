@@ -31,7 +31,71 @@ export async function fetchMenuItems(): Promise<MenuItem[]> {
     .order('ITEM_NAME')
 
   if (error) throw error
-  return (data ?? []).map((row) => mapItem(row as Record<string, unknown>))
+  const rawItems = (data ?? []).map((row) => mapItem(row as Record<string, unknown>))
+
+  // Determine best sellers per category using Order_Items sales volume
+  try {
+    const { data: orderItemsData } = await supabase
+      .from('Order_Items')
+      .select('ITEM_ID, QUANTITY')
+
+    // Sum sales volume by item ID
+    const salesMap = (orderItemsData ?? []).reduce<Record<string, number>>((acc, row) => {
+      const id = String(row['ITEM_ID'])
+      const qty = Number(row['QUANTITY'] ?? 1)
+      acc[id] = (acc[id] ?? 0) + (isNaN(qty) ? 1 : qty)
+      return acc
+    }, {})
+
+    // Group items by category
+    const categoryGroups = rawItems.reduce<Record<string, MenuItem[]>>((acc, item) => {
+      if (!acc[item.categoryId]) acc[item.categoryId] = []
+      acc[item.categoryId].push(item)
+      return acc
+    }, {})
+
+    // Pick top-selling item(s) for each category
+    const bestSellerIds = new Set<string>()
+    for (const [, catItems] of Object.entries(categoryGroups)) {
+      if (catItems.length === 0) continue
+
+      // Sort category items by sales descending; if tied, keep original order
+      const sorted = [...catItems].sort((a, b) => {
+        const salesA = salesMap[a.id] ?? 0
+        const salesB = salesMap[b.id] ?? 0
+        return salesB - salesA
+      })
+
+      // Top item in this category is the best seller
+      bestSellerIds.add(sorted[0].id)
+    }
+
+    return rawItems.map((item) => {
+      const isBest = bestSellerIds.has(item.id)
+      return {
+        ...item,
+        isBestSeller: isBest,
+        badge: isBest
+          ? { label: 'Best Seller', type: 'best-seller' }
+          : item.badge,
+      }
+    })
+  } catch (err) {
+    console.warn('[menuService] Could not calculate best sellers from Order_Items:', err)
+    // Fallback: mark first item of each category
+    const seenCategories = new Set<string>()
+    return rawItems.map((item) => {
+      const isBest = !seenCategories.has(item.categoryId)
+      if (isBest) seenCategories.add(item.categoryId)
+      return {
+        ...item,
+        isBestSeller: isBest,
+        badge: isBest
+          ? { label: 'Best Seller', type: 'best-seller' }
+          : item.badge,
+      }
+    })
+  }
 }
 
 export async function fetchCategories(items: MenuItem[]): Promise<Category[]> {
@@ -52,9 +116,17 @@ export async function fetchCategories(items: MenuItem[]): Promise<Category[]> {
     mapCategory(row as Record<string, unknown>, countMap[String(row['CATEGORY_ID'])] ?? 0),
   )
 
-  // Prepend "All Menu" virtual category
+  const bestSellerCount = items.filter((i) => i.isBestSeller).length
+
+  // Prepend "All Menu" and "⭐ Best Sellers" virtual categories
   const allCategory: Category = { id: 'all', name: 'All Menu', count: items.length }
-  return [allCategory, ...categoryRows]
+  const bestSellersCategory: Category = {
+    id: 'best_sellers',
+    name: '⭐ Best Sellers',
+    count: bestSellerCount,
+  }
+
+  return [allCategory, bestSellersCategory, ...categoryRows]
 }
 
 // ── Admin / Menu Manager mutations ────────────────────────────────────────────

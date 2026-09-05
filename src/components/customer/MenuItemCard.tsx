@@ -14,6 +14,7 @@ const badgeStyles = {
   popular: 'bg-[#C94A4A] text-white',
   discount: 'bg-[#E9C46A] text-[#14274E]',
   'chef-pick': 'bg-[#14274E] text-[#E9C46A]',
+  'best-seller': 'bg-amber-500 text-white shadow-sm font-black',
 }
 
 const FALLBACK_IMG = DEFAULT_FOOD_PLACEHOLDER
@@ -24,22 +25,23 @@ export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecre
 
   return (
     <article
-      onClick={isSoldOut ? undefined : onTap}
       className={[
         'bg-white rounded-2xl p-3 flex flex-col justify-between relative overflow-hidden shadow-sm',
         'transition-all duration-150',
         inCart ? 'border-2 border-[#14274E]' : 'border border-[#9BA4B4]/30',
-        isSoldOut ? 'opacity-70' : 'cursor-pointer active:scale-[0.98]',
+        isSoldOut ? 'opacity-70' : '',
       ].join(' ')}
     >
       {/* Badge */}
-      {item.badge && !isSoldOut && (
+      {(item.badge || item.isBestSeller) && !isSoldOut && (
         <div className="absolute top-2.5 left-2.5 z-10">
           <span className={[
-            'text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider',
-            badgeStyles[item.badge.type],
+            'text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1',
+            item.isBestSeller
+              ? 'bg-amber-500 text-white shadow-sm'
+              : badgeStyles[item.badge?.type || 'popular'],
           ].join(' ')}>
-            {item.badge.label}
+            {item.isBestSeller ? '★ Best Seller' : item.badge?.label}
           </span>
         </div>
       )}
@@ -53,12 +55,30 @@ export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecre
         </div>
       )}
 
-      {/* Product image */}
-      <div className="w-full h-32 rounded-xl overflow-hidden bg-[#F1F6F9] mb-3 relative">
+      {/* Product image - Clicking image triggers detail modal */}
+      <div
+        onClick={isSoldOut ? undefined : onTap}
+        role={isSoldOut ? undefined : 'button'}
+        aria-label={isSoldOut ? undefined : `View details for ${item.name}`}
+        tabIndex={isSoldOut ? undefined : 0}
+        onKeyDown={(e) => {
+          if (!isSoldOut && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault()
+            onTap()
+          }
+        }}
+        className={[
+          'w-full h-32 rounded-xl overflow-hidden bg-[#F1F6F9] mb-3 relative group',
+          isSoldOut ? '' : 'cursor-pointer hover:opacity-95 active:scale-[0.98] transition-all',
+        ].join(' ')}
+      >
         <img
           src={item.imageUrl ?? FALLBACK_IMG}
           alt={item.name}
-          className={['w-full h-full object-cover', isSoldOut ? 'grayscale opacity-60' : ''].join(' ')}
+          className={[
+            'w-full h-full object-cover transition-transform duration-200 group-hover:scale-105',
+            isSoldOut ? 'grayscale opacity-60' : '',
+          ].join(' ')}
           loading="lazy"
           onError={(e) => {
             const target = e.currentTarget
@@ -67,6 +87,12 @@ export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecre
             }
           }}
         />
+        {/* Subtle tap-for-details indicator on image */}
+        {!isSoldOut && (
+          <div className="absolute bottom-1.5 right-1.5 bg-black/50 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md backdrop-blur-xs opacity-80 group-hover:opacity-100 transition-opacity">
+            Tap for info
+          </div>
+        )}
         {isSoldOut && (
           <div className="absolute inset-0 flex items-center justify-center bg-[#14274E]/20">
             <span className="text-white text-sm font-extrabold tracking-widest uppercase drop-shadow">

@@ -11,6 +11,7 @@ import { MobileBottomNav, type TabType } from '@/components/customer/MobileBotto
 import { ActiveOrders } from '@/components/customer/ActiveOrders'
 import { BillOutModal } from '@/components/customer/BillOutModal'
 import { BillRequestBanner } from '@/components/customer/BillRequestBanner'
+import { AssistanceModal } from '@/components/customer/AssistanceModal'
 import PageLoader from '@/components/common/PageLoader'
 
 import { useMenu } from '@/hooks/useMenu'
@@ -18,8 +19,10 @@ import { useRealtimeMenu, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 import { useCart } from '@/hooks/useCart'
 import { useOrders } from '@/hooks/useOrders'
 import { useBillRequest } from '@/hooks/useBillRequest'
+import { getCachedTableAssistance } from '@/services/assistanceService'
 import type { MenuItem } from '@/types/menu'
 import type { PaymentMethod } from '@/types/bill'
+import type { AssistanceRequest } from '@/types/assistance'
 
 export default function CustomerPage() {
   const { tableId } = useParams<{ tableId: string }>()
@@ -32,9 +35,18 @@ export default function CustomerPage() {
   const [dietaryFilter, setDietaryFilter] = useState<DietaryFilter>('all')
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
   
-  // Local active item for Detail Modal
+  // Modals
   const [activeItem, setActiveItem] = useState<MenuItem | null>(null)
   const [isBillOutOpen, setIsBillOutOpen] = useState(false)
+  const [isAssistOpen, setIsAssistOpen] = useState(false)
+  const [activeAssistance, setActiveAssistance] = useState<AssistanceRequest | null>(null)
+
+  // Initialize cached assistance state
+  useEffect(() => {
+    if (parsedTableId) {
+      setActiveAssistance(getCachedTableAssistance(parsedTableId))
+    }
+  }, [parsedTableId])
 
   // Hooks
   const { items, categories, loadState } = useMenu()
@@ -45,6 +57,8 @@ export default function CustomerPage() {
     addItem,
     updateNotes,
     removeItem,
+    increaseQty,
+    decreaseQty,
     getQuantity,
     total,
     itemCount,
@@ -60,9 +74,9 @@ export default function CustomerPage() {
     setLiveItems((prev) => applyMenuUpdate(prev, itemId, isSoldOut))
   })
 
-  // Derived filtered items
+  // Derived filtered items with Best Sellers tab support and top sorting
   const filteredItems = useMemo(() => {
-    return liveItems.filter((item) => {
+    const list = liveItems.filter((item) => {
       // 1. Search
       if (searchQuery) {
         const q = searchQuery.toLowerCase()
@@ -71,7 +85,9 @@ export default function CustomerPage() {
         }
       }
       // 2. Category
-      if (selectedCategory !== 'all' && item.categoryId !== selectedCategory) {
+      if (selectedCategory === 'best_sellers') {
+        if (!item.isBestSeller) return false
+      } else if (selectedCategory !== 'all' && item.categoryId !== selectedCategory) {
         return false
       }
       // 3. Dietary Filter
@@ -79,6 +95,13 @@ export default function CustomerPage() {
         return false
       }
       return true
+    })
+
+    // Each best selling item should also be marked in their respective category and put on top
+    return list.sort((a, b) => {
+      if (a.isBestSeller && !b.isBestSeller) return -1
+      if (!a.isBestSeller && b.isBestSeller) return 1
+      return 0
     })
   }, [liveItems, searchQuery, selectedCategory, dietaryFilter])
 
@@ -121,7 +144,11 @@ export default function CustomerPage() {
       {activeTab === 'menu' && (
         <div className="flex flex-col h-full">
           <div className="sticky top-0 z-20 bg-[#F1F6F9]/90 backdrop-blur-md pb-2">
-            <CustomerHeader tableLabel={tableLabel} />
+            <CustomerHeader
+              tableLabel={tableLabel}
+              onOpenAssist={() => setIsAssistOpen(true)}
+              hasActiveAssist={Boolean(activeAssistance)}
+            />
             <SearchBar
               value={searchQuery}
               onChange={setSearchQuery}
@@ -138,10 +165,10 @@ export default function CustomerPage() {
           <MenuGrid
             items={filteredItems}
             getQuantity={getQuantity}
-            onItemTap={setActiveItem}
-            onItemAdd={(item) => setActiveItem(item)} // Open detail modal on add too
-            onItemIncrease={() => {}} // Disabled from card directly if we force detail modal, but let's just open modal
-            onItemDecrease={() => {}} 
+            onItemTap={setActiveItem} // Only image tap opens detail modal!
+            onItemAdd={(item) => addItem(item)} // '+ Add to Dish' directly adds to cart!
+            onItemIncrease={(item) => increaseQty(item.id)}
+            onItemDecrease={(item) => decreaseQty(item.id)}
           />
 
           <CartSummary
@@ -158,7 +185,11 @@ export default function CustomerPage() {
       {activeTab === 'orders' && (
         <div className="flex flex-col h-full">
           <div className="sticky top-0 z-20 bg-[#F1F6F9]/90 backdrop-blur-md pb-2">
-            <CustomerHeader tableLabel={tableLabel} />
+            <CustomerHeader
+              tableLabel={tableLabel}
+              onOpenAssist={() => setIsAssistOpen(true)}
+              hasActiveAssist={Boolean(activeAssistance)}
+            />
           </div>
           <ActiveOrders
             orders={orders}
@@ -187,8 +218,6 @@ export default function CustomerPage() {
             } else {
               if (getQuantity(activeItem.id) === 0) addItem(activeItem, notes)
               else updateNotes(activeItem.id, notes)
-              // Handle qty increase logic properly inside cart hook, but for now we just support Add
-              // A complete implementation would add setQuantity to useCart, but this is fine for the MVP.
             }
           }}
         />
@@ -202,10 +231,23 @@ export default function CustomerPage() {
         />
       )}
 
+      {isAssistOpen && (
+        <AssistanceModal
+          tableId={parsedTableId}
+          activeRequest={activeAssistance}
+          onClose={() => setIsAssistOpen(false)}
+          onRequestSent={(req) => setActiveAssistance(req)}
+          onRequestCleared={() => setActiveAssistance(null)}
+          onOpenBillOutModal={() => setIsBillOutOpen(true)}
+        />
+      )}
+
       <MobileBottomNav
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        onOpenAssist={() => setIsAssistOpen(true)}
         activeOrderCount={orders.filter(o => o.orderStatus !== 'SERVED').length}
+        hasActiveAssist={Boolean(activeAssistance)}
       />
     </div>
   )
