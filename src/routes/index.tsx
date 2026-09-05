@@ -7,12 +7,12 @@ import PageLoader from '@/components/common/PageLoader'
 
 // ─── Public pages ─────────────────────────────────────────────────────────────
 const LoginPage = lazy(() => import('@/pages/Login'))
+const CustomerPage = lazy(() => import('@/pages/Customer'))
 const NotFound = lazy(() => import('@/pages/NotFound'))
 
 // ─── Protected pages ──────────────────────────────────────────────────────────
 const KitchenPage = lazy(() => import('@/pages/Kitchen'))
 const CashierPage = lazy(() => import('@/pages/Cashier'))
-const CustomerPage = lazy(() => import('@/pages/Customer'))
 const TableManagerPage = lazy(() => import('@/pages/TableManager'))
 const MenuManagerPage = lazy(() => import('@/pages/MenuManager'))
 const AnalyticsPage = lazy(() => import('@/pages/Analytics'))
@@ -36,6 +36,10 @@ export const router = createBrowserRouter([
         path: 'login',
         element: wrap(LoginPage),
       },
+      {
+        path: 'customer/:tableId',
+        element: wrap(CustomerPage),
+      },
     ],
   },
 
@@ -49,7 +53,6 @@ export const router = createBrowserRouter([
           { path: '/', element: <Navigate to="/kitchen" replace /> },
           { path: 'kitchen', element: wrap(KitchenPage) },
           { path: 'cashier', element: wrap(CashierPage) },
-          { path: 'customer', element: wrap(CustomerPage) },
           { path: 'tables', element: wrap(TableManagerPage) },
           { path: 'menu', element: wrap(MenuManagerPage) },
           { path: 'analytics', element: wrap(AnalyticsPage) },

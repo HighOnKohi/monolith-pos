@@ -16,6 +16,14 @@
   --color-danger: #C94A4A;
 }
 
+/* ── Mobile POS utilities ── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Remove tap highlight on mobile touchscreens */
+* { -webkit-tap-highlight-color: transparent; }
+
+
 /* Box sizing */
 *,
 *::before,
