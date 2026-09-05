@@ -23,7 +23,7 @@ export function AppHeader({ onMenuToggle }: AppHeaderProps) {
   const pageTitle = usePageTitle()
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-secondary/15 bg-white px-4">
+    <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-secondary/15 bg-white px-4 rounded-tr-2xl">
       {/* Left: burger + page title */}
       <div className="flex items-center gap-3">
         <button
