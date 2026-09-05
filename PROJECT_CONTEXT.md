@@ -111,7 +111,7 @@ Individual items available for ordering.
 | `ITEM_NAME` | text | Item name |
 | `ITEM_DESCRIPTION` | text | Description |
 | `ITEM_PRICE` | double precision | Price |
-| `ITEM_IMAGE_URL` | text | Image URL (Supabase Storage) |
+| `ITEM_IMAGE_URL` | text | In-database image (stored directly as Base64 Data URI) |
 | `ITEM_STATUS` | text | `AVAILABLE` \| `OUT_OF_STOCK`, default `AVAILABLE` |
 
 ---

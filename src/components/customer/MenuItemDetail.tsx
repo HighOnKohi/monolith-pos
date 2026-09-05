@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
-import type { MenuItem } from '@/types/menu'
+import { DEFAULT_FOOD_PLACEHOLDER, type MenuItem } from '@/types/menu'
 import { QuantityControl } from './QuantityControl'
 
 interface MenuItemDetailProps {
@@ -11,7 +11,7 @@ interface MenuItemDetailProps {
   onUpdateCart: (quantity: number, notes: string) => void
 }
 
-const FALLBACK_IMG = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop'
+const FALLBACK_IMG = DEFAULT_FOOD_PLACEHOLDER
 
 export function MenuItemDetail({
   item,
@@ -68,6 +68,12 @@ export function MenuItemDetail({
               src={item.imageUrl ?? FALLBACK_IMG}
               alt={item.name}
               className="w-full h-full object-cover"
+              onError={(e) => {
+                const target = e.currentTarget
+                if (target.src !== FALLBACK_IMG) {
+                  target.src = FALLBACK_IMG
+                }
+              }}
             />
           </div>
 

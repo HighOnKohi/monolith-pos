@@ -25,6 +25,7 @@ create table public."Menu_Items" (
   "ITEM_NAME" text null,
   "ITEM_DESCRIPTION" text null,
   "ITEM_PRICE" double precision null,
+  "ITEM_IMAGE" text null,
   "ITEM_IMAGE_URL" text null,
   "ITEM_STATUS" text null default 'AVAILABLE'::text,
   constraint MENU_ITEMS_pkey primary key ("ITEM_ID"),

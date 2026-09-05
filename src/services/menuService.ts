@@ -1,10 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import type { MenuItem, Category } from '@/types/menu'
-
-// Fallback image URLs from Stitch reference (replace with Supabase Storage later)
-const FALLBACK_IMAGES: Record<string, string> = {
-  default: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop',
-}
+import { DEFAULT_FOOD_PLACEHOLDER, type MenuItem, type Category } from '@/types/menu'
 
 function mapItem(row: Record<string, unknown>): MenuItem {
   return {
@@ -14,7 +9,7 @@ function mapItem(row: Record<string, unknown>): MenuItem {
     price: Number(row['ITEM_PRICE']),
     categoryId: String(row['CATEGORY_ID']),
     dietaryType: 'non-veg', // DB doesn't have dietary type yet; default non-veg
-    imageUrl: (row['ITEM_IMAGE_URL'] as string | undefined) ?? FALLBACK_IMAGES.default,
+    imageUrl: (row['ITEM_IMAGE'] as string | undefined) || (row['ITEM_IMAGE_URL'] as string | undefined) || DEFAULT_FOOD_PLACEHOLDER,
     isAvailable: row['ITEM_STATUS'] !== 'OUT_OF_STOCK',
     isSoldOut: row['ITEM_STATUS'] === 'OUT_OF_STOCK',
     description: (row['ITEM_DESCRIPTION'] as string | undefined) ?? undefined,

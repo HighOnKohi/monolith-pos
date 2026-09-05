@@ -120,37 +120,14 @@ export default function CashierPage() {
           </div>
         </Card>
 
-        {/* Item grid — scrollable vertically — PLACEHOLDER ITEMS */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 pb-2">
-            {MENU_ITEMS.map((item) => (
-              <div
-                key={item.id}
-                className="flex flex-col rounded-xl border border-[#9BA4B4]/20 bg-white overflow-hidden hover:shadow-sm transition-shadow"
-              >
-                <img
-                  src={item.img}
-                  alt={item.name}
-                  className="h-36 w-full object-cover"
-                />
-                <div className="flex flex-col gap-2 p-3">
-                  <p className="text-sm font-semibold text-[#14274E] leading-tight truncate">{item.name}</p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-[#14274E]">${item.price.toFixed(2)}</span>
-                    <span className={[
-                      'text-[10px] font-semibold px-1.5 py-0.5 rounded-full',
-                      item.tag === 'Veg'
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-red-100 text-red-600',
-                    ].join(' ')}>
-                      {item.tag}
-                    </span>
-                  </div>
-                  <button className="flex items-center justify-center gap-1.5 rounded-lg border border-[#9BA4B4]/30 py-1.5 text-xs font-semibold text-[#394867] hover:bg-[#14274E] hover:text-white hover:border-[#14274E] transition-colors">
-                    <Plus className="h-3.5 w-3.5" />
-                    Add to Order
-                  </button>
-                </div>
+        {/* Current bill + payment actions */}
+        <Card>
+          <CardHeader title="Current Bill" description="Select a table to view its bill" />
+          <div className="space-y-2 py-4">
+            {['Subtotal', 'Tax', 'Total'].map((label) => (
+              <div key={label} className="flex justify-between text-sm">
+                <span className="text-muted">{label}</span>
+                <span className="font-medium text-primary">—</span>
               </div>
             ))}
           </div>
@@ -158,14 +135,7 @@ export default function CashierPage() {
             <Button variant="secondary" size="sm" disabled className="flex-1">Print Receipt</Button>
             <Button variant="primary" size="sm" disabled className="flex-1">Complete Payment</Button>
           </div>
-        </div>
-
-        {/* Place order button */}
-        <div className="shrink-0 px-3 pb-3">
-          <button className="w-full rounded-xl bg-[#14274E] py-3 text-sm font-bold text-white hover:bg-[#394867] transition-colors">
-            Place Order →
-          </button>
-        </div>
+        </Card>
       </div>
 
     </div>

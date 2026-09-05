@@ -73,7 +73,7 @@ No POS features, authentication, or business logic have been implemented.
 |---|---|---|
 | `Restaurant_Tables` | Physical dining tables | `TABLE_ID`, `TABLE_NUM`, `STATUS`, `GUEST_CAPACITY`, `BILL_OUT_REQUESTED` |
 | `Menu_Categories` | Menu item groupings | `CATEGORY_ID`, `CATEGORY_NAME` |
-| `Menu_Items` | Orderable food/drink items | `ITEM_ID`, `CATEGORY_ID`, `ITEM_NAME`, `ITEM_PRICE`, `ITEM_STATUS` |
+| `Menu_Items` | Orderable food/drink items | `ITEM_ID`, `CATEGORY_ID`, `ITEM_NAME`, `ITEM_PRICE`, `ITEM_IMAGE_URL` (Base64 in DB), `ITEM_STATUS` |
 | `Restaurant_Orders` | Orders per table | `ORDER_ID`, `TABLE_ID`, `ORDER_STATUS`, `ORDER_TYPE`, `TOTAL_BILL` |
 | `Order_Items` | Line items within an order | `ORDER_ITEM_ID`, `ORDER_ID`, `ITEM_ID`, `ORDER_ITEM_STATUS` |
 | `Discounts` | Discounts on orders/items | `DISCOUNT_ID`, `ORDER_ID`, `PWD`, `SENIOR`, `CUSTOM_PERCENT`, `PESO_DISCOUNT` |
