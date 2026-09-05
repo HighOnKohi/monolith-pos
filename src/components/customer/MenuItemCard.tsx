@@ -1,4 +1,4 @@
-import type { MenuItem } from '@/types/menu'
+import { DEFAULT_FOOD_PLACEHOLDER, type MenuItem } from '@/types/menu'
 import { QuantityControl } from './QuantityControl'
 
 interface MenuItemCardProps {
@@ -16,7 +16,7 @@ const badgeStyles = {
   'chef-pick': 'bg-[#14274E] text-[#E9C46A]',
 }
 
-const FALLBACK_IMG = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop'
+const FALLBACK_IMG = DEFAULT_FOOD_PLACEHOLDER
 
 export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecrease }: MenuItemCardProps) {
   const inCart = quantity > 0
@@ -60,6 +60,12 @@ export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecre
           alt={item.name}
           className={['w-full h-full object-cover', isSoldOut ? 'grayscale opacity-60' : ''].join(' ')}
           loading="lazy"
+          onError={(e) => {
+            const target = e.currentTarget
+            if (target.src !== FALLBACK_IMG) {
+              target.src = FALLBACK_IMG
+            }
+          }}
         />
         {isSoldOut && (
           <div className="absolute inset-0 flex items-center justify-center bg-[#14274E]/20">

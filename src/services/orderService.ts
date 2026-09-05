@@ -29,6 +29,7 @@ export async function createOrder(
     .from('Restaurant_Orders')
     .insert({
       TABLE_ID: tableId,
+      ORDER_ITEMS_ID: Date.now(), // Satisfy DB schema constraint
       ORDER_STATUS: 'REQUESTED',
       ORDER_TYPE: DINING_TYPE_MAP[diningType],
       TOTAL_BILL: total,
