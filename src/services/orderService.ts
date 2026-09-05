@@ -14,7 +14,7 @@ function mapOrder(row: Record<string, unknown>): Order {
     orderStatus: row['ORDER_STATUS'] as OrderStatus,
     orderType: row['ORDER_TYPE'] as Order['orderType'],
     totalBill: Number(row['TOTAL_BILL'] ?? 0),
-    createdAt: row['CREATED_AT'] as string | undefined,
+    createdAt: (row['TIME'] ?? row['CREATED_AT']) as string | undefined,
   }
 }
 
@@ -34,6 +34,7 @@ export async function createOrder(
       ORDER_TYPE: DINING_TYPE_MAP[diningType],
       TOTAL_BILL: total,
       REQUESTED_FROM: 'Customer',
+      TIME: new Date().toISOString(),
     })
     .select()
     .single()
@@ -43,6 +44,7 @@ export async function createOrder(
   const orderId = Number((orderData as Record<string, unknown>)['ORDER_ID'])
 
   // 2. Insert order items
+  // Attempt to insert with QUANTITY and NOTES first (if modern columns exist in schema)
   const orderItems = items.map((ci) => ({
     ORDER_ID: orderId,
     ITEM_ID: Number(ci.item.id),
@@ -52,7 +54,33 @@ export async function createOrder(
   }))
 
   const { error: itemsError } = await supabase.from('Order_Items').insert(orderItems)
-  if (itemsError) throw itemsError
+  if (itemsError) {
+    // If QUANTITY or NOTES column is missing in DB schema cache (PGRST204)
+    if (itemsError.code === 'PGRST204') {
+      const fallbackItems: Array<{
+        ORDER_ID: number
+        ITEM_ID: number
+        ORDER_ITEM_STATUS: string
+      }> = []
+
+      for (const ci of items) {
+        for (let q = 0; q < ci.quantity; q++) {
+          fallbackItems.push({
+            ORDER_ID: orderId,
+            ITEM_ID: Number(ci.item.id),
+            ORDER_ITEM_STATUS: 'PENDING',
+          })
+        }
+      }
+
+      const { error: fallbackError } = await supabase
+        .from('Order_Items')
+        .insert(fallbackItems)
+      if (fallbackError) throw fallbackError
+    } else {
+      throw itemsError
+    }
+  }
 
   return mapOrder(orderData as Record<string, unknown>)
 }
