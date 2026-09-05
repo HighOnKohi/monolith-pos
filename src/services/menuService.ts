@@ -1,0 +1,79 @@
+import { supabase } from '@/lib/supabase'
+import type { MenuItem, Category } from '@/types/menu'
+
+// Fallback image URLs from Stitch reference (replace with Supabase Storage later)
+const FALLBACK_IMAGES: Record<string, string> = {
+  default: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop',
+}
+
+function mapItem(row: Record<string, unknown>): MenuItem {
+  return {
+    id: String(row['ITEM_ID']),
+    name: String(row['ITEM_NAME']),
+    code: String(row['ITEM_ID']),
+    price: Number(row['ITEM_PRICE']),
+    categoryId: String(row['CATEGORY_ID']),
+    dietaryType: 'non-veg', // DB doesn't have dietary type yet; default non-veg
+    imageUrl: (row['IMAGE_URL'] as string | undefined) ?? FALLBACK_IMAGES.default,
+    isAvailable: row['ITEM_STATUS'] !== 'OUT_OF_STOCK',
+    isSoldOut: row['ITEM_STATUS'] === 'OUT_OF_STOCK',
+    description: (row['DESCRIPTION'] as string | undefined) ?? undefined,
+  }
+}
+
+function mapCategory(row: Record<string, unknown>, count: number): Category {
+  return {
+    id: String(row['CATEGORY_ID']),
+    name: String(row['CATEGORY_NAME']),
+    count,
+  }
+}
+
+export async function fetchMenuItems(): Promise<MenuItem[]> {
+  const { data, error } = await supabase
+    .from('Menu_Items')
+    .select('*')
+    .order('ITEM_NAME')
+
+  if (error) throw error
+  return (data ?? []).map((row) => mapItem(row as Record<string, unknown>))
+}
+
+export async function fetchCategories(items: MenuItem[]): Promise<Category[]> {
+  const { data, error } = await supabase
+    .from('Menu_Categories')
+    .select('*')
+    .order('CATEGORY_NAME')
+
+  if (error) throw error
+
+  // Count items per category using already-fetched items (avoids extra queries)
+  const countMap = items.reduce<Record<string, number>>((acc, item) => {
+    acc[item.categoryId] = (acc[item.categoryId] ?? 0) + 1
+    return acc
+  }, {})
+
+  const categoryRows = (data ?? []).map((row) =>
+    mapCategory(row as Record<string, unknown>, countMap[String(row['CATEGORY_ID'])] ?? 0),
+  )
+
+  // Prepend "All Menu" virtual category
+  const allCategory: Category = { id: 'all', name: 'All Menu', count: items.length }
+  return [allCategory, ...categoryRows]
+}
+
+export async function fetchTableByNumber(tableNum: string | number): Promise<{ id: number; label: string } | null> {
+  const { data, error } = await supabase
+    .from('Restaurant_Tables')
+    .select('TABLE_ID, TABLE_NUM')
+    .eq('TABLE_NUM', Number(tableNum))
+    .single()
+
+  if (error || !data) return null
+
+  const row = data as Record<string, unknown>
+  return {
+    id: Number(row['TABLE_ID']),
+    label: `Table ${row['TABLE_NUM']}`,
+  }
+}

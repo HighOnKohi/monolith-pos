@@ -62,6 +62,35 @@ No POS features, authentication, or business logic have been implemented.
 
 ---
 
+## Database Schema
+
+> Full schema with DDL: [`Context/DBSchema`](file:///c:/Users/vince/Documents/Thesis/monolith-pos/Context/DBSchema)
+> Full annotated reference: [`PROJECT_CONTEXT.md — Database Schema`](file:///c:/Users/vince/Documents/Thesis/monolith-pos/PROJECT_CONTEXT.md)
+
+### Tables
+
+| Table | Purpose | Key Columns |
+|---|---|---|
+| `Restaurant_Tables` | Physical dining tables | `TABLE_ID`, `TABLE_NUM`, `STATUS`, `GUEST_CAPACITY`, `BILL_OUT_REQUESTED` |
+| `Menu_Categories` | Menu item groupings | `CATEGORY_ID`, `CATEGORY_NAME` |
+| `Menu_Items` | Orderable food/drink items | `ITEM_ID`, `CATEGORY_ID`, `ITEM_NAME`, `ITEM_PRICE`, `ITEM_STATUS` |
+| `Restaurant_Orders` | Orders per table | `ORDER_ID`, `TABLE_ID`, `ORDER_STATUS`, `ORDER_TYPE`, `TOTAL_BILL` |
+| `Order_Items` | Line items within an order | `ORDER_ITEM_ID`, `ORDER_ID`, `ITEM_ID`, `ORDER_ITEM_STATUS` |
+| `Discounts` | Discounts on orders/items | `DISCOUNT_ID`, `ORDER_ID`, `PWD`, `SENIOR`, `CUSTOM_PERCENT`, `PESO_DISCOUNT` |
+
+### Status Enums (enforced via CHECK constraints)
+
+| Table | Column | Values |
+|---|---|---|
+| `Restaurant_Tables` | `STATUS` | `AVAILABLE`, `RESERVED`, `OCCUPIED`, `HAS_REQUEST` |
+| `Menu_Items` | `ITEM_STATUS` | `AVAILABLE`, `OUT_OF_STOCK` |
+| `Restaurant_Orders` | `ORDER_STATUS` | `REQUESTED`, `VERIFIED`, `PREPARING`, `READY` |
+| `Restaurant_Orders` | `ORDER_TYPE` | `DINE-IN`, `TAKEOUT` |
+| `Restaurant_Orders` | `REQUESTED_FROM` | `Cashier`, `Customer` |
+| `Order_Items` | `ORDER_ITEM_STATUS` | `PENDING`, `PREPARING`, `SERVED` |
+
+---
+
 ## Architecture
 
 ```text
@@ -180,7 +209,7 @@ All `src/` imports use `@/` alias (e.g., `import RootLayout from '@/layouts/Root
 
 - Prioritize performance on low-end PCs.
 - Keep dependencies minimal — do not install libraries speculatively.
-- Do not implement unrequested features.
+- Modification of UI/UX, layouts, and functionalities is explicitly allowed and encouraged to match reference designs or improve the mobile experience.
 - Do not expose backend secrets to browser code.
 - Web-only application — no Tauri, Electron, or native packaging.
 - Deployment target is Vercel only.
@@ -191,7 +220,7 @@ All `src/` imports use `@/` alias (e.g., `import RootLayout from '@/layouts/Root
 
 | Email | Password | Role |
 |---|---|---|
-| `taponakawnt123@gmail.com` | `test123` | Development test account |
+| `taponakawnt123@gmail.com` | `test1234` | Development test account |
 
 ---
 

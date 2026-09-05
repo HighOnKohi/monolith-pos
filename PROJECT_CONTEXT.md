@@ -57,6 +57,118 @@
 
 ---
 
+## Database Schema
+
+> Source of truth: [`Context/DBSchema`](file:///c:/Users/vince/Documents/Thesis/monolith-pos/Context/DBSchema)
+> Schema is defined in Supabase (PostgreSQL). All table and column names use quoted UPPER_SNAKE_CASE identifiers.
+
+### Entity Relationship Overview
+
+```
+Restaurant_Tables
+  └── Restaurant_Orders  (TABLE_ID)
+        └── Order_Items  (ORDER_ID)
+              ├── Menu_Items  (ITEM_ID)
+              │     └── Menu_Categories  (CATEGORY_ID)
+              └── Discounts  (ORDER_ITEM_ID)
+                    └── Restaurant_Orders  (ORDER_ID)
+```
+
+---
+
+### `Restaurant_Tables`
+Represents physical tables in the restaurant.
+
+| Column | Type | Notes |
+|---|---|---|
+| `TABLE_ID` | bigint (PK, identity) | Primary key |
+| `TABLE_NUM` | bigint | Table number, default `0` |
+| `STATUS` | text | `AVAILABLE` \| `RESERVED` \| `OCCUPIED` \| `HAS_REQUEST` |
+| `GUEST_CAPACITY` | bigint | Max guests, default `0` |
+| `CURRENT_GUEST_COUNT` | bigint | Active guests, default `0` |
+| `RESERVED_SINCE` | timestamp | When the table was reserved |
+| `BILL_OUT_REQUESTED` | boolean | Whether bill-out has been requested, default `false` |
+
+---
+
+### `Menu_Categories`
+Groups menu items into categories.
+
+| Column | Type | Notes |
+|---|---|---|
+| `CATEGORY_ID` | bigint (PK, identity) | Primary key |
+| `CATEGORY_NAME` | text | Category name (NOT NULL) |
+
+---
+
+### `Menu_Items`
+Individual items available for ordering.
+
+| Column | Type | Notes |
+|---|---|---|
+| `ITEM_ID` | bigint (PK, identity) | Primary key |
+| `CATEGORY_ID` | bigint (FK) | → `Menu_Categories.CATEGORY_ID` |
+| `ITEM_NAME` | text | Item name |
+| `ITEM_DESCRIPTION` | text | Description |
+| `ITEM_PRICE` | double precision | Price |
+| `ITEM_IMAGE_URL` | text | Image URL (Supabase Storage) |
+| `ITEM_STATUS` | text | `AVAILABLE` \| `OUT_OF_STOCK`, default `AVAILABLE` |
+
+---
+
+### `Restaurant_Orders`
+An order placed for a specific table.
+
+| Column | Type | Notes |
+|---|---|---|
+| `ORDER_ID` | bigint (unique) | Logical order identifier |
+| `ORDER_ITEMS_ID` | bigint (PK) | Primary key |
+| `TABLE_ID` | bigint (FK) | → `Restaurant_Tables.TABLE_ID` |
+| `REQUESTED_FROM` | text | `Cashier` \| `Customer`, default `None` |
+| `ORDER_TYPE` | text | `DINE-IN` \| `TAKEOUT`, default `Dine-in` |
+| `ORDER_STATUS` | text | `REQUESTED` \| `VERIFIED` \| `PREPARING` \| `READY` |
+| `SUBTOTAL_BILL` | double precision | Pre-discount subtotal, default `0` |
+| `TOTAL_BILL` | double precision | Post-discount total, default `0` |
+| `TIME` | timestamp | Order timestamp |
+
+---
+
+### `Order_Items`
+Individual line items within an order.
+
+| Column | Type | Notes |
+|---|---|---|
+| `ORDER_ITEM_ID` | bigint (PK, identity) | Primary key |
+| `ORDER_ID` | bigint (FK) | → `Restaurant_Orders.ORDER_ID` |
+| `ITEM_ID` | bigint (FK) | → `Menu_Items.ITEM_ID` |
+| `DISCOUNT_ID` | bigint | Optional link to a discount |
+| `ORDER_ITEM_STATUS` | text | `PENDING` \| `PREPARING` \| `SERVED`, default `PENDING` |
+
+---
+
+### `Discounts`
+Discount records applied to an order or a specific order item.
+
+| Column | Type | Notes |
+|---|---|---|
+| `DISCOUNT_ID` | bigint (PK, identity) | Primary key |
+| `ORDER_ID` | bigint (FK) | → `Restaurant_Orders.ORDER_ID` |
+| `ORDER_ITEM_ID` | bigint (FK, nullable) | → `Order_Items.ORDER_ITEM_ID` |
+| `PWD` | boolean | PWD discount applied, default `false` |
+| `PWD_AMOUNT` | bigint | PWD discount amount, default `0` |
+| `SENIOR` | boolean | Senior discount applied, default `false` |
+| `SENIOR_AMOUNT` | bigint | Senior discount amount, default `0` |
+| `CUSTOM_PERCENT` | bigint | Custom percentage discount, default `0` |
+| `PESO_DISCOUNT` | double precision | Fixed peso discount, default `0` |
+
+---
+
+### Raw DDL
+
+See [`Context/DBSchema`](file:///c:/Users/vince/Documents/Thesis/monolith-pos/Context/DBSchema) for the complete `CREATE TABLE` statements.
+
+---
+
 ## Routes
 
 | Route | Page | Auth |
@@ -210,6 +322,7 @@ Every page is `React.lazy()` + `Suspense`. Code splitting is active from day one
 - Performance-first: minimal dependencies, lazy loading, small bundle
 - Web-only: no Tauri, Electron, native packaging
 - Deployment: Vercel only
+- Modification of UI/UX, layouts, and functionalities is explicitly allowed to improve the mobile/POS experience and match design references.
 - Never expose `SUPABASE_SERVICE_ROLE_KEY` to browser code
 - Navigation defined in one place only
 - No Supabase logic in presentation components
