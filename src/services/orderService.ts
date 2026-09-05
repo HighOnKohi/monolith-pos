@@ -44,43 +44,25 @@ export async function createOrder(
   const orderId = Number((orderData as Record<string, unknown>)['ORDER_ID'])
 
   // 2. Insert order items
-  // Attempt to insert with QUANTITY and NOTES first (if modern columns exist in schema)
-  const orderItems = items.map((ci) => ({
-    ORDER_ID: orderId,
-    ITEM_ID: Number(ci.item.id),
-    QUANTITY: ci.quantity,
-    ORDER_ITEM_STATUS: 'PENDING',
-    NOTES: ci.notes ?? null,
-  }))
+  // Unroll items by quantity to match original DBSchema (1 row per ordered item)
+  const orderItems: Array<{
+    ORDER_ID: number
+    ITEM_ID: number
+    ORDER_ITEM_STATUS: string
+  }> = []
 
-  const { error: itemsError } = await supabase.from('Order_Items').insert(orderItems)
-  if (itemsError) {
-    // If QUANTITY or NOTES column is missing in DB schema cache (PGRST204)
-    if (itemsError.code === 'PGRST204') {
-      const fallbackItems: Array<{
-        ORDER_ID: number
-        ITEM_ID: number
-        ORDER_ITEM_STATUS: string
-      }> = []
-
-      for (const ci of items) {
-        for (let q = 0; q < ci.quantity; q++) {
-          fallbackItems.push({
-            ORDER_ID: orderId,
-            ITEM_ID: Number(ci.item.id),
-            ORDER_ITEM_STATUS: 'PENDING',
-          })
-        }
-      }
-
-      const { error: fallbackError } = await supabase
-        .from('Order_Items')
-        .insert(fallbackItems)
-      if (fallbackError) throw fallbackError
-    } else {
-      throw itemsError
+  for (const ci of items) {
+    for (let q = 0; q < ci.quantity; q++) {
+      orderItems.push({
+        ORDER_ID: orderId,
+        ITEM_ID: Number(ci.item.id),
+        ORDER_ITEM_STATUS: 'PENDING',
+      })
     }
   }
+
+  const { error: itemsError } = await supabase.from('Order_Items').insert(orderItems)
+  if (itemsError) throw itemsError
 
   return mapOrder(orderData as Record<string, unknown>)
 }

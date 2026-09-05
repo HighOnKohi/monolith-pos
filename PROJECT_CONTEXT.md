@@ -66,12 +66,13 @@
 
 ```
 Restaurant_Tables
-  └── Restaurant_Orders  (TABLE_ID)
-        └── Order_Items  (ORDER_ID)
-              ├── Menu_Items  (ITEM_ID)
-              │     └── Menu_Categories  (CATEGORY_ID)
-              └── Discounts  (ORDER_ITEM_ID)
-                    └── Restaurant_Orders  (ORDER_ID)
+  ├── Restaurant_Orders  (TABLE_ID)
+  │     └── Order_Items  (ORDER_ID)
+  │           ├── Menu_Items  (ITEM_ID)
+  │           │     └── Menu_Categories  (CATEGORY_ID)
+  │           └── Discounts  (ORDER_ITEM_ID)
+  │                 └── Restaurant_Orders  (ORDER_ID)
+  └── Bill_Requests  (TABLE_ID, ORDER_ID)
 ```
 
 ---
