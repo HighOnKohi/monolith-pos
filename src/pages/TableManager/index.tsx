@@ -107,7 +107,7 @@ export default function TableManagerPage() {
   const assistanceTables = tables.filter((t) => t.STATUS === 'HAS_REQUEST')
 
   return (
-    <div className="space-y-5">
+    <div className="table-manager-page-container space-y-5">
       <PageHeader
         title="Table Manager"
         description="Live floor plan layout, customer service calls & table statuses."

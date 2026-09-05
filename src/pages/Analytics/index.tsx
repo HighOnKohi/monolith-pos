@@ -5,7 +5,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 
 export default function AnalyticsPage() {
   return (
-    <div className="space-y-5">
+    <div className="analytics-page-container space-y-5">
       <PageHeader
         title="Analytics"
         description="Revenue, order volumes & sales insights."

@@ -5,7 +5,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 
 export default function OrderLogsPage() {
   return (
-    <div className="space-y-5">
+    <div className="order-logs-page-container space-y-5">
       <PageHeader
         title="Order Logs"
         description="Audit trails of completed and active orders."

@@ -50,10 +50,10 @@ export default function MenuManagerPage() {
   const activeLabel = CATEGORIES.find(c => c.id === activeCat)?.label ?? 'All'
 
   return (
-    <div className="flex h-full gap-4 overflow-hidden">
+    <div className="menu-manager-page-container">
 
       {/* ── LEFT: Menu browser ───────────────────────────── */}
-      <div className="flex flex-1 flex-col gap-3 overflow-hidden">
+      <div className="inner-menu-manager-page-container">
 
         {/* Search bar */}
         <div className="flex items-center gap-2 rounded-xl bg-white border border-[#9BA4B4]/30 px-3 py-2">
@@ -223,137 +223,148 @@ export default function MenuManagerPage() {
         </div>
       </div>
 
-      {/* ── RIGHT: Edit panel — flush to container edges like the app sidebar ─── */}
-      {selectedItem && (
-        <div className="flex w-72 xl:w-80 shrink-0 flex-col bg-white border-l border-[#9BA4B4]/20 overflow-hidden -mt-4 -mb-4 -mr-4 lg:-mt-6 lg:-mb-6 lg:-mr-6">
+      {/* ── RIGHT: Order sidebar — always visible, flush to container edges ─── */}
+      <div className="order-sidebar">
 
-          {/* Panel header */}
-          <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-[#9BA4B4]/20">
-            <div>
-              <p className="text-sm font-bold text-[#14274E]">Edit Dish</p>
-              {/* PLACEHOLDER SKU */}
-              <p className="text-[10px] text-[#9BA4B4]">SKU: #810.2 • {selectedItem.category}</p>
-            </div>
-            <button onClick={handleClose} className="text-[#9BA4B4] hover:text-[#14274E] transition-colors">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Tabs */}
-          <div className="shrink-0 flex gap-1 px-3 pt-2 pb-1 border-b border-[#9BA4B4]/20">
-            {['Dish Details', 'Modifiers', 'Pricing'].map((t, i) => (
-              <button
-                key={t}
-                className={[
-                  'flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors',
-                  i === 0 ? 'bg-[#14274E] text-white' : 'text-[#394867] hover:bg-[#F1F6F9]',
-                ].join(' ')}
-              >
-                {t}
+        {selectedItem ? (
+          <>
+            {/* Panel header */}
+            <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-[#9BA4B4]/20">
+              <div>
+                <p className="text-sm font-bold text-[#14274E]">Edit Dish</p>
+                {/* PLACEHOLDER SKU */}
+                <p className="text-[10px] text-[#9BA4B4]">SKU: #810.2 • {selectedItem.category}</p>
+              </div>
+              <button onClick={handleClose} className="text-[#9BA4B4] hover:text-[#14274E] transition-colors">
+                <X className="h-4 w-4" />
               </button>
-            ))}
-          </div>
+            </div>
 
-          {/* Form — scrollable */}
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-
-            {/* Image upload */}
-            <div>
-              <p className="mb-1.5 text-xs font-semibold text-[#394867]">Item Imagery</p>
-              <div className="flex items-center gap-3">
-                <img src={selectedItem.img} alt="" className="h-14 w-14 rounded-lg object-cover border border-[#9BA4B4]/20" />
-                <button className="flex items-center gap-1.5 rounded-lg border border-[#9BA4B4]/30 px-3 py-1.5 text-xs font-semibold text-[#394867] hover:bg-[#F1F6F9] transition-colors">
-                  <Upload className="h-3.5 w-3.5" />
-                  Change Photo
+            {/* Tabs */}
+            <div className="shrink-0 flex gap-1 px-3 pt-2 pb-1 border-b border-[#9BA4B4]/20">
+              {['Dish Details', 'Modifiers', 'Pricing'].map((t, i) => (
+                <button
+                  key={t}
+                  className={[
+                    'flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors',
+                    i === 0 ? 'bg-[#14274E] text-white' : 'text-[#394867] hover:bg-[#F1F6F9]',
+                  ].join(' ')}
+                >
+                  {t}
                 </button>
-              </div>
+              ))}
             </div>
 
-            {/* Dish name */}
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#394867]">Dish Name</label>
-              {/* PLACEHOLDER value */}
-              <input
-                defaultValue={selectedItem.name}
-                className="w-full rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] outline-none focus:border-[#14274E] transition-colors"
-              />
-            </div>
+            {/* Form — scrollable */}
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
 
-            {/* Category + Price */}
-            <div className="grid grid-cols-2 gap-3">
+              {/* Image upload */}
               <div>
-                <label className="mb-1 block text-xs font-semibold text-[#394867]">Category</label>
-                {/* PLACEHOLDER value */}
-                <select className="w-full rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] bg-white outline-none focus:border-[#14274E] transition-colors">
-                  {CATEGORIES.filter(c => c.id !== 'all').map(c => (
-                    <option key={c.id} value={c.id}>{c.label}</option>
-                  ))}
-                </select>
+                <p className="mb-1.5 text-xs font-semibold text-[#394867]">Item Imagery</p>
+                <div className="flex items-center gap-3">
+                  <img src={selectedItem.img} alt="" className="h-14 w-14 rounded-lg object-cover border border-[#9BA4B4]/20" />
+                  <button className="flex items-center gap-1.5 rounded-lg border border-[#9BA4B4]/30 px-3 py-1.5 text-xs font-semibold text-[#394867] hover:bg-[#F1F6F9] transition-colors">
+                    <Upload className="h-3.5 w-3.5" />
+                    Change Photo
+                  </button>
+                </div>
               </div>
+
+              {/* Dish name */}
               <div>
-                <label className="mb-1 block text-xs font-semibold text-[#394867]">Price ($)</label>
+                <label className="mb-1 block text-xs font-semibold text-[#394867]">Dish Name</label>
                 {/* PLACEHOLDER value */}
                 <input
-                  type="number"
-                  defaultValue={selectedItem.price}
+                  defaultValue={selectedItem.name}
                   className="w-full rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] outline-none focus:border-[#14274E] transition-colors"
                 />
               </div>
-            </div>
 
-            {/* Dietary classification */}
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-[#394867]">Dietary Classification</label>
-              <div className="flex gap-2">
-                <button className={[
-                  'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
-                  selectedItem.tag === 'Non Veg'
-                    ? 'border-[#C94A4A] bg-red-50 text-[#C94A4A]'
-                    : 'border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
-                ].join(' ')}>
-                  Non-Veg
-                </button>
-                <button className={[
-                  'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
-                  selectedItem.tag === 'Veg'
-                    ? 'border-[#E9C46A] bg-yellow-50 text-yellow-700'
-                    : 'border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
-                ].join(' ')}>
-                  Vegetarian
-                </button>
+              {/* Category + Price */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#394867]">Category</label>
+                  {/* PLACEHOLDER value */}
+                  <select className="w-full rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] bg-white outline-none focus:border-[#14274E] transition-colors">
+                    {CATEGORIES.filter(c => c.id !== 'all').map(c => (
+                      <option key={c.id} value={c.id}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#394867]">Price ($)</label>
+                  {/* PLACEHOLDER value */}
+                  <input
+                    type="number"
+                    defaultValue={selectedItem.price}
+                    className="w-full rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] outline-none focus:border-[#14274E] transition-colors"
+                  />
+                </div>
               </div>
-            </div>
 
-            {/* In Stock toggle */}
-            <div className="flex items-center justify-between rounded-lg border border-[#9BA4B4]/20 px-3 py-2.5">
+              {/* Dietary classification */}
               <div>
-                <p className="text-xs font-semibold text-[#14274E]">In Stock &amp; Visible</p>
-                <p className="text-[10px] text-[#9BA4B4]">Instant live sync to terminal</p>
+                <label className="mb-1.5 block text-xs font-semibold text-[#394867]">Dietary Classification</label>
+                <div className="flex gap-2">
+                  <button className={[
+                    'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
+                    selectedItem.tag === 'Non Veg'
+                      ? 'border-[#C94A4A] bg-red-50 text-[#C94A4A]'
+                      : 'border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
+                  ].join(' ')}>
+                    Non-Veg
+                  </button>
+                  <button className={[
+                    'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
+                    selectedItem.tag === 'Veg'
+                      ? 'border-[#E9C46A] bg-yellow-50 text-yellow-700'
+                      : 'border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
+                  ].join(' ')}>
+                    Vegetarian
+                  </button>
+                </div>
               </div>
-              <div className={[
-                'relative h-6 w-11 rounded-full transition-colors cursor-pointer',
-                selectedItem.inStock ? 'bg-[#14274E]' : 'bg-[#9BA4B4]/40',
-              ].join(' ')}>
+
+              {/* In Stock toggle */}
+              <div className="flex items-center justify-between rounded-lg border border-[#9BA4B4]/20 px-3 py-2.5">
+                <div>
+                  <p className="text-xs font-semibold text-[#14274E]">In Stock &amp; Visible</p>
+                  <p className="text-[10px] text-[#9BA4B4]">Instant live sync to terminal</p>
+                </div>
                 <div className={[
-                  'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform',
-                  selectedItem.inStock ? 'translate-x-5' : 'translate-x-0.5',
-                ].join(' ')} />
+                  'relative h-6 w-11 rounded-full transition-colors cursor-pointer',
+                  selectedItem.inStock ? 'bg-[#14274E]' : 'bg-[#9BA4B4]/40',
+                ].join(' ')}>
+                  <div className={[
+                    'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform',
+                    selectedItem.inStock ? 'translate-x-5' : 'translate-x-0.5',
+                  ].join(' ')} />
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Footer actions */}
-          <div className="shrink-0 border-t border-[#9BA4B4]/20 px-3 pb-3 pt-2 space-y-2">
-            <button className="w-full rounded-xl bg-[#14274E] py-2.5 text-sm font-bold text-white hover:bg-[#394867] transition-colors">
-              Save Changes →
-            </button>
-            <button className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-[#C94A4A]/30 py-2 text-xs font-semibold text-[#C94A4A] hover:bg-red-50 transition-colors">
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete Dish
-            </button>
+            {/* Footer actions */}
+            <div className="shrink-0 border-t border-[#9BA4B4]/20 px-3 pb-3 pt-2 space-y-2">
+              <button className="w-full rounded-xl bg-[#14274E] py-2.5 text-sm font-bold text-white hover:bg-[#394867] transition-colors">
+                Save Changes →
+              </button>
+              <button className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-[#C94A4A]/30 py-2 text-xs font-semibold text-[#C94A4A] hover:bg-red-50 transition-colors">
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete Dish
+              </button>
+            </div>
+          </>
+        ) : (
+          /* Empty state — no dish selected */
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#F1F6F9] text-[#9BA4B4]">
+              <Edit2 className="h-5 w-5" />
+            </div>
+            <p className="text-sm font-semibold text-[#14274E]">No dish selected</p>
+            <p className="text-xs text-[#9BA4B4]">Click Edit on any dish to manage its details here.</p>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

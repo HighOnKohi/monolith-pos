@@ -1,0 +1,50 @@
+/* Outer page wrapper — full height, flex row */
+.menu-manager-page-container {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Left content area — takes remaining space */
+.inner-menu-manager-page-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 0.75rem;
+  overflow: hidden;
+  padding: 1.5rem;
+}
+
+/* Right sidebar — fixed width, flush to container edges */
+.order-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 32rem;
+  flex-shrink: 0;
+  background-color: #ffffff;
+  border-left: 1px solid rgba(155, 164, 180, 0.2);
+  overflow: hidden;
+}
+
+/* Larger Menu Manager controls; item card buttons stay unchanged. */
+.inner-menu-manager-page-container > div:nth-child(2) button,
+.inner-menu-manager-page-container > div:nth-child(4) button,
+.inner-menu-manager-page-container > div:last-child button,
+.order-sidebar button {
+  min-height: 42px;
+  padding: 0.625rem 1rem;
+}
+
+/* Category navigation arrows */
+.inner-menu-manager-page-container > div:nth-child(3) > button {
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0.625rem;
+}
+
+/* Category cards */
+.inner-menu-manager-page-container > div:nth-child(3) > div > button {
+  min-height: 72px;
+  padding: 1rem 1.25rem;
+}
