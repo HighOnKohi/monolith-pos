@@ -26,8 +26,8 @@ export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecre
   return (
     <article
       className={[
-        'bg-white rounded-2xl p-3 flex flex-col justify-between relative overflow-hidden shadow-sm',
-        'transition-all duration-150',
+        'bg-white rounded-2xl p-3 flex flex-col justify-between relative overflow-hidden shadow-xs',
+        'transition-all duration-200 hover:-translate-y-1 hover:shadow-md',
         inCart ? 'border-2 border-[#14274E]' : 'border border-[#9BA4B4]/30',
         isSoldOut ? 'opacity-70' : '',
       ].join(' ')}

@@ -12,6 +12,7 @@ import { ActiveOrders } from '@/components/customer/ActiveOrders'
 import { BillOutModal } from '@/components/customer/BillOutModal'
 import { BillRequestBanner } from '@/components/customer/BillRequestBanner'
 import { AssistanceModal } from '@/components/customer/AssistanceModal'
+import { LiveOrderStatusPopup } from '@/components/customer/LiveOrderStatusPopup'
 import PageLoader from '@/components/common/PageLoader'
 
 import { useMenu } from '@/hooks/useMenu'
@@ -64,7 +65,15 @@ export default function CustomerPage() {
     itemCount,
     clearCart,
   } = useCart()
-  const { orders, isSubmitting: isSubmittingOrder, placeOrder } = useOrders(parsedTableId)
+  const {
+    orders,
+    isSubmitting: isSubmittingOrder,
+    placeOrder,
+    latestStatusUpdate,
+    hasUnreadStatusChange,
+    markStatusUpdateAsRead,
+    dismissLatestStatusUpdate,
+  } = useOrders(parsedTableId)
   const { billRequest, isRequesting: isRequestingBill, requestBill } = useBillRequest(parsedTableId)
 
   // We maintain a local copy of menu items to apply realtime updates without triggering a full re-fetch
@@ -105,12 +114,20 @@ export default function CustomerPage() {
     })
   }, [liveItems, searchQuery, selectedCategory, dietaryFilter])
 
+  // Tab change with unread badge clearing
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab)
+    if (tab === 'orders') {
+      markStatusUpdateAsRead()
+    }
+  }
+
   // Handlers
   const handlePlaceOrder = async () => {
     const success = await placeOrder(cartItems, diningType, total)
     if (success) {
       clearCart()
-      setActiveTab('orders')
+      handleTabChange('orders')
     }
   }
 
@@ -125,11 +142,11 @@ export default function CustomerPage() {
   if (loadState === 'loading') return <PageLoader />
   if (loadState === 'error') {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[#F1F6F9] px-6 text-center">
+      <div className="flex items-center justify-center min-h-screen bg-[#F1F6F9] px-6 text-center animate-fade-in">
         <div>
           <h1 className="text-xl font-bold text-[#14274E] mb-2">Error Loading Menu</h1>
           <p className="text-[#394867] mb-6">There was a problem connecting to the server.</p>
-          <button onClick={() => window.location.reload()} className="bg-[#14274E] text-white px-6 py-3 rounded-xl font-bold">
+          <button onClick={() => window.location.reload()} className="bg-[#14274E] text-white px-6 py-3 rounded-xl font-bold active:scale-95 transition-transform">
             Retry
           </button>
         </div>
@@ -138,12 +155,19 @@ export default function CustomerPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F1F6F9] font-sans pb-safe">
+    <div className="min-h-screen bg-[#F1F6F9] font-sans pb-safe selection:bg-[#E9C46A]/40">
+      {/* Live Order Status Alert Popup */}
+      <LiveOrderStatusPopup
+        notification={latestStatusUpdate}
+        onDismiss={dismissLatestStatusUpdate}
+        onViewOrders={() => handleTabChange('orders')}
+      />
+
       <BillRequestBanner billRequest={billRequest} />
 
       {activeTab === 'menu' && (
-        <div className="flex flex-col h-full">
-          <div className="sticky top-0 z-20 bg-[#F1F6F9]/90 backdrop-blur-md pb-2">
+        <div className="flex flex-col h-full animate-fade-in">
+          <div className="sticky top-0 z-20 bg-[#F1F6F9]/90 backdrop-blur-md pb-2 transition-all">
             <CustomerHeader
               tableLabel={tableLabel}
               onOpenAssist={() => setIsAssistOpen(true)}
@@ -183,7 +207,7 @@ export default function CustomerPage() {
       )}
 
       {activeTab === 'orders' && (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full animate-fade-in">
           <div className="sticky top-0 z-20 bg-[#F1F6F9]/90 backdrop-blur-md pb-2">
             <CustomerHeader
               tableLabel={tableLabel}
@@ -199,7 +223,7 @@ export default function CustomerPage() {
       )}
 
       {activeTab === 'settings' && (
-        <div className="flex flex-col items-center justify-center py-32 px-6 text-center">
+        <div className="flex flex-col items-center justify-center py-32 px-6 text-center animate-fade-in">
           <h2 className="text-xl font-bold text-[#14274E] mb-2">Settings</h2>
           <p className="text-[#9BA4B4]">No settings available.</p>
         </div>
@@ -244,10 +268,11 @@ export default function CustomerPage() {
 
       <MobileBottomNav
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         onOpenAssist={() => setIsAssistOpen(true)}
         activeOrderCount={orders.filter(o => o.orderStatus !== 'SERVED').length}
         hasActiveAssist={Boolean(activeAssistance)}
+        hasOrderStatusChange={hasUnreadStatusChange}
       />
     </div>
   )

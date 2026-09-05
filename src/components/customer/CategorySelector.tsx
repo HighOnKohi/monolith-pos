@@ -18,10 +18,10 @@ export function CategorySelector({ categories, selected, onSelect }: CategorySel
             aria-pressed={isActive}
             className={[
               'flex items-center gap-2 px-4 py-2.5 rounded-full whitespace-nowrap min-h-[44px]',
-              'text-sm font-semibold transition-all duration-150 active:scale-95',
+              'text-sm font-semibold transition-all duration-200 active:scale-95 hover:scale-[1.02]',
               isActive
-                ? 'bg-[#14274E] text-[#E9C46A] shadow-sm'
-                : 'bg-white text-[#394867] border border-[#9BA4B4]/30',
+                ? 'bg-[#14274E] text-[#E9C46A] shadow-md ring-2 ring-[#14274E]/20'
+                : 'bg-white text-[#394867] border border-[#9BA4B4]/30 hover:border-[#14274E]/40 shadow-2xs',
             ].join(' ')}
           >
             <span>{cat.name}</span>

@@ -102,3 +102,85 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-muted); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-secondary); }
+
+/* ── Smooth POS Animations ── */
+
+@keyframes orderTabBlink {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 rgba(201, 74, 74, 0));
+  }
+  50% {
+    transform: scale(1.18);
+    filter: drop-shadow(0 0 10px rgba(201, 74, 74, 0.85));
+  }
+}
+
+@keyframes orderBadgePulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(201, 74, 74, 0.7);
+  }
+  70% {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 8px rgba(201, 74, 74, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(201, 74, 74, 0);
+  }
+}
+
+@keyframes slideDownFade {
+  from {
+    opacity: 0;
+    transform: translateY(-24px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-order-blink {
+  animation: orderTabBlink 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.animate-badge-pulse {
+  animation: orderBadgePulse 1.4s ease-out infinite;
+}
+
+.animate-slide-down {
+  animation: slideDownFade 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-up {
+  animation: slideUpFade 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-fade-in {
+  animation: fadeInScale 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+

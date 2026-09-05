@@ -8,6 +8,7 @@ interface MobileBottomNavProps {
   onOpenAssist: () => void
   activeOrderCount?: number
   hasActiveAssist?: boolean
+  hasOrderStatusChange?: boolean
 }
 
 export function MobileBottomNav({
@@ -16,6 +17,7 @@ export function MobileBottomNav({
   onOpenAssist,
   activeOrderCount = 0,
   hasActiveAssist = false,
+  hasOrderStatusChange = false,
 }: MobileBottomNavProps) {
   return (
     <nav className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-[#9BA4B4]/20 pb-safe shadow-lg">
@@ -24,7 +26,7 @@ export function MobileBottomNav({
         <button
           onClick={() => onTabChange('menu')}
           className={[
-            'relative flex flex-col items-center justify-center w-full h-full space-y-1',
+            'relative flex flex-col items-center justify-center w-full h-full space-y-1 transition-transform active:scale-95',
             activeTab === 'menu' ? 'text-[#14274E]' : 'text-[#9BA4B4] hover:text-[#394867]',
           ].join(' ')}
         >
@@ -34,47 +36,76 @@ export function MobileBottomNav({
           </span>
         </button>
 
-        {/* Orders Tab */}
+        {/* Orders Tab - Blinks if there are status changes! */}
         <button
           onClick={() => onTabChange('orders')}
           className={[
-            'relative flex flex-col items-center justify-center w-full h-full space-y-1',
+            'relative flex flex-col items-center justify-center w-full h-full space-y-1 transition-all active:scale-95',
             activeTab === 'orders' ? 'text-[#14274E]' : 'text-[#9BA4B4] hover:text-[#394867]',
+            hasOrderStatusChange ? 'animate-order-blink text-[#C94A4A]' : '',
           ].join(' ')}
         >
           <div className="relative">
-            <ReceiptText className={['w-6 h-6 transition-transform duration-200', activeTab === 'orders' ? 'scale-110' : ''].join(' ')} />
+            <ReceiptText
+              className={[
+                'w-6 h-6 transition-transform duration-200',
+                activeTab === 'orders' ? 'scale-110 text-[#14274E]' : '',
+                hasOrderStatusChange ? 'text-[#C94A4A]' : '',
+              ].join(' ')}
+            />
+
+            {/* Active order count badge */}
             {activeOrderCount > 0 && (
-              <span className="absolute -top-1.5 -right-2.5 bg-[#C94A4A] text-white text-[10px] font-extrabold w-4 h-4 flex items-center justify-center rounded-full ring-2 ring-white">
+              <span className="absolute -top-1.5 -right-2.5 bg-[#C94A4A] text-white text-[10px] font-extrabold w-4 h-4 flex items-center justify-center rounded-full ring-2 ring-white shadow-xs">
                 {activeOrderCount}
               </span>
             )}
+
+            {/* Status change pulsing glow indicator */}
+            {hasOrderStatusChange && (
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-amber-500 rounded-full ring-2 ring-white animate-badge-pulse" />
+            )}
           </div>
-          <span className={['text-[11px] tracking-wide', activeTab === 'orders' ? 'font-extrabold text-[#14274E]' : 'font-semibold'].join(' ')}>
-            Orders
+          <span
+            className={[
+              'text-[11px] tracking-wide transition-colors',
+              hasOrderStatusChange
+                ? 'font-black text-[#C94A4A]'
+                : activeTab === 'orders'
+                ? 'font-extrabold text-[#14274E]'
+                : 'font-semibold',
+            ].join(' ')}
+          >
+            {hasOrderStatusChange ? 'Orders • New' : 'Orders'}
           </span>
         </button>
 
         {/* Assist Button */}
         <button
           onClick={onOpenAssist}
-          className="relative flex flex-col items-center justify-center w-full h-full space-y-1 text-[#14274E] hover:text-[#14274E]/80 transition-colors group"
+          className="relative flex flex-col items-center justify-center w-full h-full space-y-1 text-[#14274E] hover:text-[#14274E]/80 transition-transform active:scale-95 group"
         >
           <div className="relative">
-            <div className={[
-              'w-8 h-8 rounded-full flex items-center justify-center transition-all',
-              hasActiveAssist ? 'bg-amber-500 text-white animate-pulse shadow-sm' : 'bg-[#14274E]/10 text-[#14274E] group-hover:scale-110',
-            ].join(' ')}>
+            <div
+              className={[
+                'w-8 h-8 rounded-full flex items-center justify-center transition-all',
+                hasActiveAssist
+                  ? 'bg-amber-500 text-white animate-pulse shadow-sm'
+                  : 'bg-[#14274E]/10 text-[#14274E] group-hover:scale-110',
+              ].join(' ')}
+            >
               <BellRing className="w-4 h-4" />
             </div>
             {hasActiveAssist && (
               <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full ring-2 ring-white" />
             )}
           </div>
-          <span className={[
-            'text-[11px] tracking-wide font-extrabold',
-            hasActiveAssist ? 'text-amber-600' : 'text-[#14274E]',
-          ].join(' ')}>
+          <span
+            className={[
+              'text-[11px] tracking-wide font-extrabold',
+              hasActiveAssist ? 'text-amber-600' : 'text-[#14274E]',
+            ].join(' ')}
+          >
             {hasActiveAssist ? 'Staff Alerted' : 'Assist'}
           </span>
         </button>

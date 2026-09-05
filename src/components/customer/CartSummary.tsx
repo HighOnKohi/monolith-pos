@@ -22,8 +22,8 @@ export function CartSummary({
   if (itemCount === 0) return null
 
   return (
-    <div className="fixed bottom-[72px] inset-x-0 z-30 px-4 pointer-events-none">
-      <div className="bg-white rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-[#9BA4B4]/15 p-4 pointer-events-auto">
+    <div className="fixed bottom-[72px] inset-x-0 z-30 px-4 pointer-events-none animate-slide-up">
+      <div className="bg-white rounded-3xl shadow-[0_8px_30px_rgba(0,0,0,0.16)] border border-[#9BA4B4]/20 p-4 pointer-events-auto transition-all duration-200">
         
         {/* Dining Type Toggle */}
         <div className="mb-4">
