@@ -35,6 +35,10 @@ No POS features, authentication, or business logic have been implemented.
 - **Vite** 6
 - **React Router** 7 (`createBrowserRouter`, Data API)
 - **Tailwind CSS** 4 (CSS-first, `@tailwindcss/vite` plugin)
+- **Lucide React** — icons
+
+### Auth / Backend
+- **Supabase** (`@supabase/supabase-js`) — Auth connected (email/password)
 
 ### Hosting
 - **Vercel** — SPA rewrite configured in `vercel.json`
@@ -125,13 +129,13 @@ monolith-pos/
 
 ## Not Implemented
 
-- [ ] Supabase integration (client, auth, database, realtime, storage)
-- [ ] Authentication / authorization
-- [ ] Protected routes / role guards
-- [ ] POS interface
-- [ ] Products / categories / inventory
-- [ ] Orders / cart / payments
-- [ ] Reporting / analytics
+- [ ] POS / kitchen / cashier business logic
+- [ ] Database tables / RLS policies
+- [ ] Supabase Realtime subscriptions
+- [ ] Supabase Storage
+- [ ] Role-based access control
+- [ ] Menu / table / order CRUD
+- [ ] Analytics charts
 - [ ] External integrations (printers, barcode scanners, payment terminals)
 
 ---
@@ -183,6 +187,14 @@ All `src/` imports use `@/` alias (e.g., `import RootLayout from '@/layouts/Root
 
 ---
 
+## Test Accounts
+
+| Email | Password | Role |
+|---|---|---|
+| `taponakawnt123@gmail.com` | `test123` | Development test account |
+
+---
+
 ## Known Issues
 
 None currently known.
@@ -190,6 +202,19 @@ None currently known.
 ---
 
 ## Development History
+
+### 2026-09-05 — Restaurant Management Skeleton + Auth
+
+- Installed `@supabase/supabase-js` and `lucide-react`
+- Connected Supabase Auth (email/password login/logout)
+- Built `AuthContext`, `useAuth`, `ProtectedRoute`
+- Built `AppLayout`, `AppHeader`, `AppSidebar` (mobile drawer + desktop persistent)
+- Built navigation from centralized `src/config/navigation.ts`
+- Created 8 page skeletons: Kitchen, Cashier, Customer, Tables, Menu, Analytics, Accounts, Order Logs
+- Built UI design system: `Button`, `Input`, `Card`, `PageHeader`, `EmptyState`
+- Rewrote routes: protected routes, public login, `/` → `/kitchen` redirect
+- Removed old placeholder pages (Home, Dashboard, POS)
+- Created `PROJECT_CONTEXT.md`
 
 ### 2026-09-05 — Initial Foundation
 
