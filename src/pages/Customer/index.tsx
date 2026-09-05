@@ -167,13 +167,6 @@ export default function CustomerPage() {
         </div>
       )}
 
-      {activeTab === 'tables' && (
-        <div className="flex flex-col items-center justify-center py-32 px-6 text-center">
-          <h2 className="text-xl font-bold text-[#14274E] mb-2">Tables</h2>
-          <p className="text-[#9BA4B4]">Table management is for staff only.</p>
-        </div>
-      )}
-
       {activeTab === 'settings' && (
         <div className="flex flex-col items-center justify-center py-32 px-6 text-center">
           <h2 className="text-xl font-bold text-[#14274E] mb-2">Settings</h2>

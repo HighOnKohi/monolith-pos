@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS public."Bill_Requests" (
   "STATUS"         text NOT NULL DEFAULT 'REQUESTED',
   "REQUESTED_AT"   timestamp without time zone DEFAULT now(),
   CONSTRAINT "Bill_Requests_pkey" PRIMARY KEY ("REQUEST_ID"),
+  CONSTRAINT "bill_requests_table_id_fkey" FOREIGN KEY ("TABLE_ID") REFERENCES public."Restaurant_Tables"("TABLE_ID") ON DELETE CASCADE,
+  CONSTRAINT "bill_requests_order_id_fkey" FOREIGN KEY ("ORDER_ID") REFERENCES public."Restaurant_Orders"("ORDER_ID") ON DELETE SET NULL,
   CONSTRAINT "bill_requests_payment_check" CHECK (
     "PAYMENT_METHOD" = ANY(ARRAY['CASH'::text, 'CREDIT_CARD'::text, 'INSTAPAY_QR'::text])
   ),

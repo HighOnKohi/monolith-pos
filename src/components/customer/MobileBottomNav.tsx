@@ -1,6 +1,6 @@
-import { Utensils, Grid2X2, ReceiptText, Settings } from 'lucide-react'
+import { Utensils, ReceiptText, Settings } from 'lucide-react'
 
-export type TabType = 'menu' | 'tables' | 'orders' | 'settings'
+export type TabType = 'menu' | 'orders' | 'settings'
 
 interface MobileBottomNavProps {
   activeTab: TabType
@@ -10,7 +10,6 @@ interface MobileBottomNavProps {
 
 const navItems: { id: TabType; label: string; icon: typeof Utensils }[] = [
   { id: 'menu', label: 'Menu', icon: Utensils },
-  { id: 'tables', label: 'Tables', icon: Grid2X2 },
   { id: 'orders', label: 'Orders', icon: ReceiptText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
