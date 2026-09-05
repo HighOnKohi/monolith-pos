@@ -2,7 +2,7 @@
 
 export type DietaryType = 'veg' | 'non-veg'
 
-export type BadgeType = 'popular' | 'discount' | 'chef-pick'
+export type BadgeType = 'popular' | 'discount' | 'chef-pick' | 'best-seller'
 
 export interface ItemBadge {
   label: string
@@ -24,6 +24,7 @@ export interface MenuItem {
   isAvailable: boolean
   isSoldOut: boolean
   badge?: ItemBadge
+  isBestSeller?: boolean
 }
 
 export const DEFAULT_FOOD_PLACEHOLDER =

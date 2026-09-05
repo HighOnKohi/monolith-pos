@@ -8,7 +8,8 @@ interface AppSidebarProps {
   onClose: () => void
 }
 
-export function AppSidebar({ }: AppSidebarProps) {
+export function AppSidebar(props: AppSidebarProps) {
+  void props
   const [collapsed, setCollapsed] = useState(false)
 
   return (
