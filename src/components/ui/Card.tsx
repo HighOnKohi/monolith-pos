@@ -9,7 +9,7 @@ export function Card({ children, className = '' }: CardProps) {
   return (
     <div
       className={[
-        'rounded-xl border border-secondary/15 bg-white p-4 shadow-xs',
+        'app-card rounded-xl border border-secondary/15 bg-white p-4 shadow-xs',
         className,
       ].join(' ')}
     >

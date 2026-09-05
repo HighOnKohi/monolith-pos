@@ -119,32 +119,38 @@ export default function MenuManagerPage() {
   const activeLabel = categories.find((c: Category) => c.id === activeCat)?.name ?? 'All'
 
   return (
-    <div className="menu-manager-page-container">
+    <div className="menu-manager-page-container staff-page">
 
       {/* ── LEFT: Menu browser ───────────────────────────── */}
       <div className="inner-menu-manager-page-container">
 
-        {/* Search bar */}
-        <div className="flex items-center gap-2 rounded-xl bg-white border border-[#9BA4B4]/30 px-3 py-2">
-          <Search className="h-4 w-4 shrink-0 text-[#9BA4B4]" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1) }}
-            placeholder="Search menu items, categories, SKU..."
-            className="flex-1 bg-transparent text-sm text-[#14274E] placeholder:text-[#9BA4B4] outline-none"
-          />
-        </div>
-
-        {/* Add Category button */}
-        <div className="flex justify-end">
-          <button
-            onClick={handleAddCategory}
-            className="flex items-center gap-1.5 rounded-xl border border-[#14274E]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#14274E] hover:bg-[#14274E] hover:text-white transition-colors"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add Category
-          </button>
+        <div className="menu-toolbar">
+          <div className="menu-search flex items-center gap-2 rounded-xl bg-white border border-[#9BA4B4]/30 px-3 py-2">
+            <Search className="h-4 w-4 shrink-0 text-[#9BA4B4]" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1) }}
+              placeholder="Search menu items, categories, SKU..."
+              className="flex-1 bg-transparent text-sm text-[#14274E] placeholder:text-[#9BA4B4] outline-none"
+            />
+          </div>
+          <div className="menu-top-actions">
+            <button
+              onClick={handleAddCategory}
+              className="flex items-center gap-1.5 rounded-xl border border-[#14274E]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#14274E] hover:bg-[#14274E] hover:text-white transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add Category
+            </button>
+            <button
+              onClick={handleAddDish}
+              className="flex items-center gap-1.5 rounded-xl bg-[#14274E] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#394867] transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add Dish
+            </button>
+          </div>
         </div>
 
         {/* Category strip */}
@@ -193,17 +199,6 @@ export default function MenuManagerPage() {
             className="shrink-0 flex h-8 w-8 items-center justify-center rounded-lg border border-[#9BA4B4]/30 bg-white text-[#394867] hover:bg-[#F1F6F9] transition-colors"
           >
             <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Add Dish button */}
-        <div className="flex justify-end">
-          <button
-            onClick={handleAddDish}
-            className="flex items-center gap-1.5 rounded-xl bg-[#14274E] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#394867] transition-colors"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add Dish
           </button>
         </div>
 

@@ -134,7 +134,7 @@ export default function KitchenPage() {
   })
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="kitchen-page-container staff-page space-y-5 animate-fade-in">
       <PageHeader
         title="Kitchen Interface"
         description="Verify stock for incoming orders, accept or cancel with reasons, and manage cooking queue."

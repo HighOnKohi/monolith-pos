@@ -287,7 +287,7 @@ export default function CashierPage() {
   }
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="cashier-page-container staff-page space-y-5 animate-fade-in">
       <PageHeader
         title="Cashier Interface"
         description="Check out tables, acknowledge verified orders & process live bill requests."
