@@ -14,10 +14,10 @@ function mapItem(row: Record<string, unknown>): MenuItem {
     price: Number(row['ITEM_PRICE']),
     categoryId: String(row['CATEGORY_ID']),
     dietaryType: 'non-veg', // DB doesn't have dietary type yet; default non-veg
-    imageUrl: (row['IMAGE_URL'] as string | undefined) ?? FALLBACK_IMAGES.default,
+    imageUrl: (row['ITEM_IMAGE_URL'] as string | undefined) ?? FALLBACK_IMAGES.default,
     isAvailable: row['ITEM_STATUS'] !== 'OUT_OF_STOCK',
     isSoldOut: row['ITEM_STATUS'] === 'OUT_OF_STOCK',
-    description: (row['DESCRIPTION'] as string | undefined) ?? undefined,
+    description: (row['ITEM_DESCRIPTION'] as string | undefined) ?? undefined,
   }
 }
 
