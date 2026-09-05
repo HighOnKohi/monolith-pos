@@ -129,6 +129,73 @@ export async function fetchCategories(items: MenuItem[]): Promise<Category[]> {
   return [allCategory, bestSellersCategory, ...categoryRows]
 }
 
+// ── Admin / Menu Manager mutations ────────────────────────────────────────────
+
+export async function createMenuItem(payload: {
+  name: string
+  price: number
+  categoryId: string
+  dietaryType: string
+  imageUrl?: string
+  description?: string
+}): Promise<MenuItem> {
+  const { data, error } = await supabase
+    .from('Menu_Items')
+    .insert({
+      ITEM_NAME: payload.name,
+      ITEM_PRICE: payload.price,
+      CATEGORY_ID: Number(payload.categoryId),
+      ITEM_STATUS: 'AVAILABLE',
+      ITEM_IMAGE: payload.imageUrl ?? null,
+      ITEM_DESCRIPTION: payload.description ?? null,
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+  return mapItem(data as Record<string, unknown>)
+}
+
+export async function updateMenuItem(id: string, patch: {
+  name?: string
+  price?: number
+  categoryId?: string
+  dietaryType?: string
+  isAvailable?: boolean
+  imageUrl?: string
+  description?: string
+}): Promise<void> {
+  const update: Record<string, unknown> = {}
+  if (patch.name        !== undefined) update['ITEM_NAME']        = patch.name
+  if (patch.price       !== undefined) update['ITEM_PRICE']       = patch.price
+  if (patch.categoryId  !== undefined) update['CATEGORY_ID']      = Number(patch.categoryId)
+  if (patch.imageUrl    !== undefined) update['ITEM_IMAGE']       = patch.imageUrl
+  if (patch.description !== undefined) update['ITEM_DESCRIPTION'] = patch.description
+  if (patch.isAvailable !== undefined) update['ITEM_STATUS']      = patch.isAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK'
+
+  const { error } = await supabase.from('Menu_Items').update(update).eq('ITEM_ID', Number(id))
+  if (error) throw error
+}
+
+export async function deleteMenuItem(id: string): Promise<void> {
+  const { error } = await supabase.from('Menu_Items').delete().eq('ITEM_ID', Number(id))
+  if (error) throw error
+}
+
+export async function createCategory(name: string): Promise<Category> {
+  const { data, error } = await supabase
+    .from('Menu_Categories')
+    .insert({ CATEGORY_NAME: name })
+    .select()
+    .single()
+
+  if (error) throw error
+  const row = data as Record<string, unknown>
+  return { id: String(row['CATEGORY_ID']), name: String(row['CATEGORY_NAME']), count: 0 }
+}
+
+// ── Table lookup ──────────────────────────────────────────────────────────────
+
 export async function fetchTableByNumber(tableNum: string | number): Promise<{ id: number; label: string } | null> {
   const { data, error } = await supabase
     .from('Restaurant_Tables')
