@@ -44,7 +44,7 @@ export function AppSidebar({ }: AppSidebarProps) {
         ))}
       </nav>
 
-      {/* Collapse toggle button */}
+      {/* ======== SIDEBAR BOTTOM BUTTONS — edit buttons here ======== */}
       <div className="shrink-0 border-t border-secondary/15 p-2">
         <button
           onClick={() => setCollapsed((v) => !v)}
