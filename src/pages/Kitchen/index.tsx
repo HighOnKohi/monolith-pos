@@ -5,7 +5,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 
 export default function KitchenPage() {
   return (
-    <div className="space-y-5">
+    <div className="kitchen-page-container space-y-5">
       <PageHeader
         title="Kitchen Interface"
         description="View live orders & start cooking queue."

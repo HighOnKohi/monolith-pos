@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 
 export default function TableManagerPage() {
   return (
-    <div className="space-y-5">
+    <div className="table-manager-page-container space-y-5">
       <PageHeader
         title="Table Manager"
         description="Restaurant layout, tables & QR code generator."

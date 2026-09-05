@@ -68,7 +68,7 @@ export default function CashierPage() {
   }, [])
 
   return (
-    <div className="space-y-5">
+    <div className="cashier-page-container space-y-5">
       <PageHeader
         title="Cashier Interface"
         description="Check out tables, manage bills & print receipts."

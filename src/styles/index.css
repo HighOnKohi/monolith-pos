@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* Page-specific styles */
+@import "./page-styles/kitchen.css";
+@import "./page-styles/cashier.css";
+@import "./page-styles/menu-manager.css";
+@import "./page-styles/table-manager.css";
+@import "./page-styles/order-logs.css";
+@import "./page-styles/analytics.css";
+@import "./page-styles/account-manager.css";
+
 
 
 /*
