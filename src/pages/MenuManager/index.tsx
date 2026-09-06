@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Search, Plus, ChevronLeft, ChevronRight, Edit2, Trash2, X, Upload } from 'lucide-react'
+import { Search, Plus, ChevronLeft, ChevronRight, Edit2, Trash2, X, Utensils, Coffee, CakeSlice, Salad, Soup } from 'lucide-react'
 import { useMenu } from '@/hooks/useMenu'
 import {
   createMenuItem,
@@ -25,6 +25,8 @@ export default function MenuManagerPage() {
   const [formCatId,     setFormCatId]     = useState('')
   const [formDietary,   setFormDietary]   = useState<'veg' | 'non-veg'>('non-veg')
   const [formAvailable, setFormAvailable] = useState(true)
+  const [formImage,     setFormImage]     = useState('')
+  const [formDescription, setFormDescription] = useState('')
 
   const catScrollRef = useRef<HTMLDivElement>(null)
 
@@ -50,6 +52,8 @@ export default function MenuManagerPage() {
     setFormCatId(item.categoryId)
     setFormDietary(item.dietaryType)
     setFormAvailable(item.isAvailable)
+    setFormImage(item.imageUrl ?? '')
+    setFormDescription(item.description ?? '')
   }
 
   function handleClose() {
@@ -67,6 +71,8 @@ export default function MenuManagerPage() {
         categoryId:  formCatId,
         dietaryType: formDietary,
         isAvailable: formAvailable,
+        imageUrl: formImage,
+        description: formDescription,
       })
       reload()
       handleClose()
@@ -95,19 +101,28 @@ export default function MenuManagerPage() {
     reload()
   }
 
-  // ── Add Dish ───────────────────────────────────────────────────────────────
+  // ── Add Item ────────────────────────────────────────────────────────────────
   async function handleAddDish() {
-    const firstRealCat = categories.find(c => c.id !== 'all')
-    if (!firstRealCat) return
+    const activeCategory = categories.find(c => c.id === activeCat && c.id !== 'all' && c.id !== 'best_sellers')
+      ?? categories.find(c => c.id !== 'all' && c.id !== 'best_sellers')
+    if (!activeCategory) return
 
-    const created = await createMenuItem({
-      name:        'New Dish',
-      price:       0,
-      categoryId:  firstRealCat.id,
+    const name = window.prompt('Name:')
+    if (!name?.trim()) return
+    const price = window.prompt('Price:')
+    if (price === null || Number.isNaN(Number(price))) return
+    const imageUrl = window.prompt('Image:') ?? ''
+    const description = window.prompt('Description:') ?? ''
+
+    await createMenuItem({
+      name: name.trim(),
+      price: Number(price),
+      categoryId: activeCategory.id,
       dietaryType: 'non-veg',
+      imageUrl: imageUrl.trim(),
+      description: description.trim(),
     })
     reload()
-    handleEdit({ ...created })
   }
 
   // ── Pagination ─────────────────────────────────────────────────────────────
@@ -122,89 +137,61 @@ export default function MenuManagerPage() {
     <div className="menu-manager-page-container staff-page">
 
       {/* ── LEFT: Menu browser ───────────────────────────── */}
-      <div className="inner-menu-manager-page-container">
+      <div className="inner-menu-manager-container">
 
-        <div className="menu-toolbar">
+        <div className="menu-item-searchbar-container">
           <div className="menu-search flex items-center gap-2 rounded-xl bg-white border border-[#9BA4B4]/30 px-3 py-2">
-            <Search className="h-4 w-4 shrink-0 text-[#9BA4B4]" />
+            <Search className="menu-searchbar-icon" />
             <input
               type="text"
               value={search}
               onChange={e => { setSearch(e.target.value); setPage(1) }}
               placeholder="Search menu items, categories, SKU..."
-              className="flex-1 bg-transparent text-sm text-[#14274E] placeholder:text-[#9BA4B4] outline-none"
+              className="menu-searchbar-input flex-1 bg-transparent outline-none"
             />
           </div>
-          <div className="menu-top-actions">
-            <button
-              onClick={handleAddCategory}
-              className="flex items-center gap-1.5 rounded-xl border border-[#14274E]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#14274E] hover:bg-[#14274E] hover:text-white transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add Category
-            </button>
-            <button
-              onClick={handleAddDish}
-              className="flex items-center gap-1.5 rounded-xl bg-[#14274E] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#394867] transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add Dish
-            </button>
-          </div>
         </div>
 
-        {/* Category strip */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => scrollCats('left')}
-            className="shrink-0 flex h-8 w-8 items-center justify-center rounded-lg border border-[#9BA4B4]/30 bg-white text-[#394867] hover:bg-[#F1F6F9] transition-colors"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-
-          <div
-            ref={catScrollRef}
-            className="flex flex-1 gap-2 overflow-x-auto scroll-smooth"
-            style={{ scrollbarWidth: 'none' }}
-          >
-            {categories.map((cat: Category) => (
-              <button
-                key={cat.id}
-                onClick={() => { setActiveCat(cat.id); setPage(1) }}
-                className={[
-                  'shrink-0 flex flex-col items-center rounded-xl border px-5 py-3 transition-all',
-                  activeCat === cat.id
-                    ? 'border-[#14274E] bg-white shadow-sm'
-                    : 'border-[#9BA4B4]/20 bg-white text-[#394867] hover:border-[#14274E]/30',
-                ].join(' ')}
-              >
-                <span className={[
-                  'text-sm font-bold',
-                  activeCat === cat.id ? 'text-[#14274E]' : 'text-[#394867]',
-                ].join(' ')}>
-                  {cat.name}
-                </span>
-                <div className="flex items-center gap-1 mt-0.5">
-                  {activeCat === cat.id && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#E9C46A]" />
-                  )}
-                  <span className="text-xs text-[#9BA4B4]">{cat.count} Items</span>
-                </div>
-              </button>
-            ))}
+        <section className="menu-item-category-buttons-section">
+          <div className="menu-item-category-buttons-header">
+            <button type="button" onClick={handleAddCategory}>
+              <Plus className="menu-manager-plus-icon" /> Add Category
+            </button>
           </div>
-
-          <button
-            onClick={() => scrollCats('right')}
-            className="shrink-0 flex h-8 w-8 items-center justify-center rounded-lg border border-[#9BA4B4]/30 bg-white text-[#394867] hover:bg-[#F1F6F9] transition-colors"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => scrollCats('left')} className="menu-item-category-arrow menu-item-category-arrow-left">
+              <ChevronLeft className="menu-item-category-arrow-icon" />
+            </button>
+            <div ref={catScrollRef} className="menu-item-category-buttons-container flex flex-1 gap-2 overflow-x-auto scroll-smooth" style={{ scrollbarWidth: 'none' }}>
+              {categories.map((cat: Category, index) => {
+                const CategoryIcon = [Utensils, Coffee, CakeSlice, Salad, Soup][index % 5]
+                return (
+                  <button type="button" key={cat.id} onClick={() => { setActiveCat(cat.id); setPage(1) }} className={[
+                    'menu-item-category-button shrink-0 flex flex-col items-center rounded-xl border px-5 py-3 transition-all',
+                    activeCat === cat.id ? 'is-active' : '',
+                  ].join(' ')}>
+                    <CategoryIcon className="menu-item-category-icon" />
+                    <span className="menu-item-category-title">{cat.name}</span>
+                    <span className="self-stretch text-left text-xs text-[#9BA4B4]">{cat.count} Items</span>
+                  </button>
+                )
+              })}
+            </div>
+            <button type="button" onClick={() => scrollCats('right')} className="menu-item-category-arrow menu-item-category-arrow-right">
+              <ChevronRight className="menu-item-category-arrow-icon" />
+            </button>
+          </div>
+        </section>
 
         {/* Item grid */}
-        <div className="flex-1 overflow-y-auto">
-          {loadState === 'loading' && (
+        <section className="menu-item-grid">
+          <div className="menu-item-card-header">
+            <button type="button" onClick={handleAddDish}>
+              <Plus className="menu-item-add-icon" /> Add Item
+            </button>
+          </div>
+          <div className="menu-item-card-grid">
+            {loadState === 'loading' && (
             <div className="flex h-full items-center justify-center text-sm text-[#9BA4B4]">
               Loading menu...
             </div>
@@ -215,12 +202,12 @@ export default function MenuManagerPage() {
             </div>
           )}
           {(loadState === 'loaded' || loadState === 'empty') && (
-            <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 pb-2">
+            <div className="menu-item-card-grid-content">
               {paginated.map((item) => (
                 <div
                   key={item.id}
                   className={[
-                    'relative flex flex-col rounded-xl border bg-white overflow-hidden transition-all',
+                    'menu-item-card-container relative flex flex-col rounded-xl border bg-white overflow-hidden transition-all',
                     editingId === item.id
                       ? 'border-[#14274E] shadow-md'
                       : 'border-[#9BA4B4]/20 hover:border-[#14274E]/30',
@@ -234,21 +221,21 @@ export default function MenuManagerPage() {
                   )}
 
                   {/* Image */}
-                  <div className="h-32 w-full overflow-hidden bg-[#F1F6F9]">
+                  <div className="menu-item-image-container h-32 w-full overflow-hidden">
                     <img
                       src={item.imageUrl}
                       alt={item.name}
-                      className="h-full w-full object-cover"
+                      className="menu-item-image h-full w-full object-cover"
                     />
                   </div>
 
                   {/* Info */}
                   <div className="flex flex-col gap-1 p-2.5">
-                    <p className="text-sm font-semibold text-[#14274E] line-clamp-2">{item.name}</p>
+                    <p className="menu-item-name text-sm font-semibold text-[#14274E] line-clamp-2">{item.name}</p>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold text-[#14274E]">${item.price.toFixed(2)}</span>
+                      <span className="menu-item-price text-sm font-bold text-[#14274E]">${item.price.toFixed(2)}</span>
                       <span className={[
-                        'flex items-center gap-1 text-[10px] font-semibold',
+                        ' gap-1 text-[10px] font-semibold',
                         item.dietaryType === 'veg' ? 'text-yellow-600' : 'text-[#C94A4A]',
                       ].join(' ')}>
                         <span className={[
@@ -260,11 +247,11 @@ export default function MenuManagerPage() {
                     </div>
 
                     {/* Card actions */}
-                    <div className="flex gap-1.5 mt-1">
+                    <div className="menu-item-footer flex gap-1.5 mt-1">
                       <button
                         onClick={() => handleEdit(item)}
                         className={[
-                          'flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-semibold transition-colors',
+                          'edit-menu-item-button flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-semibold transition-colors',
                           editingId === item.id
                             ? 'bg-[#14274E] text-white'
                             : 'border border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
@@ -280,7 +267,7 @@ export default function MenuManagerPage() {
                           if (editingId === item.id) handleClose()
                           reload()
                         }}
-                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#C94A4A]/30 text-[#C94A4A] hover:bg-red-50 transition-colors"
+                        className="delete-menu-item-button flex h-7 w-7 items-center justify-center rounded-lg border border-[#C94A4A]/30 text-[#C94A4A] hover:bg-red-50 transition-colors"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -334,10 +321,11 @@ export default function MenuManagerPage() {
             </button>
           </div>
         </div>
+        </section>
       </div>
 
-      {/* ── RIGHT: Order sidebar — always visible, flush to container edges ─── */}
-      <div className="order-sidebar">
+      {/* Order sidebar removed from the Menu Manager layout. */}
+      {false && <div className="menu-manager-order-sidebar order-sidebar">
 
         {selectedItem ? (
           <>
@@ -346,8 +334,8 @@ export default function MenuManagerPage() {
               <div>
                 <p className="text-sm font-bold text-[#14274E]">Edit Dish</p>
                 <p className="text-[10px] text-[#9BA4B4]">
-                  ID: #{selectedItem.id} •{' '}
-                  {categories.find((c: Category) => c.id === selectedItem.categoryId)?.name ?? '—'}
+                  ID: #{selectedItem?.id} •{' '}
+                  {categories.find((c: Category) => c.id === selectedItem?.categoryId)?.name ?? '—'}
                 </p>
               </div>
               <button onClick={handleClose} className="text-[#9BA4B4] hover:text-[#14274E] transition-colors">
@@ -378,14 +366,16 @@ export default function MenuManagerPage() {
                 <p className="mb-1.5 text-xs font-semibold text-[#394867]">Item Imagery</p>
                 <div className="flex items-center gap-3">
                   <img
-                    src={selectedItem.imageUrl}
-                    alt={selectedItem.name}
+                    src={selectedItem?.imageUrl ?? ''}
+                    alt={selectedItem?.name ?? ''}
                     className="h-14 w-14 rounded-lg object-cover border border-[#9BA4B4]/20"
                   />
-                  <button className="flex items-center gap-1.5 rounded-lg border border-[#9BA4B4]/30 px-3 py-1.5 text-xs font-semibold text-[#394867] hover:bg-[#F1F6F9] transition-colors">
-                    <Upload className="h-3.5 w-3.5" />
-                    Change Photo
-                  </button>
+                  <input
+                    value={formImage}
+                    onChange={e => setFormImage(e.target.value)}
+                    placeholder="Image URL"
+                    className="min-w-0 flex-1 rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-xs text-[#14274E] outline-none focus:border-[#14274E]"
+                  />
                 </div>
               </div>
 
@@ -399,6 +389,17 @@ export default function MenuManagerPage() {
                 />
               </div>
 
+              {/* Description */}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#394867]">Description</label>
+                <textarea
+                  value={formDescription}
+                  onChange={e => setFormDescription(e.target.value)}
+                  rows={3}
+                  className="w-full resize-none rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] outline-none focus:border-[#14274E] transition-colors"
+                />
+              </div>
+
               {/* Category + Price */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -408,7 +409,7 @@ export default function MenuManagerPage() {
                     onChange={e => setFormCatId(e.target.value)}
                     className="w-full rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] bg-white outline-none focus:border-[#14274E] transition-colors"
                   >
-                    {categories.filter((c: Category) => c.id !== 'all').map((c: Category) => (
+                    {categories.filter((c: Category) => c.id !== 'all' && c.id !== 'best_sellers').map((c: Category) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
@@ -503,7 +504,7 @@ export default function MenuManagerPage() {
             <p className="text-xs text-[#9BA4B4]">Click Edit on any dish to manage its details here.</p>
           </div>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

@@ -1,0 +1,26 @@
+Restaurant_Tables
+
+TABLE_ID
+- this is a unique identifier for each table and has a separate purpose from TABLE_NUM
+
+TABLE_NUM
+- this is a number associated to the table for numbering them 
+
+STATUS
+- this is a status that tells if the table is:
+
+a. OCCUPIED
+b. AVAILABLE
+c. RESERVED
+
+GUEST_CAPACITY
+- this serves as a quantity that designates how many people can sit at the table
+
+CURRENT_GUEST_COUNT
+- this serves as how many people are currently sitting at the table
+
+RESERVED_SINCE
+- this is assigned a value whenever the table is reserved to provide information from when it is reserved incase the system wants to cancel the reservation if an allotted time has passed
+
+BILL_OUT_REQUESTED
+- this is a Boolean that designates whether the customer has requested to bill out via the customer interface and not the cashier

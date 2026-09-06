@@ -1,0 +1,21 @@
+ITEM_ID
+- This serves as a unique identifier and is used by other tables so by accessing this they can see the information of the item like their names, prices, descriptions just by having the id
+
+CATEGORY_ID
+- This serves as the category this item is for, it is from Menu_Categories
+
+ITEM_NAME
+- This is basically the name of the menu item
+
+ITEM_DESCRIPTION
+- This is basically the description of the menu item
+
+ITEM_PRICE
+- This is basically the price of the item
+
+ITEM_IMAGE_URL
+- This contains the url for the image of the item
+
+ITEM_STATUS
+- This can be assigned either "AVAILABLE" or "OUT_OF_STOCK" depending if the kitchen has marked them as available or out of stock
+

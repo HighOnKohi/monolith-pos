@@ -1,0 +1,33 @@
+Restaurant_Orders
+
+ORDER_ID
+- This serves as a unique identifier for each customer order for when information is needed from an order
+
+TABLE_ID
+- This serves as the connection to tell which table this order belongs to, this is in relation with the TABLE_ID from Restaurant_Tables
+
+REQUESTED_FROM
+- This can be assigned either "Customer" and "Cashier" and will be assigned based from where the order is requested from. if the customer using the customer interface requests an order, it will be assigned CUSTOMER, but if the cashier punches an order, the requested_from will be assigned "CASHIER"
+
+ORDER_TYPE
+- This can be assigned either TAKEOUT or DINE_IN and is assigned via the cashier interface or customer interface 
+
+ORDER_STATUS
+- This serves as a tracker for the order which can be used by the customer interface so they can track their order
+
+it can be assigned:
+
+REQUESTED - when the order is sent to the kitchen so they can verify if the ordered items is available and not out of stock
+
+PREPARING - when the order is verified and is now being prepared by the kitchen
+
+READY - when the order is ready which is assigned by the kitchen
+
+SUBTOTAL_BILL
+- This is the total bill before any discount is applied
+
+TOTAL_BILL
+- This is the total bill after ALL discount is applied
+
+TIME
+- This is when the order was requested

@@ -1,0 +1,26 @@
+DISCOUNT_ID
+- This is the identifier for the discount so either the table itself or the item's discounts can be found simply by accessing this identifier
+
+ORDER_ID
+- This is the id of an order if an order wants to have discounts which is applied to the whole bill
+
+ORDER_ITEM_ID
+- This is the id of an Order_Item if a discount is applied to a specific order_item
+
+PWD
+- This is a Boolean that indicates if the pwd is applied
+
+PWD_AMOUNT
+- This is a quantity that indicates how many pwd personnel has presented cards
+
+SENIOR
+- This is a Boolean that indicates if the senior discount is applied
+
+SENIOR_AMOUNT
+- This is a quantity that indicates how many senior personnel has presented cards
+
+CUSTOM_PERCENT
+- This is a percentage discount that uses an integer from 0 to 100 that acts as a custom discount for any situation
+
+PESO_DISCOUNT
+- This is a float discount that acts as a custom discount for any situation

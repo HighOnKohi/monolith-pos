@@ -17,10 +17,10 @@ export function NavigationItem({ item, onNavigate, collapsed }: NavigationItemPr
       title={collapsed ? item.title : undefined}
       className={({ isActive }) =>
         [
-          'flex items-center rounded-lg px-3 py-2.5 transition-colors duration-150',
+          'Nav-button flex items-center transition-colors duration-150',
           collapsed ? 'justify-center gap-0' : 'gap-3',
           isActive
-            ? 'bg-primary/8 text-primary'
+            ? 'is-active bg-primary/8 text-primary'
             : 'text-secondary hover:bg-secondary/8 hover:text-primary',
         ].join(' ')
       }
@@ -29,20 +29,17 @@ export function NavigationItem({ item, onNavigate, collapsed }: NavigationItemPr
         <>
           <div
             className={[
-              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border',
+              'Nav-button-icon',
               isActive
-                ? 'border-primary/20 bg-primary/8 text-primary'
-                : 'border-secondary/20 bg-background text-secondary',
+                ? 'text-primary'
+                : 'text-secondary',
             ].join(' ')}
           >
-            <Icon className="h-4 w-4" strokeWidth={1.75} />
+            <Icon className="Nav-button-icon-svg" strokeWidth={1.75} />
           </div>
           {!collapsed && (
-            <div className="min-w-0">
-              <p className="text-sm font-semibold leading-tight truncate">{item.title}</p>
-              <p className="text-xs text-muted leading-tight truncate mt-0.5">
-                {item.description}
-              </p>
+            <div className="Nav-button-title">
+              <p className="Nav-button-title-main">{item.title}</p>
             </div>
           )}
         </>

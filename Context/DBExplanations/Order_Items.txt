@@ -1,0 +1,25 @@
+ORDER_ITEM_ID
+- This is a unique identifier for order items
+
+ORDER_ID
+- This is the order from where this item is for. 
+
+ITEM_ID
+- This is the id of the menu item this order_item is which contains the name, price, any other info needed from Menu_Items table
+
+DISCOUNT_ID
+- This is the discount ID this order_item is which contains all discount information for this specific order_item
+
+ORDER_ITEM_STATUS
+- This can be assigned:
+
+a. Pending - this is when the order this order item is from is sent to the kitchen and has to be verified to check if this item can still be made and isn't out of stock
+
+b. Preparing - this is when the order this order item is from is verified and is now being prepared in the kitchen 
+
+c. Done - this is when the kitchen has marked this item as done and can be sent to the table
+
+d. Canceled - this is when the item is cancelled when the kitchen has marked it as cancelled because it is out of stock it can be assigned cancelled even if the order is still pending
+
+
+

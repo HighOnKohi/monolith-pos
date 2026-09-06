@@ -15,28 +15,23 @@ export function AppSidebar(props: AppSidebarProps) {
   return (
     <aside
       className={[
-        'hidden lg:flex flex-col shrink-0 h-full bg-white border-r border-secondary/15 transition-all duration-200',
-        collapsed ? 'w-16' : 'w-72',
+        'app-sidebar hidden lg:flex flex-col shrink-0 h-full bg-white border-r border-secondary/15 transition-all duration-200',
+        collapsed ? 'sidebar-collapsed' : 'sidebar-expanded',
       ].join(' ')}
       aria-label="Application navigation"
     >
-      <div className="flex h-[72px] shrink-0 items-center px-5 overflow-hidden">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-sm font-black text-white shadow-sm">M</span>
-        {!collapsed && (
-          <span className="ml-2.5 text-base font-extrabold tracking-tight text-primary">Monolith</span>
-        )}
+      <div className="Sidebar-header">
+        <span className="Sidebar-header-logo">M</span>
+        {!collapsed && <span className="Sidebar-header-title">Monolith</span>}
       </div>
 
-      {/* Navigation sections */}
-      <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-5">
+      <nav className="Sidebar-nav-buttons-container">
         {navigation.map((section) => (
-          <div key={section.section}>
-            {!collapsed && (
-              <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-muted">
-                {section.section}
-              </p>
-            )}
-            <div className="space-y-0.5">
+          <div className="Nav-category" key={section.section}>
+            <p className={['Nav-category-header', collapsed ? 'is-hidden' : ''].join(' ')}>
+              {section.section}
+            </p>
+            <div className="Nav-category-buttons">
               {section.items.map((item) => (
                 <NavigationItem key={item.path} item={item} collapsed={collapsed} />
               ))}
@@ -46,15 +41,15 @@ export function AppSidebar(props: AppSidebarProps) {
       </nav>
 
       {/* ======== SIDEBAR BOTTOM BUTTONS — edit buttons here ======== */}
-      <div className="shrink-0 border-t border-secondary/15 p-2">
+      <div className="Sidebar-footer">
         <button
           onClick={() => setCollapsed((v) => !v)}
-          className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm text-muted hover:bg-background hover:text-primary transition-colors"
+          className="Sidebar-footer-button"
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           {collapsed
-            ? <PanelLeftOpen className="h-4 w-4 shrink-0" />
-            : <><PanelLeftClose className="h-4 w-4 shrink-0" /><span>Collapse</span></>
+            ? <PanelLeftOpen className="Sidebar-footer-icon" />
+            : <><PanelLeftClose className="Sidebar-footer-icon" /><span>Collapse</span></>
           }
         </button>
       </div>

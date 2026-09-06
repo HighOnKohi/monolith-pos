@@ -1,0 +1,9 @@
+CATEGORY_ID
+- This serves as a unique identifier for the category
+
+CATEGORY_NAME
+- this is basically the name of the category
+
+CATEGORY_ITEM_COUNT
+- this is the counter for how many items this category has
+
