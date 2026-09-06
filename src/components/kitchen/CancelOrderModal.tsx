@@ -22,6 +22,7 @@ export function CancelOrderModal({ order, onClose, onConfirm }: CancelOrderModal
     order.items?.map((i) => i.itemId) ?? []
   )
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const toggleItem = (id: string) => {
     setSelectedItemIds((prev) =>
@@ -31,6 +32,7 @@ export function CancelOrderModal({ order, onClose, onConfirm }: CancelOrderModal
 
   const handleConfirm = async () => {
     setIsSubmitting(true)
+    setErrorMsg(null)
     try {
       const reasonLabel =
         REASONS.find((r) => r.id === selectedReason)?.label || 'Order Cancelled'
@@ -43,8 +45,10 @@ export function CancelOrderModal({ order, onClose, onConfirm }: CancelOrderModal
         selectedReason === 'OUT_OF_STOCK' ? selectedItemIds : []
       )
       onClose()
-    } catch (err) {
-      console.error(err)
+    } catch (err: unknown) {
+      console.error('[CancelOrderModal] Rejection failed:', err)
+      const message = err instanceof Error ? err.message : 'Database error while cancelling order'
+      setErrorMsg(message)
     } finally {
       setIsSubmitting(false)
     }
@@ -158,6 +162,14 @@ export function CancelOrderModal({ order, onClose, onConfirm }: CancelOrderModal
             className="w-full px-3.5 py-2.5 rounded-xl border border-[#9BA4B4]/40 text-xs text-[#14274E] placeholder-[#9BA4B4] focus:outline-hidden focus:border-red-500"
           />
         </div>
+
+        {/* Error message if mutation fails */}
+        {errorMsg && (
+          <div className="mt-4 p-3 rounded-xl bg-red-50 border border-red-300 text-xs text-red-800 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="mt-6 flex gap-3">

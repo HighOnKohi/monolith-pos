@@ -7,13 +7,20 @@ import {
   deleteMenuItem,
 } from '@/services/menuService'
 import type { MenuItem, Category } from '@/types/menu'
+import { MenuItemEditSidebar } from '@/components/menu/MenuItemEditSidebar'
 
 export default function MenuManagerPage() {
   const { items, categories, loadState, reload } = useMenu()
 
   const [activeCat, setActiveCat]       = useState<string>('all')
-  const [editingId, setEditingId]       = useState<string | null>(null)
+  const [editingItem, setEditingItem]   = useState<MenuItem | null>(null)
   const [search, setSearch]             = useState('')
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
+
+  function showToast(text: string, type: 'success' | 'info' | 'error' = 'success') {
+    setToastMessage({ text, type })
+    setTimeout(() => setToastMessage(null), 3500)
+  }
 
   const catScrollRef = useRef<HTMLDivElement>(null)
 
@@ -32,11 +39,11 @@ export default function MenuManagerPage() {
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
   function handleEdit(item: MenuItem) {
-    setEditingId((prev) => (prev === item.id ? null : item.id))
+    setEditingItem(item)
   }
 
   function handleClose() {
-    setEditingId(null)
+    setEditingItem(null)
   }
 
   // ── Add Category ───────────────────────────────────────────────────────────
@@ -153,16 +160,24 @@ export default function MenuManagerPage() {
                 <div
                   key={item.id}
                   className={[
-                    'menu-item-card-container relative flex flex-col rounded-xl border bg-white overflow-hidden transition-all',
-                    editingId === item.id
-                      ? 'border-[#14274E] shadow-md'
+                    'menu-item-card-container relative flex flex-col rounded-xl border bg-white overflow-hidden transition-all cursor-pointer',
+                    editingItem?.id === item.id
+                      ? 'border-[#14274E] ring-2 ring-[#14274E]/30 shadow-md'
                       : 'border-[#9BA4B4]/20 hover:border-[#14274E]/30',
                   ].join(' ')}
+                  onClick={() => handleEdit(item)}
                 >
-                  {/* Selected badge */}
-                  {editingId === item.id && (
-                    <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded-full bg-[#14274E] px-2 py-0.5 text-[10px] font-bold text-white">
-                      ✓ Selected
+                  {/* Selected / Editing badge */}
+                  {editingItem?.id === item.id && (
+                    <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded-full bg-[#14274E] px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                      ✓ Editing
+                    </div>
+                  )}
+
+                  {/* Sold out status badge */}
+                  {item.isSoldOut && (
+                    <div className="absolute top-2 right-2 z-10 rounded-md bg-[#C94A4A] px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                      SOLD OUT
                     </div>
                   )}
 
@@ -171,7 +186,7 @@ export default function MenuManagerPage() {
                     <img
                       src={item.imageUrl}
                       alt={item.name}
-                      className="menu-item-image h-full w-full object-cover"
+                      className={`menu-item-image h-full w-full object-cover ${item.isSoldOut ? 'opacity-60 grayscale-[40%]' : ''}`}
                     />
                   </div>
 
@@ -179,7 +194,7 @@ export default function MenuManagerPage() {
                   <div className="flex flex-col gap-1 p-2.5">
                     <p className="menu-item-name text-sm font-semibold text-[#14274E] line-clamp-2">{item.name}</p>
                     <div className="flex items-center justify-between">
-                      <span className="menu-item-price text-sm font-bold text-[#14274E]">${item.price.toFixed(2)}</span>
+                      <span className="menu-item-price text-sm font-bold text-[#14274E]">₱{item.price.toFixed(2)}</span>
                       <span className={[
                         ' gap-1 text-[10px] font-semibold',
                         item.dietaryType === 'veg' ? 'text-yellow-600' : 'text-[#C94A4A]',
@@ -193,25 +208,32 @@ export default function MenuManagerPage() {
                     </div>
 
                     {/* Card actions */}
-                    <div className="menu-item-footer flex gap-1.5 mt-1">
+                    <div className="menu-item-footer flex gap-1.5 mt-1" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleEdit(item)}
                         className={[
                           'edit-menu-item-button flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-semibold transition-colors',
-                          editingId === item.id
+                          editingItem?.id === item.id
                             ? 'bg-[#14274E] text-white'
                             : 'border border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
                         ].join(' ')}
                       >
                         <Edit2 className="h-3 w-3" />
-                        {editingId === item.id ? 'Editing' : 'Edit Dish'}
+                        {editingItem?.id === item.id ? 'Editing' : 'Edit Dish'}
                       </button>
                       <button
-                        onClick={async () => {
+                        onClick={async (e) => {
+                          e.stopPropagation()
                           if (!confirm(`Delete "${item.name}"?`)) return
-                          await deleteMenuItem(item.id)
-                          if (editingId === item.id) handleClose()
-                          reload()
+                          try {
+                            await deleteMenuItem(item.id)
+                            if (editingItem?.id === item.id) handleClose()
+                            reload()
+                            showToast(`Deleted "${item.name}".`, 'info')
+                          } catch (err: unknown) {
+                            const msg = err instanceof Error ? err.message : 'Failed to delete dish.'
+                            showToast(msg, 'error')
+                          }
                         }}
                         className="delete-menu-item-button flex h-7 w-7 items-center justify-center rounded-lg border border-[#C94A4A]/30 text-[#C94A4A] hover:bg-red-50 transition-colors"
                       >
@@ -269,6 +291,29 @@ export default function MenuManagerPage() {
         </div>
       </section>
     </div>
+
+    {/* ── Slide-in Item Edit Sidebar ── */}
+    <MenuItemEditSidebar
+      item={editingItem}
+      categories={categories}
+      isOpen={Boolean(editingItem)}
+      onClose={handleClose}
+      onSaved={() => {
+        reload()
+        showToast(`Updated "${editingItem?.name}" successfully!`, 'success')
+      }}
+    />
+
+    {/* ── Toast Alert Banner ── */}
+    {toastMessage && (
+      <div
+        className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl shadow-xl text-xs font-bold text-white flex items-center gap-2 ${
+          toastMessage.type === 'error' ? 'bg-[#C94A4A]' : 'bg-[#14274E]'
+        }`}
+      >
+        <span>{toastMessage.text}</span>
+      </div>
+    )}
   </div>
 )
 }

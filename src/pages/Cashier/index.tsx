@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllBillRequests, updateBillRequestStatus } from '@/services/billService'
 import { resolveTableAssistance } from '@/services/assistanceService'
-import { fetchOrdersByTable, createOrder } from '@/services/orderService'
+import { fetchOrdersByTable, createOrder, settleTableOrders } from '@/services/orderService'
 import { useMenu } from '@/hooks/useMenu'
 import { useRealtimeMenu, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 import type { BillRequest } from '@/types/bill'
@@ -38,8 +37,6 @@ export default function CashierPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
   const [activeRightTab, setActiveRightTab] = useState<CashierRightTab>('bill')
   const [mobileActiveView, setMobileActiveView] = useState<'menu' | 'cart'>('menu')
-  const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 3
 
   // Popovers & Modals
   const [isAssistanceOpen, setIsAssistanceOpen] = useState(false)
@@ -262,10 +259,6 @@ export default function CashierPage() {
     }
   }, [selectedTableId, loadTableOrders])
 
-  // Reset page when category, search, or dietary filter changes
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [selectedCategory, searchQuery, dietaryFilter])
 
   // ── 6. Handlers ──
 
@@ -314,7 +307,7 @@ export default function CashierPage() {
     const tableNum = selectedTable.TABLE_NUM || selectedTable.TABLE_ID
 
     // ── STEP 1: Snapshot receipt BEFORE any DB operations clear the table ──
-    // This is critical: once the bill-out runs, tableOrders will be empty.
+    // This is critical: once the bill-out runs, tableOrders will be cleared.
     const snapshot = buildReceiptSnapshot({
       tableOrders,
       discountType: discountInfo.discountType,
@@ -324,19 +317,18 @@ export default function CashierPage() {
       tableNum,
     })
 
-    // Show receipt preview immediately (data is safely captured in snapshot)
-    setCurrentReceipt(snapshot)
-    setShowReceiptModal(true)
-
     try {
       // ── STEP 2: Execute bill-out DB operations ──
-      // 1. If there is an active bill request, mark PAID
+      // 1. Settle all active table orders in the database
+      await settleTableOrders(tableId)
+
+      // 2. If there is an active bill request, mark PAID
       if (activeBillRequest) {
         await updateBillRequestStatus(activeBillRequest.requestId, 'PAID', tableId)
         setBillRequests((prev) => prev.filter((r) => r.requestId !== activeBillRequest.requestId))
       }
 
-      // 2. Clear table bill-out requested and mark table AVAILABLE
+      // 3. Clear table bill-out requested and mark table AVAILABLE
       await supabase
         .from('Restaurant_Tables')
         .update({
@@ -346,11 +338,19 @@ export default function CashierPage() {
         })
         .eq('TABLE_ID', tableId)
 
+      // ── STEP 3: Clear active cashier state ONLY after DB operations succeed ──
+      setTableOrders([])
+      setPunchCart([])
+
+      // ── STEP 4: Display the captured receipt snapshot ──
+      setCurrentReceipt(snapshot)
+      setShowReceiptModal(true)
+
       showToast(`Table ${tableNum} bill settled and marked Available!`, 'success')
       await loadInitialData(true)
     } catch (err) {
       console.error('Payment completion error:', err)
-      showToast('Failed to complete payment.', 'error')
+      showToast('Failed to complete payment. Order state preserved.', 'error')
     }
   }
 
@@ -459,12 +459,6 @@ export default function CashierPage() {
     })
   }, [liveItems, searchQuery, selectedCategory, dietaryFilter])
 
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / itemsPerPage))
-  const paginatedItems = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage
-    return filteredItems.slice(start, start + itemsPerPage)
-  }, [filteredItems, currentPage, itemsPerPage])
-
   const currentCategoryName = useMemo(() => {
     if (selectedCategory === 'all') return 'All Menu'
     if (selectedCategory === 'best_sellers') return 'Best Sellers'
@@ -556,23 +550,31 @@ export default function CashierPage() {
 
       {/* Main Content Area: Split View on Desktop / Tabbed on Mobile */}
       <div className="flex-1 min-w-0 max-w-full flex overflow-hidden p-4 sm:p-5 lg:p-6 gap-4 lg:gap-5">
-        {/* Left Section: Menu Items Grid & Pagination */}
+        {/* Left Section: Menu Items Grid (Fully Scrollable) */}
         <div
           className={[
             'flex-1 min-w-0 flex-col overflow-hidden',
             mobileActiveView === 'menu' ? 'flex' : 'hidden lg:flex',
           ].join(' ')}
         >
-          {/* Dishes Grid */}
-          <div className="flex-1 overflow-y-auto pr-1">
+          {/* Header count bar for Category */}
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80 shrink-0 text-xs text-slate-500">
+            <span className="font-semibold">
+              <strong className="text-[#14274E] font-extrabold">{currentCategoryName}</strong>
+              <span className="ml-1.5 text-slate-400">({filteredItems.length} dish{filteredItems.length !== 1 ? 'es' : ''})</span>
+            </span>
+          </div>
+
+          {/* Dishes Grid — Smoothly Scrollable */}
+          <div className="flex-1 overflow-y-auto pr-1 pb-4">
             {filteredItems.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs py-16">
                 <span className="font-bold text-sm text-slate-600 mb-1">No dishes found</span>
                 <span>Try adjusting your search or category filter.</span>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
-                {paginatedItems.map((item) => {
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5 pb-6">
+                {filteredItems.map((item) => {
                   const cartEntry = punchCart.find((ci) => ci.item.id === item.id)
                   const quantityInCart = cartEntry ? cartEntry.quantity : 0
                   return (
@@ -588,48 +590,6 @@ export default function CashierPage() {
                 })}
               </div>
             )}
-          </div>
-
-          {/* Bottom Pagination Bar matching reference image */}
-          <div className="mt-3 pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
-            <span className="font-medium">
-              Showing {paginatedItems.length} of {filteredItems.length} items in{' '}
-              <strong className="text-[#14274E] font-extrabold">{currentCategoryName}</strong>
-            </span>
-
-            {/* Pagination Controls matching reference image */}
-            <div className="flex items-center gap-1.5">
-              <button
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                className="w-7 h-7 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center justify-center text-slate-700 transition-colors cursor-pointer"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                <button
-                  key={page}
-                  onClick={() => setCurrentPage(page)}
-                  className={[
-                    'w-7 h-7 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center',
-                    currentPage === page
-                      ? 'bg-[#14274E] text-white shadow-xs'
-                      : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50',
-                  ].join(' ')}
-                >
-                  {page}
-                </button>
-              ))}
-
-              <button
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                className="w-7 h-7 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 flex items-center justify-center text-slate-700 transition-colors cursor-pointer"
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
           </div>
         </div>
 

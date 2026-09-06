@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { supabase } from '@/lib/supabase'
 import type { MenuItem, Category } from '@/types/menu'
 import { fetchMenuItems, fetchCategories } from '@/services/menuService'
 
@@ -48,7 +49,26 @@ export function useMenu(): UseMenuResult {
 
     load(true)
 
-    // Constantly sync menu items & stock every 5000ms in background
+    // Realtime channel to immediately reconcile menu items & categories across interfaces
+    const channel = supabase
+      .channel('menu-sync-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Menu_Items' },
+        () => {
+          load(false)
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Menu_Categories' },
+        () => {
+          load(false)
+        },
+      )
+      .subscribe()
+
+    // Background safety poll every 5000ms
     const interval = setInterval(() => {
       load(false)
     }, 5000)
@@ -64,6 +84,7 @@ export function useMenu(): UseMenuResult {
       cancelled = true
       clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
+      supabase.removeChannel(channel)
     }
   }, [revision])
 

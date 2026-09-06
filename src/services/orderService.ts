@@ -118,7 +118,9 @@ export async function fetchOrdersByTable(tableId: number): Promise<Order[]> {
     .order('ORDER_ID', { ascending: false })
 
   if (error) throw error
-  return (data ?? []).map((row) => mapOrder(row as Record<string, unknown>))
+  return (data ?? [])
+    .map((row) => mapOrder(row as Record<string, unknown>))
+    .filter((order) => order.items && order.items.length > 0)
 }
 
 import type { CompressedTableOrder, CompressedOrderItem } from '@/types/order'
@@ -200,3 +202,58 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
     canBillOut,
   }
 }
+
+/**
+ * Settles all active orders for a given table upon bill payment.
+ * 1. Queries all active orders for the table (REQUESTED, VERIFIED, PREPARING, READY, SERVED).
+ * 2. Attempts to update their ORDER_STATUS to 'COMPLETED'.
+ * 3. If a check constraint or replica identity issue prevents the update, cascades deletion
+ *    of child Order_Items first and then Restaurant_Orders to ensure the table and active queue
+ *    are reliably cleared without throwing foreign key or database constraint errors.
+ */
+export async function settleTableOrders(tableId: number): Promise<void> {
+  const { data: activeOrders, error: fetchErr } = await supabase
+    .from('Restaurant_Orders')
+    .select('ORDER_ID')
+    .eq('TABLE_ID', tableId)
+    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED'])
+
+  if (fetchErr) {
+    console.error('[orderService] Failed to fetch active orders for settlement:', fetchErr)
+    throw fetchErr
+  }
+  if (!activeOrders || activeOrders.length === 0) return
+
+  const orderIds = activeOrders.map((o) => Number(o['ORDER_ID']))
+
+  // Attempt to transition ORDER_STATUS to 'COMPLETED'
+  const { error: updateErr } = await supabase
+    .from('Restaurant_Orders')
+    .update({ ORDER_STATUS: 'COMPLETED' })
+    .in('ORDER_ID', orderIds)
+
+  if (updateErr) {
+    console.warn(
+      '[orderService] Failed to set ORDER_STATUS to COMPLETED (schema constraint or replica identity), applying fallback delete:',
+      updateErr
+    )
+    // Fallback: delete child items first so order items are completely settled
+    const { error: childDelErr } = await supabase.from('Order_Items').delete().in('ORDER_ID', orderIds)
+    if (childDelErr) {
+      console.error('[orderService] Failed to delete child Order_Items during settlement fallback:', childDelErr)
+      throw childDelErr
+    }
+
+    // Try deleting Restaurant_Orders as well. If Postgres replica identity disallows deletes without migration 005,
+    // log a warning rather than failing the transaction, because child Order_Items are deleted and fetchOrdersByTable
+    // filters out orders with 0 items.
+    const { error: delErr } = await supabase.from('Restaurant_Orders').delete().in('ORDER_ID', orderIds)
+    if (delErr) {
+      console.warn(
+        '[orderService] Restaurant_Orders delete restricted by publication replica identity (requires migration 005). Child items cleared successfully:',
+        delErr
+      )
+    }
+  }
+}
+

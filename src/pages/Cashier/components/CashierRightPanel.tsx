@@ -78,9 +78,25 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
 
   const tableNum = selectedTable ? (selectedTable.TABLE_NUM || selectedTable.TABLE_ID) : 1
 
-  // 1. Calculate Bill totals from tableOrders
-  const rawOrdersTotal = tableOrders.reduce((sum, o) => sum + (o.totalBill || 0), 0)
-  const baseSubtotal = rawOrdersTotal > 0 ? rawOrdersTotal / 1.05 : 0
+  // Aggregate all ordered items for line item receipt
+  const itemAggMap: Record<string, { itemId: string; name: string; price: number; quantity: number; total: number }> = {}
+  for (const ord of tableOrders) {
+    for (const it of ord.items ?? []) {
+      const id = it.itemId
+      const qty = it.quantity || 1
+      const pr = it.price || 0
+      const nm = it.name || `Dish #${id}`
+      if (!itemAggMap[id]) {
+        itemAggMap[id] = { itemId: id, name: nm, price: pr, quantity: 0, total: 0 }
+      }
+      itemAggMap[id].quantity += qty
+      itemAggMap[id].total += pr * qty
+    }
+  }
+  const aggregatedItems = Object.values(itemAggMap)
+
+  // 1. Calculate Bill totals from actual line items
+  const baseSubtotal = aggregatedItems.reduce((sum, it) => sum + it.total, 0)
 
   let discountAmount = 0
   if (discountType === 'senior' || discountType === 'pwd') {
@@ -98,33 +114,6 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   const punchTax = punchSubtotal * 0.05
   const punchTotal = punchSubtotal + punchTax
 
-  // Aggregate all ordered items for line item receipt
-  const aggregatedItems: Array<{
-    itemId: string
-    name: string
-    price: number
-    quantity: number
-    total: number
-  }> = []
-
-  const itemAggMap: Record<string, { itemId: string; name: string; price: number; quantity: number; total: number }> = {}
-  for (const ord of tableOrders) {
-    for (const it of ord.items ?? []) {
-      const id = it.itemId
-      const qty = it.quantity || 1
-      const pr = it.price || 0
-      const nm = it.name || `Dish #${id}`
-      if (!itemAggMap[id]) {
-        itemAggMap[id] = { itemId: id, name: nm, price: pr, quantity: 0, total: 0 }
-      }
-      itemAggMap[id].quantity += qty
-      itemAggMap[id].total += pr * qty
-    }
-  }
-  for (const key of Object.keys(itemAggMap)) {
-    aggregatedItems.push(itemAggMap[key])
-  }
-
   return (
     <div className="cashier-right-panel">
       {/* ── Panel Header matching reference image ── */}
@@ -140,7 +129,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
               )}
             </h3>
             <p className="text-[11px] text-slate-400 font-medium">
-              Table #{tableNum} • {tableOrders.length} active orders • {selectedTable?.GUEST_CAPACITY || 4} Guests
+              Table #{tableNum} • {tableOrders.length > 0 ? `${tableOrders.length} active order${tableOrders.length > 1 ? 's' : ''}` : 'No active orders'} • {selectedTable?.GUEST_CAPACITY || 4} Guests
             </p>
           </div>
 

@@ -391,7 +391,108 @@ None currently known.
 
 ---
 
+---
+
+## State Synchronization, Kitchen, Menu Manager & Cashier Architecture
+
+### 1. Source of Truth Hierarchy
+```text
+                  ┌───────────────────────────────┐
+                  │      Supabase PostgreSQL      │
+                  │     (Authoritative Source)    │
+                  └───────────────┬───────────────┘
+                                  │
+         ┌────────────────────────┼────────────────────────┐
+         │ Realtime Events        │ Realtime Events        │ Realtime Events
+         ▼                        ▼                        ▼
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│     Kitchen     │      │     Cashier     │      │  Menu Manager   │
+└────────┬────────┘      └────────┬────────┘      └────────┬────────┘
+         │                        │                        │
+         └────────────────────────┼────────────────────────┘
+                                  ▼
+                       ┌─────────────────────┐
+                       │    Customer Menu    │
+                       └─────────────────────┘
+```
+
+- **Database Authority**: UI state is strictly a reflection of database mutations. No fake local state changes or artificial `setTimeout` fakes.
+- **Dual-Channel Reconciliation**: Supabase Realtime WebSocket events propagate changes within milliseconds; background polling (2500ms - 5000ms) guarantees self-healing against dropped network frames or mobile sleep.
+
+---
+
+### 2. Kitchen Order Rejection & Availability Workflow
+- **Order Rejection**:
+  1. Kitchen clicks "Reject / OOS" on incoming order.
+  2. Modal opens requiring reason and optional item selection to mark globally Sold Out.
+  3. Kitchen Service (`cancelKitchenOrder`):
+     - Sets selected items to `OUT_OF_STOCK` in `Menu_Items`.
+     - Tries updating `ORDER_STATUS` to `'CANCELLED'`.
+     - Resilient Fallback: If publication replica identity or check constraint rejects the update, deletes associated child `Order_Items` first to satisfy foreign keys, then attempts parent deletion.
+     - Checks if the table has any remaining orders with active items; if none remain, resets table `STATUS` to `'AVAILABLE'`.
+  4. UI immediately closes modal, cleans up modal state, and removes the order from the active queue. Orders with 0 items are filtered out across all queries.
+
+- **Kitchen Dish Availability Controls**:
+  - Staff can access the dedicated "Dish Stock & Availability" panel directly in `/kitchen` via the header button `Dish Stock (N Sold Out)`.
+  - Instant one-tap toggling between `Available` and `Sold Out` via `toggleItemAvailability(itemId, status)` updating `Menu_Items.ITEM_STATUS`.
+  - Realtime subscribers (`useMenu`, `useRealtimeMenu`) immediately receive the event and propagate sold-out badges and disabled ordering across Cashier and Customer menus.
+
+---
+
+### 3. Menu Manager Editing Architecture
+- **Servio-Style Slide-In Sidebar** (`MenuItemEditSidebar.tsx` & `menu-edit-sidebar.css`):
+  - Glides smoothly from the right with a backdrop blur and smooth cubic-bezier transitions.
+  - Keyboard accessible (ESC closes) and responsive on mobile devices.
+  - Fields: Item Name (required), Price (₱, numeric, non-negative), Category (dropdown from active categories), Description, Image URL (with live preview), Availability toggle (`AVAILABLE` / `OUT_OF_STOCK`), and Dietary Type (`veg` / `non-veg`).
+  - Validation before mutation: flags empty names, non-finite/negative prices, and invalid categories.
+  - Error Handling: If database mutation fails, sidebar remains open with an error banner, preserving all user edits.
+  - Success Handling: Saves to Supabase via `updateMenuItem`, reloads menu, closes sidebar, and displays a success toast.
+  - Realtime Sync: `useMenu` listens to `Menu_Items` and `Menu_Categories` postgres changes, keeping the grid synchronized in real time.
+
+---
+
+### 4. Cashier Settlement & Bill Clearing Flow
+```text
+Table Selected
+      ↓
+Active Orders & Punched Cart
+      ↓
+Click "Complete Payment / Settle Bill →"
+      ↓
+1. buildReceiptSnapshot(...) captures exact line items, discounts, tax, subtotal, and total
+      ↓
+2. settleTableOrders(tableId) completes/clears active orders in Supabase
+      ↓
+3. updateBillRequestStatus(requestId, 'PAID')
+      ↓
+4. Reset Restaurant_Tables (STATUS = 'AVAILABLE', BILL_OUT_REQUESTED = false, CURRENT_GUEST_COUNT = 0)
+      ↓
+5. Clear cashier active bill & punchCart
+      ↓
+6. Display ReceiptPreviewModal with captured snapshot
+```
+- **Authoritative Bill Clearing**: Previously, orders were left in `SERVED` state, causing them to re-appear on any refetch. Now, `settleTableOrders` transitions orders to `'COMPLETED'` and clears child `Order_Items`. `fetchOrdersByTable` filters out orders with 0 items.
+- **Fail-Safe Receipt Snapshot**: Receipt data is frozen in memory BEFORE clearing table state, ensuring receipts never show blank ₱0.00 data.
+- **Persistence Verification**: Reloading the cashier page confirms Table Bill shows `No active orders`, Subtotal `₱0.00`, Grand Total `₱0.00`, and `Complete Payment` is disabled.
+
+---
+
+### 5. Supabase & PostgreSQL Considerations
+- **Postgres Replica Identity (`55000`)**: When a table is in a publication (e.g. `supabase_realtime`) without a primary key or `REPLICA IDENTITY FULL`, PostgreSQL rejects `UPDATE` and `DELETE` queries.
+- **Migration 005**: `Context/migrations/005_fix_orders_replica_identity_and_status.sql` sets `REPLICA IDENTITY FULL` on `Restaurant_Orders` and `Order_Items`, and updates `ORDER_STATUS` check constraint to permit `'CANCELLED'` and `'COMPLETED'`.
+- **Frontend Safeguards**: All service functions (`settleTableOrders`, `cancelKitchenOrder`, `fetchOrdersByTable`, `fetchKitchenOrders`) implement child-item cascade deletion and item-existence validation, ensuring rock-solid stability both before and after migration 005 is run in the Supabase SQL editor.
+
+---
+
 ## Development History
+
+### 2026-09-06 — Kitchen, Menu Manager & Cashier State Synchronization Fix
+- Created `MenuItemEditSidebar.tsx` and `menu-edit-sidebar.css` providing Servio-style slide-in item editing in Menu Manager.
+- Added Supabase Realtime channel subscription in `useMenu` for instant item/category reconciliation.
+- Added Kitchen Dish Stock & Availability control panel in `/kitchen` with one-tap status toggling.
+- Added `settleTableOrders` in `orderService.ts` and updated `handleCompletePayment` in Cashier for atomic receipt snapshotting, order completion, table status reset, and bill clearing.
+- Updated `fetchOrdersByTable` and `fetchKitchenOrders` to filter out orders with 0 items, eliminating ghost orders and phantom totals across reloads.
+- Created `Context/migrations/005_fix_orders_replica_identity_and_status.sql` for PostgreSQL `REPLICA IDENTITY FULL` and check constraints.
 
 ### 2026-09-06 — Live Sync, Realtime Workflow & UI Optimization
 - Floating place order holder card overlapping the menu above the bottom navbar (`fixed bottom-[80px] inset-x-0 z-30 pointer-events-none`)
@@ -417,3 +518,4 @@ None currently known.
 3. Add navigation items in `src/config/navigation.ts` only.
 4. Keep Supabase logic out of page components — use services/hooks.
 5. Update this file after meaningful changes.
+

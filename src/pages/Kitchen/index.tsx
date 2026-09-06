@@ -9,6 +9,11 @@ import {
   Ban,
   RefreshCw,
   BellRing,
+  PackageX,
+  Search,
+  CheckCircle,
+  XCircle,
+  Loader2,
 } from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -20,18 +25,26 @@ import {
   acceptKitchenOrder,
   advanceKitchenOrderStatus,
   cancelKitchenOrder,
+  toggleItemAvailability,
   type KitchenOrder,
 } from '@/services/kitchenService'
 import { CancelOrderModal } from '@/components/kitchen/CancelOrderModal'
+import { useMenu } from '@/hooks/useMenu'
 import type { OrderStatus } from '@/types/order'
 
-type FilterStage = 'incoming' | 'cooking' | 'ready' | 'served' | 'all'
+type FilterStage = 'incoming' | 'cooking' | 'ready' | 'served' | 'all' | 'stock'
 
 export default function KitchenPage() {
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [activeStage, setActiveStage] = useState<FilterStage>('incoming')
   const [cancelModalOrder, setCancelModalOrder] = useState<KitchenOrder | null>(null)
+
+  // Menu items & stock state for kitchen availability management
+  const { items: menuItems, categories: menuCategories, reload: reloadMenu } = useMenu()
+  const [stockSearch, setStockSearch] = useState('')
+  const [stockCategory, setStockCategory] = useState('all')
+  const [togglingItemId, setTogglingItemId] = useState<string | null>(null)
 
   const loadOrders = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true)
@@ -87,14 +100,29 @@ export default function KitchenPage() {
     }
   }, [loadOrders])
 
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null)
+
+  function showToast(text: string, type: 'success' | 'error' | 'info' = 'success') {
+    setToastMessage({ text, type })
+    setTimeout(() => setToastMessage(null), 5000)
+  }
+
   const handleAcceptOrder = async (orderId: number) => {
     try {
       await acceptKitchenOrder(orderId)
       setOrders((prev) =>
         prev.map((o) => (o.orderId === orderId ? { ...o, orderStatus: 'VERIFIED' } : o))
       )
-    } catch (err) {
+      showToast(`Order #${orderId} accepted and verified!`, 'success')
+    } catch (err: unknown) {
       console.error('Failed to accept order:', err)
+      const errObj = err as { code?: string; message?: string }
+      const isReplica = errObj?.code === '55000' || errObj?.message?.includes('replica identity')
+      if (isReplica) {
+        showToast('DB Error 55000: Please run Migration 005 in Supabase SQL Editor (ALTER TABLE "Restaurant_Orders" REPLICA IDENTITY FULL).', 'error')
+      } else {
+        showToast(errObj?.message || 'Failed to accept order in database.', 'error')
+      }
     }
   }
 
@@ -104,15 +132,42 @@ export default function KitchenPage() {
       setOrders((prev) =>
         prev.map((o) => (o.orderId === orderId ? { ...o, orderStatus: nextStatus } : o))
       )
-    } catch (err) {
+      showToast(`Order #${orderId} moved to ${nextStatus}!`, 'success')
+    } catch (err: unknown) {
       console.error('Failed to advance order status:', err)
+      const errObj = err as { code?: string; message?: string }
+      const isReplica = errObj?.code === '55000' || errObj?.message?.includes('replica identity')
+      if (isReplica) {
+        showToast('DB Error 55000: Please run Migration 005 in Supabase SQL Editor (ALTER TABLE "Restaurant_Orders" REPLICA IDENTITY FULL).', 'error')
+      } else {
+        showToast(errObj?.message || 'Failed to advance order status in database.', 'error')
+      }
     }
   }
 
   const handleConfirmCancel = async (reason: string, outOfStockItemIds: string[]) => {
     if (!cancelModalOrder) return
-    await cancelKitchenOrder(cancelModalOrder.orderId, reason, outOfStockItemIds)
-    setOrders((prev) => prev.filter((o) => o.orderId !== cancelModalOrder.orderId))
+    try {
+      await cancelKitchenOrder(cancelModalOrder.orderId, reason, outOfStockItemIds)
+      setOrders((prev) => prev.filter((o) => o.orderId !== cancelModalOrder.orderId))
+      setCancelModalOrder(null)
+      reloadMenu()
+    } catch (err) {
+      console.error('Failed to cancel order:', err)
+      throw err
+    }
+  }
+
+  const handleToggleStock = async (itemId: string, currentSoldOut: boolean) => {
+    setTogglingItemId(itemId)
+    try {
+      await toggleItemAvailability(itemId, currentSoldOut ? 'AVAILABLE' : 'OUT_OF_STOCK')
+      reloadMenu()
+    } catch (err) {
+      console.error('Failed to toggle item availability:', err)
+    } finally {
+      setTogglingItemId(null)
+    }
   }
 
   // Count summaries
@@ -133,21 +188,44 @@ export default function KitchenPage() {
     return true
   })
 
+  // Stock summary
+  const soldOutCount = menuItems.filter((i) => i.isSoldOut).length
+
+  // Filtered stock items
+  const filteredStockItems = menuItems.filter((item) => {
+    const matchCat = stockCategory === 'all' || item.categoryId === stockCategory
+    const matchSearch =
+      stockSearch.trim() === '' ||
+      item.name.toLowerCase().includes(stockSearch.toLowerCase())
+    return matchCat && matchSearch
+  })
+
   return (
     <div className="kitchen-page-container staff-page space-y-5 animate-fade-in">
       <PageHeader
         title="Kitchen Interface"
         description="Verify stock for incoming orders, accept or cancel with reasons, and manage cooking queue."
         action={
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => void loadOrders()}
-            className="flex items-center gap-1.5"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Refresh</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant={activeStage === 'stock' ? 'primary' : 'secondary'}
+              onClick={() => setActiveStage(activeStage === 'stock' ? 'incoming' : 'stock')}
+              className="flex items-center gap-1.5"
+            >
+              <PackageX className="w-3.5 h-3.5" />
+              <span>Dish Stock {soldOutCount > 0 ? `(${soldOutCount} Sold Out)` : ''}</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void loadOrders()}
+              className="flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Refresh</span>
+            </Button>
+          </div>
         }
       />
 
@@ -224,42 +302,163 @@ export default function KitchenPage() {
         </button>
       </div>
 
-      {/* Orders View */}
-      <Card>
-        <CardHeader
-          title={
-            activeStage === 'incoming'
-              ? 'Incoming Order Requests (Stock Review Required)'
-              : activeStage === 'cooking'
-              ? 'Kitchen Cooking Queue'
-              : activeStage === 'ready'
-              ? 'Ready for Service'
-              : activeStage === 'served'
-              ? 'Served Orders'
-              : 'All Orders'
-          }
-          description="Check inventory and update order status in real time"
-        />
+      {/* Main View: Stock Availability OR Orders Queue */}
+      {activeStage === 'stock' ? (
+        <Card>
+          <CardHeader
+            title="Kitchen Stock & Dish Availability"
+            description="Instantly toggle dishes as In Stock or Sold Out. Updates synchronize in real time to Customer, Cashier, and Menu Manager."
+          />
+          <div className="p-5 space-y-4">
+            {/* Search & Category Filter Bar */}
+            <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
+              <div className="relative w-full sm:w-72">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#9BA4B4]" />
+                <input
+                  type="text"
+                  value={stockSearch}
+                  onChange={(e) => setStockSearch(e.target.value)}
+                  placeholder="Search dishes to update stock..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#9BA4B4]/30 text-xs bg-white text-[#14274E] focus:outline-none focus:border-[#14274E]"
+                />
+              </div>
 
-        <div className="p-5">
-          {isLoading ? (
-            <div className="py-16 text-center text-muted text-sm">
-              Loading orders from database...
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1">
+                {menuCategories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setStockCategory(cat.id)}
+                    className={[
+                      'px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap',
+                      stockCategory === cat.id
+                        ? 'bg-[#14274E] text-white'
+                        : 'bg-[#F1F6F9] text-[#394867] hover:bg-[#9BA4B4]/20',
+                    ].join(' ')}
+                  >
+                    {cat.name}
+                  </button>
+                ))}
+              </div>
             </div>
-          ) : displayedOrders.length === 0 ? (
-            <EmptyState
-              icon={UtensilsCrossed}
-              title={
-                activeStage === 'incoming'
-                  ? 'No incoming order requests'
-                  : 'No orders in this queue'
-              }
-              description={
-                activeStage === 'incoming'
-                  ? 'When customers place an order, it will appear here first for stock verification.'
-                  : 'Orders will move into this queue as the kitchen progresses them.'
-              }
-            />
+
+            {/* Stock Items Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 pt-2">
+              {filteredStockItems.map((item) => {
+                const isUpdating = togglingItemId === item.id
+                return (
+                  <div
+                    key={item.id}
+                    className={[
+                      'p-3 rounded-2xl border-2 transition-all flex flex-col justify-between bg-white shadow-xs',
+                      item.isSoldOut
+                        ? 'border-red-300 bg-red-50/20'
+                        : 'border-[#9BA4B4]/20 hover:border-[#14274E]/30',
+                    ].join(' ')}
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      {item.imageUrl && (
+                        <img
+                          src={item.imageUrl}
+                          alt={item.name}
+                          className="w-12 h-12 rounded-xl object-cover shrink-0 border border-[#9BA4B4]/20"
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs font-bold text-[#14274E] truncate" title={item.name}>
+                          {item.name}
+                        </h4>
+                        <p className="text-[11px] font-semibold text-[#9BA4B4]">
+                          ₱{item.price.toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-[#9BA4B4]/15 flex items-center justify-between">
+                      <span
+                        className={[
+                          'text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md flex items-center gap-1',
+                          item.isSoldOut
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-emerald-100 text-emerald-800',
+                        ].join(' ')}
+                      >
+                        {item.isSoldOut ? (
+                          <>
+                            <XCircle className="w-3 h-3 text-red-600" />
+                            Sold Out
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-3 h-3 text-emerald-600" />
+                            Available
+                          </>
+                        )}
+                      </span>
+
+                      <button
+                        type="button"
+                        disabled={isUpdating}
+                        onClick={() => handleToggleStock(item.id, item.isSoldOut)}
+                        className={[
+                          'py-1.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer disabled:opacity-60',
+                          item.isSoldOut
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                            : 'bg-red-600 hover:bg-red-700 text-white shadow-xs',
+                        ].join(' ')}
+                      >
+                        {isUpdating ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : item.isSoldOut ? (
+                          'Mark In Stock'
+                        ) : (
+                          'Mark Sold Out'
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </Card>
+      ) : (
+        /* Orders View */
+        <Card>
+          <CardHeader
+            title={
+              activeStage === 'incoming'
+                ? 'Incoming Order Requests (Stock Review Required)'
+                : activeStage === 'cooking'
+                ? 'Kitchen Cooking Queue'
+                : activeStage === 'ready'
+                ? 'Ready for Service'
+                : activeStage === 'served'
+                ? 'Served Orders'
+                : 'All Orders'
+            }
+            description="Check inventory and update order status in real time"
+          />
+
+          <div className="p-5">
+            {isLoading ? (
+              <div className="py-16 text-center text-muted text-sm">
+                Loading orders from database...
+              </div>
+            ) : displayedOrders.length === 0 ? (
+              <EmptyState
+                icon={UtensilsCrossed}
+                title={
+                  activeStage === 'incoming'
+                    ? 'No incoming order requests'
+                    : 'No orders in this queue'
+                }
+                description={
+                  activeStage === 'incoming'
+                    ? 'When customers place an order, it will appear here first for stock verification.'
+                    : 'Orders will move into this queue as the kitchen progresses them.'
+                }
+              />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {displayedOrders.map((order) => {
@@ -421,6 +620,7 @@ export default function KitchenPage() {
           )}
         </div>
       </Card>
+    )}
 
       {/* Cancel Order with Reason & Out-of-Stock Modal */}
       {cancelModalOrder && (
@@ -429,6 +629,17 @@ export default function KitchenPage() {
           onClose={() => setCancelModalOrder(null)}
           onConfirm={handleConfirmCancel}
         />
+      )}
+
+      {/* Toast Alert Banner */}
+      {toastMessage && (
+        <div
+          className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl shadow-xl text-xs font-bold text-white flex items-center gap-2 max-w-md text-center ${
+            toastMessage.type === 'error' ? 'bg-[#C94A4A]' : 'bg-[#14274E]'
+          }`}
+        >
+          <span>{toastMessage.text}</span>
+        </div>
       )}
     </div>
   )
