@@ -45,8 +45,8 @@ export const CategoryCardsRow: React.FC<CategoryCardsRowProps> = ({
   }
 
   return (
-    <div className="px-5 py-3 border-b border-slate-200/60 bg-[#F8FAFD]">
-      <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-1">
+    <div className="w-full max-w-full min-w-0 overflow-hidden px-4 sm:px-6 py-3 sm:py-3.5 border-b border-slate-200/60 bg-[#F8FAFD] shrink-0">
+      <div className="flex items-center gap-3 sm:gap-4 overflow-x-auto no-scrollbar py-1 w-full max-w-full min-w-0">
         {categories.map((cat) => {
           const isActive = selectedCategory === cat.id
           return (

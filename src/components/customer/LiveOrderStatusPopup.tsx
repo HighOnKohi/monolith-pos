@@ -69,7 +69,7 @@ export function LiveOrderStatusPopup({
   const Icon = config.icon
 
   return (
-    <div className="fixed top-3 inset-x-3 sm:inset-x-auto sm:right-4 sm:max-w-md z-50 pointer-events-auto animate-slide-down">
+    <div className="fixed top-3 inset-x-3 sm:inset-x-auto sm:right-4 sm:max-w-md z-[90] pointer-events-auto animate-slide-down">
       <div
         className={[
           'rounded-3xl p-4 border-2 shadow-[0_12px_40px_rgba(0,0,0,0.18)] backdrop-blur-md transition-all',

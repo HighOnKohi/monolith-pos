@@ -211,7 +211,7 @@ export default function CustomerPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F1F6F9] font-sans pb-safe selection:bg-[#E9C46A]/40">
+    <div id="customer-page-root" className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#F1F6F9] font-sans pb-safe selection:bg-[#E9C46A]/40">
       {/* Live Order Status Alert Popup */}
       <LiveOrderStatusPopup
         notification={latestStatusUpdate}
@@ -222,8 +222,8 @@ export default function CustomerPage() {
       <BillRequestBanner billRequest={billRequest} />
 
       {activeTab === 'menu' && (
-        <div className="flex flex-col h-full animate-fade-in">
-          <div className="sticky top-0 z-20 bg-[#F1F6F9]/90 backdrop-blur-md pb-2 transition-all">
+        <div className="flex flex-col h-full w-full max-w-full min-w-0 animate-fade-in">
+          <div className="sticky top-0 z-20 bg-[#F1F6F9]/95 backdrop-blur-md pb-1.5 sm:pb-2 transition-all w-full max-w-full min-w-0">
             <CustomerHeader
               tableLabel={tableLabel}
               onOpenAssist={() => setIsAssistOpen(true)}
@@ -257,8 +257,8 @@ export default function CustomerPage() {
       )}
 
       {activeTab === 'orders' && (
-        <div className="flex flex-col h-full animate-fade-in">
-          <div className="sticky top-0 z-20 bg-[#F1F6F9]/90 backdrop-blur-md pb-2">
+        <div className="flex flex-col h-full w-full max-w-full min-w-0 animate-fade-in">
+          <div className="sticky top-0 z-20 bg-[#F1F6F9]/95 backdrop-blur-md pb-1.5 sm:pb-2 w-full max-w-full min-w-0">
             <CustomerHeader
               tableLabel={tableLabel}
               onOpenAssist={() => setIsAssistOpen(true)}

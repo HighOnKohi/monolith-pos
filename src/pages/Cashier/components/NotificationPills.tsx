@@ -110,7 +110,7 @@ export const NotificationPills: React.FC<NotificationPillsProps> = ({
       {/* Backdrop when either popover is open */}
       {(isAssistanceOpen || isVerifiedOpen) && (
         <div
-          className="fixed inset-0 z-40 bg-black/10 backdrop-blur-[1px]"
+          className="fixed inset-0 z-50 bg-black/20 backdrop-blur-[2px]"
           onClick={onCloseAll}
         />
       )}

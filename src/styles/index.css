@@ -41,12 +41,6 @@
   box-sizing: border-box;
 }
 
-/* Remove default margin and padding */
-* {
-  margin: 0;
-  padding: 10;
-}
-
 /* Smooth rendering */
 html {
   -webkit-font-smoothing: antialiased;
@@ -54,11 +48,13 @@ html {
   text-rendering: optimizeLegibility;
 }
 
-/* Full height document */
+/* Full height document & overflow protection */
 html,
 body,
-#root {
+#root,
+#root-layout {
   height: 100%;
+  width: 100%;
 }
 
 /* Body defaults */
@@ -70,32 +66,80 @@ body {
   line-height: 1.5;
 }
 
+/* Staff POS Shell — Fixed viewport with floating centered container */
+body:not(:has(#customer-page-root)) {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: #dce4ef;
+}
+
+/* Customer Mobile Ordering Portal — Scrollable document */
+body:has(#customer-page-root) {
+  min-height: 100%;
+  height: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background-color: #F1F6F9;
+}
+
+/* Safe area padding utilities for mobile edge-to-edge screens */
+.pb-safe {
+  padding-bottom: max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + 1rem));
+}
+.pt-safe {
+  padding-top: max(0.5rem, env(safe-area-inset-top, 0.5rem));
+}
+
 /* Accessible focus styles */
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
+/* Outer staff wrapper filling entire viewport with surrounding margin padding */
 .website {
-  height: 100%;
-  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  width: 100vw;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+  background-color: #dce4ef;
+  padding: 1.25rem;
 }
 
-/* Main app container — floats inside the body with margins on all sides */
+/* Main app container — floats inside the body with margins on all sides (matching Image 1) */
 .website-container {
   padding: 0;
   display: flex;
-  height: 97%;
-  width: 99%;
+  height: 100%;
+  width: 100%;
+  max-width: 1800px;
+  max-height: 1120px;
   margin: auto;
   overflow: hidden;
   border-radius: 2rem;
   background-color: var(--color-background);
-  box-shadow: 0 8px 40px rgba(20, 39, 78, 0.15);
+  box-shadow: 0 14px 44px rgba(20, 39, 78, 0.16), 0 3px 12px rgba(20, 39, 78, 0.08);
+}
+
+/* Only collapse floating container to edge-to-edge on small phone screens */
+@media (max-width: 639px) {
+  .website {
+    height: 100%;
+    width: 100%;
+  }
+
+  .website-container {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
 }
 
 /* Thin scrollbar */
@@ -251,6 +295,21 @@ body {
   animation: itemBounce 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+@keyframes slideRightFade {
+  from {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-right {
+  animation: slideRightFade 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 .animate-subtle-pulse {
   animation: pulseSubtle 2s ease-in-out infinite;
 }
@@ -280,11 +339,14 @@ body {
 
 /* ── Staff POS interface ── */
 .staff-shell .website-container {
-  height: 97%;
-  width: 99%;
+  height: 100%;
+  width: 100%;
+  max-width: 1800px;
+  max-height: 1120px;
+  margin: auto;
   background: #f5f7fb;
   border: 1px solid rgba(255, 255, 255, 0.8);
-  border-radius: 24px;
+  border-radius: 2rem;
   box-shadow: 0 18px 48px rgba(20, 39, 78, 0.14);
 }
 
@@ -429,17 +491,15 @@ body {
   border-radius: 8px;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 639px) {
   .staff-shell .website-container {
-    width: 100%;
-    height: 100%;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
+    width: 100% !important;
+    height: 100% !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
   }
-}
 
-@media (max-width: 640px) {
   .staff-shell .staff-page:not(.menu-manager-page-container) {
     padding: 1rem;
   }
@@ -448,3 +508,37 @@ body {
     align-items: flex-start;
   }
 }
+
+/* ── Global Lucide & SVG Icon Protection (Prevents solid blob/invisible icon bug on Vercel) ── */
+svg.lucide,
+svg[data-lucide],
+.lucide {
+  display: inline-block;
+  vertical-align: middle;
+  fill: none;
+  stroke: currentColor;
+}
+
+/* Guard against global resets or stylesheets filling line-art paths */
+svg.lucide:not([class*="fill-"]),
+svg.lucide:not([class*="fill-"]) path,
+svg.lucide:not([class*="fill-"]) circle,
+svg.lucide:not([class*="fill-"]) line,
+svg.lucide:not([class*="fill-"]) polyline,
+svg.lucide:not([class*="fill-"]) polygon,
+svg.lucide:not([class*="fill-"]) rect {
+  fill: none !important;
+  stroke: currentColor !important;
+}
+
+/* Explicit fill support for icons intentionally filled (like stars or sparkles) */
+svg.lucide.fill-current {
+  fill: currentColor !important;
+}
+svg.lucide.fill-amber-400 {
+  fill: #fbbf24 !important;
+}
+svg.lucide.fill-amber-500 {
+  fill: #f59e0b !important;
+}
+

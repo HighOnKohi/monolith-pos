@@ -49,7 +49,7 @@ export const CashierHeader: React.FC<CashierHeaderProps> = ({
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false)
 
   return (
-    <div className="cashier-top-bar border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
+    <div className="cashier-top-bar relative z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
       {/* Left: Search input matching reference image */}
       <div className="flex-1 max-w-md flex items-center gap-2">
         <div className="cashier-search-wrapper flex-1">

@@ -26,7 +26,7 @@ export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecre
   return (
     <article
       className={[
-        'bg-white rounded-2xl p-3 flex flex-col justify-between relative overflow-hidden shadow-xs',
+        'bg-white rounded-2xl p-2.5 sm:p-3 flex flex-col justify-between relative overflow-hidden shadow-xs min-w-0 w-full',
         'interactive-card cursor-default',
         inCart ? 'border-2 border-[#14274E] ring-2 ring-[#14274E]/10' : 'border border-[#9BA4B4]/25 hover:border-[#14274E]/30',
         isSoldOut ? 'opacity-70 grayscale-[30%]' : '',

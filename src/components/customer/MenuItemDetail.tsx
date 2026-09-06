@@ -43,9 +43,9 @@ export function MenuItemDetail({
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-[#14274E]/45 backdrop-blur-md animate-backdrop-fade" onClick={onClose} />
+      <div className="fixed inset-0 z-[95] bg-[#14274E]/45 backdrop-blur-md animate-backdrop-fade" onClick={onClose} />
 
-      <div className="fixed bottom-0 inset-x-0 z-50 bg-white rounded-t-3xl shadow-[0_-12px_40px_rgba(20,39,78,0.2)] max-h-[90vh] flex flex-col animate-sheet-up">
+      <div className="fixed bottom-0 inset-x-0 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-lg z-[100] bg-white rounded-t-3xl sm:rounded-3xl sm:bottom-auto sm:top-1/2 sm:-translate-y-1/2 shadow-[0_-12px_40px_rgba(20,39,78,0.2)] max-h-[90vh] flex flex-col animate-sheet-up sm:animate-modal-pop">
         {/* Handle */}
         <div className="flex justify-center pt-3 pb-1 shrink-0">
           <div className="w-10 h-1 bg-[#9BA4B4]/40 rounded-full" />

@@ -120,10 +120,10 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   return (
     <div className="cashier-right-panel">
       {/* ── Panel Header matching reference image ── */}
-      <div className="p-4 border-b border-slate-100 bg-white shrink-0">
+      <div className="px-5 py-4 border-b border-slate-100 bg-white shrink-0">
         <div className="flex items-center justify-between mb-1">
           <div>
-            <h3 className="text-sm font-black text-[#14274E] flex items-center gap-1.5">
+            <h3 className="text-sm font-extrabold text-[#14274E] flex items-center gap-2 pl-0.5">
               <span>Table {tableNum} Bill</span>
               {activeBillRequest && (
                 <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 animate-pulse">

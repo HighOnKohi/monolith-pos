@@ -8,7 +8,7 @@ interface CategorySelectorProps {
 
 export function CategorySelector({ categories, selected, onSelect }: CategorySelectorProps) {
   return (
-    <div className="flex gap-2 overflow-x-auto no-scrollbar px-4 py-2 select-none">
+    <div className="flex gap-2 overflow-x-auto no-scrollbar px-3 sm:px-4 py-2 select-none w-full max-w-full min-w-0">
       {categories.map((cat) => {
         const isActive = cat.id === selected
         return (

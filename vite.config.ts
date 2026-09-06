@@ -17,10 +17,19 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        // Split vendor chunks for better caching
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom'],
-          'vendor-router': ['react-router-dom'],
+        // Group vendor chunks cleanly to avoid tiny fragments or empty chunks
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('lucide-react')) {
+              return 'lucide-icons'
+            }
+            if (id.includes('react-router-dom') || id.includes('@remix-run')) {
+              return 'vendor-router'
+            }
+            if (id.includes('@supabase')) {
+              return 'vendor-supabase'
+            }
+          }
         },
       },
     },

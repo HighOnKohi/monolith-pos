@@ -34,8 +34,9 @@ export default function CashierPage() {
   const [dietaryFilter, setDietaryFilter] = useState<DietaryFilter>('all')
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
   const [activeRightTab, setActiveRightTab] = useState<CashierRightTab>('bill')
+  const [mobileActiveView, setMobileActiveView] = useState<'menu' | 'cart'>('menu')
   const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 6
+  const itemsPerPage = 3
 
   // Popovers & Modals
   const [isAssistanceOpen, setIsAssistanceOpen] = useState(false)
@@ -491,10 +492,51 @@ export default function CashierPage() {
         onSelectCategory={setSelectedCategory}
       />
 
-      {/* Main Content Area: Split View (Menu Grid + Right POS Inspector Panel) */}
-      <div className="flex-1 flex overflow-hidden p-4 gap-4">
+      {/* Mobile View Switcher (Menu Dishes vs Ticket & Cart) - only visible on < lg */}
+      <div className="flex lg:hidden px-3 pt-2 pb-1 shrink-0">
+        <div className="flex bg-slate-200/80 p-1 rounded-xl w-full gap-1">
+          <button
+            onClick={() => setMobileActiveView('menu')}
+            className={[
+              'flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer',
+              mobileActiveView === 'menu'
+                ? 'bg-white text-[#14274E] shadow-xs font-extrabold'
+                : 'text-slate-600 hover:text-[#14274E]',
+            ].join(' ')}
+          >
+            <span>Menu Dishes</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
+              {filteredItems.length}
+            </span>
+          </button>
+          <button
+            onClick={() => setMobileActiveView('cart')}
+            className={[
+              'flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer',
+              mobileActiveView === 'cart'
+                ? 'bg-white text-[#14274E] shadow-xs font-extrabold'
+                : 'text-slate-600 hover:text-[#14274E]',
+            ].join(' ')}
+          >
+            <span>Ticket &amp; Cart</span>
+            {punchCart.length > 0 && (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#14274E] text-white font-extrabold">
+                {punchCart.reduce((sum, i) => sum + i.quantity, 0)}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content Area: Split View on Desktop / Tabbed on Mobile */}
+      <div className="flex-1 min-w-0 max-w-full flex overflow-hidden p-4 sm:p-5 lg:p-6 gap-4 lg:gap-5">
         {/* Left Section: Menu Items Grid & Pagination */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div
+          className={[
+            'flex-1 min-w-0 flex-col overflow-hidden',
+            mobileActiveView === 'menu' ? 'flex' : 'hidden lg:flex',
+          ].join(' ')}
+        >
           {/* Dishes Grid */}
           <div className="flex-1 overflow-y-auto pr-1">
             {filteredItems.length === 0 ? (
@@ -503,7 +545,7 @@ export default function CashierPage() {
                 <span>Try adjusting your search or category filter.</span>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-3 gap-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
                 {paginatedItems.map((item) => {
                   const cartEntry = punchCart.find((ci) => ci.item.id === item.id)
                   const quantityInCart = cartEntry ? cartEntry.quantity : 0
@@ -565,8 +607,13 @@ export default function CashierPage() {
           </div>
         </div>
 
-        {/* Right Section: POS Inspector / Order / Receipt Panel (380px wide on desktop) */}
-        <div className="w-80 lg:w-96 shrink-0 h-full flex flex-col">
+        {/* Right Section: POS Inspector / Order / Receipt Panel (320px-340px wide on desktop, full width on mobile) */}
+        <div
+          className={[
+            'w-full lg:w-[320px] xl:w-[340px] shrink-0 min-w-0 h-full flex-col',
+            mobileActiveView === 'cart' ? 'flex' : 'hidden lg:flex',
+          ].join(' ')}
+        >
           <CashierRightPanel
             selectedTable={selectedTable}
             activeTab={activeRightTab}
