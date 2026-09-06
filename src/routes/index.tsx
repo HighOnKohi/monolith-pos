@@ -1,9 +1,10 @@
-import { lazy, Suspense } from 'react'
-import { createBrowserRouter, Navigate } from 'react-router-dom'
+import { lazy, Suspense, useEffect } from 'react'
+import { createBrowserRouter, Navigate, useLocation } from 'react-router-dom'
 import RootLayout from '@/layouts/RootLayout'
 import AppLayout from '@/layouts/AppLayout'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import PageLoader from '@/components/common/PageLoader'
+import { VERCEL_APP_URL } from '@/components/table-qr/tableQrUtils'
 
 // ─── Public pages ─────────────────────────────────────────────────────────────
 const LoginPage = lazy(() => import('@/pages/Login'))
@@ -27,6 +28,53 @@ function wrap(Component: React.ComponentType) {
   )
 }
 
+function CustomerRouteWrapper() {
+  const location = useLocation()
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const hostname = window.location.hostname
+      const isLocalhost =
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '0.0.0.0' ||
+        hostname.endsWith('.local')
+
+      const searchParams = new URLSearchParams(location.search)
+      if (isLocalhost && !searchParams.has('local')) {
+        const dest = `${VERCEL_APP_URL}${location.pathname}${location.search}`
+        window.location.replace(dest)
+      }
+    }
+  }, [location])
+
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <CustomerPage />
+    </Suspense>
+  )
+}
+
+function CustomerRootRedirect() {
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const hostname = window.location.hostname
+      const isLocalhost =
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '0.0.0.0' ||
+        hostname.endsWith('.local')
+
+      const searchParams = new URLSearchParams(window.location.search)
+      if (isLocalhost && !searchParams.has('local')) {
+        window.location.replace(`${VERCEL_APP_URL}/customer/table-1`)
+      }
+    }
+  }, [])
+
+  return <Navigate to="/customer/table-1" replace />
+}
+
 export const router = createBrowserRouter([
   // ── Public routes (no auth required) ────────────────────────────────────────
   {
@@ -38,11 +86,11 @@ export const router = createBrowserRouter([
       },
       {
         path: 'customer',
-        element: <Navigate to="/customer/table-1" replace />,
+        element: <CustomerRootRedirect />,
       },
       {
         path: 'customer/:tableId',
-        element: wrap(CustomerPage),
+        element: <CustomerRouteWrapper />,
       },
     ],
   },

@@ -1,10 +1,24 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Users, BellRing, ExternalLink, RefreshCw } from 'lucide-react'
+import {
+  Users,
+  BellRing,
+  ExternalLink,
+  RefreshCw,
+  QrCode,
+  FileDown,
+  Printer,
+  Copy,
+  Check,
+} from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { supabase } from '@/lib/supabase'
 import { resolveTableAssistance } from '@/services/assistanceService'
+import { TableQrPreview } from '@/components/table-qr/TableQrPreview'
+import { getTableQrUrl } from '@/components/table-qr/tableQrUtils'
+import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
+import { printBulkQrPdf } from '@/components/table-qr/tableQrPrinter'
 
 interface TableData {
   TABLE_ID: number
@@ -18,6 +32,10 @@ interface TableData {
 export default function TableManagerPage() {
   const [tables, setTables] = useState<TableData[]>([])
   const [selectedTable, setSelectedTable] = useState<TableData | null>(null)
+  const [qrModalTable, setQrModalTable] = useState<TableData | null>(null)
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
+  const [isPrintingBulk, setIsPrintingBulk] = useState(false)
+  const [copiedTableId, setCopiedTableId] = useState<number | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   const loadTables = useCallback(async (silent = false) => {
@@ -118,18 +136,87 @@ export default function TableManagerPage() {
     }
   }
 
+  const handleDownloadBulkPdf = async () => {
+    if (tables.length === 0) return
+    try {
+      setIsGeneratingPdf(true)
+      await downloadBulkQrPdf(tables)
+    } catch (err) {
+      console.error('Failed to download QR PDF:', err)
+    } finally {
+      setIsGeneratingPdf(false)
+    }
+  }
+
+  const handlePrintBulk = async () => {
+    if (tables.length === 0) return
+    try {
+      setIsPrintingBulk(true)
+      await printBulkQrPdf(tables)
+    } catch (err) {
+      console.error('Failed to print bulk QRs:', err)
+    } finally {
+      setIsPrintingBulk(false)
+    }
+  }
+
+  const handleCopyUrl = async (tableId: number, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    const url = getTableQrUrl(tableId)
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopiedTableId(tableId)
+      setTimeout(() => setCopiedTableId(null), 2000)
+    } catch {
+      const input = document.createElement('input')
+      input.value = url
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+      setCopiedTableId(tableId)
+      setTimeout(() => setCopiedTableId(null), 2000)
+    }
+  }
+
   const assistanceTables = tables.filter((t) => t.STATUS === 'HAS_REQUEST')
 
   return (
     <div className="table-manager-page-container staff-page space-y-5">
       <PageHeader
         title="Table Manager"
-        description="Live floor plan layout, customer service calls & table statuses."
+        description="Live floor plan layout, customer service calls & table QR codes."
         action={
-          <Button size="sm" variant="secondary" onClick={() => void loadTables()} className="flex items-center gap-1.5">
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Refresh</span>
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleDownloadBulkPdf}
+              disabled={isGeneratingPdf || tables.length === 0}
+              className="flex items-center gap-1.5"
+              title="Download print-ready A4 PDF with all table QR cards"
+            >
+              <FileDown className="w-3.5 h-3.5 text-[#14274E]" />
+              <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download QR PDF'}</span>
+            </Button>
+
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handlePrintBulk}
+              disabled={isPrintingBulk || tables.length === 0}
+              className="flex items-center gap-1.5"
+              title="Print all table QR codes in a 2-column grid"
+            >
+              <Printer className="w-3.5 h-3.5 text-[#14274E]" />
+              <span>{isPrintingBulk ? 'Preparing...' : 'Print All QRs'}</span>
+            </Button>
+
+            <Button size="sm" variant="secondary" onClick={() => void loadTables()} className="flex items-center gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Refresh</span>
+            </Button>
+          </div>
         }
       />
 
@@ -200,10 +287,24 @@ export default function TableManagerPage() {
                           <span className="text-lg font-black text-[#14274E]">
                             T-{table.TABLE_NUM}
                           </span>
-                          <span className="text-xs text-[#9BA4B4] flex items-center gap-1 font-semibold">
-                            <Users className="w-3.5 h-3.5" />
-                            {table.GUEST_CAPACITY}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSelectedTable(table)
+                                setQrModalTable(table)
+                              }}
+                              className="p-1 rounded-lg text-[#394867] hover:text-[#14274E] hover:bg-[#14274E]/10 transition-colors"
+                              title={`View QR Code for Table ${table.TABLE_NUM}`}
+                            >
+                              <QrCode className="w-4 h-4" />
+                            </button>
+                            <span className="text-xs text-[#9BA4B4] flex items-center gap-1 font-semibold">
+                              <Users className="w-3.5 h-3.5" />
+                              {table.GUEST_CAPACITY}
+                            </span>
+                          </div>
                         </div>
 
                         <div className="mt-3">
@@ -307,19 +408,62 @@ export default function TableManagerPage() {
                 </div>
               </div>
 
-              {/* Customer Link & QR info */}
-              <div className="pt-3 border-t border-[#9BA4B4]/20">
-                <label className="text-xs font-bold text-[#394867] uppercase block mb-1.5">
-                  Customer Ordering Page
-                </label>
+              {/* Customer Link & QR Code section */}
+              <div className="pt-4 border-t border-[#9BA4B4]/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-[#394867] uppercase">
+                    Table QR Code & Ordering
+                  </label>
+                  <span className="text-[10px] font-mono text-[#9BA4B4]">
+                    ID: #{selectedTable.TABLE_ID}
+                  </span>
+                </div>
+
+                {/* Prominent QR Preview trigger button */}
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => setQrModalTable(selectedTable)}
+                  className="w-full py-2.5 flex items-center justify-center gap-2 font-bold shadow-sm"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>View / Print Table {selectedTable.TABLE_NUM} QR</span>
+                </Button>
+
+                {/* Canonical URL pill with copy button */}
+                <div className="flex items-center justify-between p-2 rounded-xl bg-[#F1F6F9] border border-[#9BA4B4]/20">
+                  <span className="text-[11px] font-mono text-[#394867] truncate max-w-[180px]" title={getTableQrUrl(selectedTable.TABLE_ID)}>
+                    {getTableQrUrl(selectedTable.TABLE_ID)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => handleCopyUrl(selectedTable.TABLE_ID, e)}
+                    className="p-1 text-xs text-[#394867] hover:text-[#14274E] rounded-md transition-colors flex items-center gap-1 font-semibold"
+                    title="Copy canonical table QR URL"
+                  >
+                    {copiedTableId === selectedTable.TABLE_ID ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="text-emerald-700 text-[10px]">Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span className="text-[10px]">Copy</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* External customer link */}
                 <a
-                  href={`/customer/table-${selectedTable.TABLE_NUM}`}
+                  href={getTableQrUrl(selectedTable.TABLE_ID)}
                   target="_blank"
                   rel="noreferrer"
-                  className="w-full py-2.5 px-3 rounded-xl bg-[#14274E] hover:bg-[#14274E]/90 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-transform active:scale-98"
+                  className="w-full py-2 px-3 rounded-xl bg-white hover:bg-[#F1F6F9] text-[#394867] hover:text-[#14274E] border border-[#9BA4B4]/30 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  <span>Open Customer View (Table {selectedTable.TABLE_NUM})</span>
+                  <span>Test Customer View (Table {selectedTable.TABLE_NUM})</span>
                 </a>
               </div>
             </div>
@@ -330,6 +474,16 @@ export default function TableManagerPage() {
           )}
         </Card>
       </div>
+
+      {/* Table QR Preview Modal */}
+      {qrModalTable && (
+        <TableQrPreview
+          tableId={qrModalTable.TABLE_ID}
+          tableNum={qrModalTable.TABLE_NUM}
+          guestCapacity={qrModalTable.GUEST_CAPACITY}
+          onClose={() => setQrModalTable(null)}
+        />
+      )}
     </div>
   )
 }
