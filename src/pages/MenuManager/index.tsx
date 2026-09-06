@@ -5,21 +5,31 @@ import {
   createMenuItem,
   createCategory,
   deleteMenuItem,
+  updateMenuItem,
+  updateCategory,
+  deleteCategory,
 } from '@/services/menuService'
 import type { MenuItem, Category } from '@/types/menu'
-import { MenuItemEditSidebar } from '@/components/menu/MenuItemEditSidebar'
 import { categoryIconMap, categoryIcons, NewMenuCategoryModal } from '@/components/menu/NewMenuCategoryModal'
 import { NewMenuItemModal, type NewMenuItemForm } from '@/components/menu/NewMenuItemModal'
+import { ConfirmModal } from '@/components/menu/ConfirmModal'
 
 export default function MenuManagerPage() {
   const { items, categories, loadState, reload } = useMenu()
 
-  const [activeCat, setActiveCat]       = useState<string>('all')
-  const [editingItem, setEditingItem]   = useState<MenuItem | null>(null)
+  const [activeCat, setActiveCat]             = useState<string>('all')
+  const [editingItem, setEditingItem]         = useState<MenuItem | null>(null)
   const [isCategoryModalOpen, setCategoryModalOpen] = useState(false)
-  const [isItemModalOpen, setItemModalOpen] = useState(false)
+  const [editingCategory, setEditingCategory]       = useState<Category | null>(null)
+  const [isItemModalOpen, setItemModalOpen]   = useState(false)
+  const [isEditModalOpen, setEditModalOpen]   = useState(false)
   const [search, setSearch]             = useState('')
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
+
+  // Confirm modal state
+  const [confirmState, setConfirmState] = useState<{
+    title: string; message: string; warning?: string; onConfirm: () => void
+  } | null>(null)
 
   function showToast(text: string, type: 'success' | 'info' | 'error' = 'success') {
     setToastMessage({ text, type })
@@ -35,19 +45,37 @@ export default function MenuManagerPage() {
 
   // ── Filtered items ─────────────────────────────────────────────────────────
   const filtered = items.filter((item) => {
-    const matchCat  = activeCat === 'all' || item.categoryId === activeCat
-    const matchSearch = search.trim() === '' ||
-      item.name.toLowerCase().includes(search.toLowerCase())
-    return matchCat && matchSearch
+    // If searching, show all matching items across all categories
+    if (search.trim() !== '') {
+      return item.name.toLowerCase().includes(search.toLowerCase())
+    }
+    // Otherwise only show items from the active category
+    return activeCat === 'all' || item.categoryId === activeCat
   })
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
   function handleEdit(item: MenuItem) {
     setEditingItem(item)
+    setEditModalOpen(true)
   }
 
   function handleClose() {
     setEditingItem(null)
+  }
+
+  async function submitEdit(form: NewMenuItemForm) {
+    if (!editingItem) return
+    await updateMenuItem(editingItem.id, {
+      name:        form.name,
+      price:       form.price,
+      categoryId:  form.categoryId,
+      dietaryType: form.dietaryType,
+      isAvailable: form.isAvailable,
+      imageUrl:    form.imageUrl,
+      description: form.description,
+    })
+    reload()
+    showToast(`Updated "${form.name}" successfully!`, 'success')
   }
 
   // ── Add Category ───────────────────────────────────────────────────────────
@@ -59,13 +87,47 @@ export default function MenuManagerPage() {
     setItemModalOpen(true)
   }
 
-  const selectedCategoryId = categories.find(c => c.id === activeCat && c.id !== 'all' && c.id !== 'best_sellers')?.id
-    ?? categories.find(c => c.id !== 'all' && c.id !== 'best_sellers')?.id
+  const selectedCategoryId = categories.find(c => c.id === activeCat && c.id !== 'all')?.id
+    ?? categories.find(c => c.id !== 'all')?.id
 
   async function submitCategory(name: string, icon: string) {
-    await createCategory(name, icon)
-    reload()
-    showToast(`Added "${name}".`, 'success')
+    if (editingCategory) {
+      await updateCategory(editingCategory.id, name, icon)
+      reload()
+      showToast(`Updated "${name}".`, 'success')
+    } else {
+      await createCategory(name, icon)
+      reload()
+      showToast(`Added "${name}".`, 'success')
+    }
+    setEditingCategory(null)
+  }
+
+  async function handleDeleteCategory(cat: Category) {
+    const hasItems = items.some(i => i.categoryId === cat.id)
+    setConfirmState({
+      title: `Delete "${cat.name}"?`,
+      message: `Are you sure you want to delete the category "${cat.name}"?`,
+      warning: hasItems
+        ? `This category still has ${cat.count} item(s). Remove all items from it before deleting.`
+        : undefined,
+      onConfirm: async () => {
+        if (hasItems) {
+          showToast(`Remove all items from "${cat.name}" before deleting.`, 'error')
+          setConfirmState(null)
+          return
+        }
+        setConfirmState(null)
+        try {
+          await deleteCategory(cat.id)
+          if (activeCat === cat.id) setActiveCat('all')
+          reload()
+          showToast(`Deleted "${cat.name}".`, 'info')
+        } catch (err: unknown) {
+          showToast(err instanceof Error ? err.message : 'Failed to delete category.', 'error')
+        }
+      },
+    })
   }
 
   async function submitDish(form: NewMenuItemForm) {
@@ -116,13 +178,31 @@ export default function MenuManagerPage() {
                 const CategoryIcon = categoryIconMap[cat.icon as keyof typeof categoryIconMap]
                   ?? categoryIcons[index % categoryIcons.length].component
                 return (
-                  <button type="button" key={cat.id} onClick={() => { setActiveCat(cat.id); setPage(1) }} className={[
-                    'menu-item-category-button shrink-0 flex flex-col items-center rounded-xl border px-5 py-3 transition-all',
-                    activeCat === cat.id ? 'is-active' : '',
-                  ].join(' ')}>
-                    <CategoryIcon className="menu-item-category-icon" />
-                    <span className="menu-item-category-title">{cat.name}</span>
-                    <span className="self-stretch text-left text-xs text-[#9BA4B4]">{cat.count} Items</span>
+                  <button
+                    type="button"
+                    key={cat.id}
+                    onClick={() => { setActiveCat(cat.id); setPage(1) }}
+                    className={['menu-item-category-button shrink-0', activeCat === cat.id ? 'is-active' : ''].join(' ')}
+                  >
+                    <div className="menu-item-category-body">
+                      <CategoryIcon className="menu-item-category-icon" />
+                      <span className="menu-item-category-title">{cat.name}</span>
+                    </div>
+                    <div className="menu-item-category-footer" onClick={(e) => e.stopPropagation()}>
+                      <span className="menu-item-category-count">{cat.count} Items</span>
+                      {cat.id !== 'all' && activeCat === cat.id && (
+                        <div className="menu-item-category-actions">
+                          <button type="button" className="menu-item-category-edit-btn" title="Edit category"
+                            onClick={() => { setEditingCategory(cat); setCategoryModalOpen(true) }}>
+                            <Edit2 className="menu-item-category-action-icon" />
+                          </button>
+                          <button type="button" className="menu-item-category-delete-btn" title="Delete category"
+                            onClick={() => handleDeleteCategory(cat)}>
+                            <Trash2 className="menu-item-category-action-icon" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </button>
                 )
               })}
@@ -152,7 +232,7 @@ export default function MenuManagerPage() {
             </div>
           )}
           {(loadState === 'loaded' || loadState === 'empty') && (
-            <div className="menu-item-card-grid-content">
+            <div className="menu-item-card-grid-content" key={activeCat}>
               {paginated.map((item) => (
                 <div
                   key={item.id}
@@ -208,29 +288,31 @@ export default function MenuManagerPage() {
                     <div className="menu-item-footer flex gap-1.5 mt-1" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleEdit(item)}
-                        className={[
-                          'edit-menu-item-button flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-semibold transition-colors',
-                          editingItem?.id === item.id
-                            ? 'bg-[#14274E] text-white'
-                            : 'border border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
-                        ].join(' ')}
+                        className="edit-menu-item-button flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-semibold"
+                        style={{ background: '#14274E', color: '#ffffff' }}
                       >
-                        <Edit2 className="h-3 w-3" />
-                        {editingItem?.id === item.id ? 'Editing' : 'Edit Dish'}
+                        <Edit2 style={{ color: '#E9C46A', width: '0.9rem', height: '0.9rem', strokeWidth: 3 }} />
+                        Edit
                       </button>
                       <button
-                        onClick={async (e) => {
+                        onClick={(e) => {
                           e.stopPropagation()
-                          if (!confirm(`Delete "${item.name}"?`)) return
-                          try {
-                            await deleteMenuItem(item.id)
-                            if (editingItem?.id === item.id) handleClose()
-                            reload()
-                            showToast(`Deleted "${item.name}".`, 'info')
-                          } catch (err: unknown) {
-                            const msg = err instanceof Error ? err.message : 'Failed to delete dish.'
-                            showToast(msg, 'error')
-                          }
+                          setConfirmState({
+                            title: `Delete "${item.name}"?`,
+                            message: `Are you sure you want to remove "${item.name}" from the menu? This cannot be undone.`,
+                            onConfirm: async () => {
+                              setConfirmState(null)
+                              try {
+                                await deleteMenuItem(item.id)
+                                if (editingItem?.id === item.id) handleClose()
+                                reload()
+                                showToast(`Deleted "${item.name}".`, 'info')
+                              } catch (err: unknown) {
+                                const msg = err instanceof Error ? err.message : 'Failed to delete dish.'
+                                showToast(msg, 'error')
+                              }
+                            },
+                          })
                         }}
                         className="delete-menu-item-button flex h-7 w-7 items-center justify-center rounded-lg border border-[#C94A4A]/30 text-[#C94A4A] hover:bg-red-50 transition-colors"
                       >
@@ -289,21 +371,18 @@ export default function MenuManagerPage() {
       </section>
     </div>
 
-    {/* ── Slide-in Item Edit Sidebar ── */}
-    <MenuItemEditSidebar
-      item={editingItem}
+    <NewMenuItemModal
+      isOpen={isEditModalOpen}
       categories={categories}
-      isOpen={Boolean(editingItem)}
-      onClose={handleClose}
-      onSaved={() => {
-        reload()
-        showToast(`Updated "${editingItem?.name}" successfully!`, 'success')
-      }}
+      editItem={editingItem}
+      onClose={() => { setEditModalOpen(false); setEditingItem(null) }}
+      onSubmit={submitEdit}
     />
 
     <NewMenuCategoryModal
       isOpen={isCategoryModalOpen}
-      onClose={() => setCategoryModalOpen(false)}
+      editCategory={editingCategory}
+      onClose={() => { setCategoryModalOpen(false); setEditingCategory(null) }}
       onSubmit={submitCategory}
     />
     <NewMenuItemModal
@@ -312,6 +391,15 @@ export default function MenuManagerPage() {
       defaultCategoryId={selectedCategoryId}
       onClose={() => setItemModalOpen(false)}
       onSubmit={submitDish}
+    />
+
+    <ConfirmModal
+      isOpen={confirmState !== null}
+      title={confirmState?.title ?? ''}
+      message={confirmState?.message ?? ''}
+      warning={confirmState?.warning}
+      onConfirm={confirmState?.onConfirm ?? (() => {})}
+      onCancel={() => setConfirmState(null)}
     />
 
     {/* ── Toast Alert Banner ── */}

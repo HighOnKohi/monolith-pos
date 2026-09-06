@@ -125,17 +125,10 @@ export async function fetchCategories(items: MenuItem[]): Promise<Category[]> {
     mapCategory(row as Record<string, unknown>, countMap[String(row['CATEGORY_ID'])] ?? 0),
   )
 
-  const bestSellerCount = items.filter((i) => i.isBestSeller).length
-
-  // Prepend "All Menu" and "⭐ Best Sellers" virtual categories
+  // Prepend "All Menu" virtual category
   const allCategory: Category = { id: 'all', name: 'All Menu', count: items.length }
-  const bestSellersCategory: Category = {
-    id: 'best_sellers',
-    name: '⭐ Best Sellers',
-    count: bestSellerCount,
-  }
 
-  return [allCategory, bestSellersCategory, ...categoryRows]
+  return [allCategory, ...categoryRows]
 }
 
 // ── Admin / Menu Manager mutations ────────────────────────────────────────────
@@ -204,6 +197,22 @@ export async function createCategory(name: string, icon: string): Promise<Catego
   if (error) throw error
   const row = data as Record<string, unknown>
   return mapCategory(row, 0)
+}
+
+export async function updateCategory(id: string, name: string, icon: string): Promise<void> {
+  const { error } = await supabase
+    .from('Menu_Categories')
+    .update({ CATEGORY_NAME: name, CATEGORY_ICON: icon })
+    .eq('CATEGORY_ID', Number(id))
+  if (error) throw error
+}
+
+export async function deleteCategory(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('Menu_Categories')
+    .delete()
+    .eq('CATEGORY_ID', Number(id))
+  if (error) throw error
 }
 
 // ── Table lookup ──────────────────────────────────────────────────────────────

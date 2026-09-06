@@ -31,8 +31,11 @@ export const categoryIconMap: Record<string, LucideIcon> = Object.fromEntries(
   categoryIcons.map(({ name, component }) => [name, component]),
 )
 
+import type { Category } from '@/types/menu'
+
 interface NewMenuCategoryModalProps {
   isOpen: boolean
+  editCategory?: Category | null
   onClose: () => void
   onSubmit: (name: string, icon: string) => Promise<void> | void
 }
@@ -65,7 +68,8 @@ const CategoryIconOption = memo(function CategoryIconOption({
   )
 })
 
-export const NewMenuCategoryModal = memo(function NewMenuCategoryModal({ isOpen, onClose, onSubmit }: NewMenuCategoryModalProps) {
+export const NewMenuCategoryModal = memo(function NewMenuCategoryModal({ isOpen, editCategory, onClose, onSubmit }: NewMenuCategoryModalProps) {
+  const isEditMode = Boolean(editCategory)
   const [name, setName] = useState('')
   const [icon, setIcon] = useState(categoryIcons[0].name)
   const [isSaving, setIsSaving] = useState(false)
@@ -74,11 +78,11 @@ export const NewMenuCategoryModal = memo(function NewMenuCategoryModal({ isOpen,
 
   useEffect(() => {
     if (isOpen) {
-      setName('')
-      setIcon(iconOptions[0].name)
+      setName(editCategory?.name ?? '')
+      setIcon(editCategory?.icon ?? iconOptions[0].name)
       setError(null)
     }
-  }, [isOpen, iconOptions])
+  }, [isOpen, editCategory, iconOptions])
 
   if (!isOpen) return null
 
@@ -104,6 +108,7 @@ export const NewMenuCategoryModal = memo(function NewMenuCategoryModal({ isOpen,
     <div className="menu-modal-overlay" role="dialog" aria-modal="true" aria-label="New Menu Category">
       <form className="menu-modal-panel" onSubmit={handleSubmit}>
         <header className="menu-modal-header">
+          <h2>{isEditMode ? 'Editing Category...' : 'Adding New Category...'}</h2>
           <button type="button" className="menu-modal-close" onClick={onClose} disabled={isSaving} aria-label="Close">
             <X className="h-5 w-5" />
           </button>
@@ -132,7 +137,9 @@ export const NewMenuCategoryModal = memo(function NewMenuCategoryModal({ isOpen,
         </div>
         <footer className="menu-modal-footer">
           <button type="button" className="menu-modal-cancel" onClick={onClose} disabled={isSaving}>Cancel</button>
-          <button type="submit" className="menu-modal-submit" disabled={isSaving}>{isSaving ? 'Adding...' : 'Add category'}</button>
+          <button type="submit" className="menu-modal-submit" disabled={isSaving}>
+            {isSaving ? (isEditMode ? 'Saving...' : 'Adding...') : (isEditMode ? 'Save changes' : 'Add category')}
+          </button>
         </footer>
       </form>
     </div>
