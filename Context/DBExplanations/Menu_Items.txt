@@ -19,3 +19,5 @@ ITEM_IMAGE_URL
 ITEM_STATUS
 - This can be assigned either "AVAILABLE" or "OUT_OF_STOCK" depending if the kitchen has marked them as available or out of stock
 
+MENU_ITEM_DIETARY
+- This can be assigned either "VEGETARIAN" or "NON-VEGETARIAN" depending if the item is a vegetarian or not

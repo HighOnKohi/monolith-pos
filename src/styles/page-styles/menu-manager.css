@@ -116,7 +116,7 @@
 .menu-item-card-header button {
   font-size: 1.175rem;
   font-weight: 600;
-  margin-left: 85px;
+  margin-left: 105px;
 }
 
 /* Add Item plus icon controller */
@@ -167,8 +167,24 @@
   stroke-width: 2;
 }
 
-.menu-item-category-buttons-container {
+.menu-item-category-buttons-row {
+  padding-left: 13px;
+  padding-right: 13px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
   min-width: 0;
+}
+
+.menu-item-category-buttons-container {
+  display: flex;
+  flex: 1;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scroll-behavior: smooth;
   scrollbar-width: none;
 }
 

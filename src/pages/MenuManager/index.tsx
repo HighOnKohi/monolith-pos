@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Search, Plus, ChevronLeft, ChevronRight, Edit2, Trash2, Utensils, Coffee, CakeSlice, Salad, Soup } from 'lucide-react'
+import { Search, Plus, ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react'
 import { useMenu } from '@/hooks/useMenu'
 import {
   createMenuItem,
@@ -8,12 +8,16 @@ import {
 } from '@/services/menuService'
 import type { MenuItem, Category } from '@/types/menu'
 import { MenuItemEditSidebar } from '@/components/menu/MenuItemEditSidebar'
+import { categoryIconMap, categoryIcons, NewMenuCategoryModal } from '@/components/menu/NewMenuCategoryModal'
+import { NewMenuItemModal, type NewMenuItemForm } from '@/components/menu/NewMenuItemModal'
 
 export default function MenuManagerPage() {
   const { items, categories, loadState, reload } = useMenu()
 
   const [activeCat, setActiveCat]       = useState<string>('all')
   const [editingItem, setEditingItem]   = useState<MenuItem | null>(null)
+  const [isCategoryModalOpen, setCategoryModalOpen] = useState(false)
+  const [isItemModalOpen, setItemModalOpen] = useState(false)
   const [search, setSearch]             = useState('')
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
 
@@ -47,35 +51,27 @@ export default function MenuManagerPage() {
   }
 
   // ── Add Category ───────────────────────────────────────────────────────────
-  async function handleAddCategory() {
-    const name = window.prompt('Category name:')
-    if (!name?.trim()) return
-    await createCategory(name.trim())
-    reload()
+  function handleAddCategory() {
+    setCategoryModalOpen(true)
   }
 
-  // ── Add Item ────────────────────────────────────────────────────────────────
-  async function handleAddDish() {
-    const activeCategory = categories.find(c => c.id === activeCat && c.id !== 'all' && c.id !== 'best_sellers')
-      ?? categories.find(c => c.id !== 'all' && c.id !== 'best_sellers')
-    if (!activeCategory) return
+  function handleAddDish() {
+    setItemModalOpen(true)
+  }
 
-    const name = window.prompt('Name:')
-    if (!name?.trim()) return
-    const price = window.prompt('Price:')
-    if (price === null || Number.isNaN(Number(price))) return
-    const imageUrl = window.prompt('Image:') ?? ''
-    const description = window.prompt('Description:') ?? ''
+  const selectedCategoryId = categories.find(c => c.id === activeCat && c.id !== 'all' && c.id !== 'best_sellers')?.id
+    ?? categories.find(c => c.id !== 'all' && c.id !== 'best_sellers')?.id
 
-    await createMenuItem({
-      name: name.trim(),
-      price: Number(price),
-      categoryId: activeCategory.id,
-      dietaryType: 'non-veg',
-      imageUrl: imageUrl.trim(),
-      description: description.trim(),
-    })
+  async function submitCategory(name: string, icon: string) {
+    await createCategory(name, icon)
     reload()
+    showToast(`Added "${name}".`, 'success')
+  }
+
+  async function submitDish(form: NewMenuItemForm) {
+    await createMenuItem(form)
+    reload()
+    showToast(`Added "${form.name}".`, 'success')
   }
 
   // ── Pagination ─────────────────────────────────────────────────────────────
@@ -111,13 +107,14 @@ export default function MenuManagerPage() {
               <Plus className="menu-manager-plus-icon" /> Add Category
             </button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="menu-item-category-buttons-row">
             <button type="button" onClick={() => scrollCats('left')} className="menu-item-category-arrow menu-item-category-arrow-left">
               <ChevronLeft className="menu-item-category-arrow-icon" />
             </button>
-            <div ref={catScrollRef} className="menu-item-category-buttons-container flex flex-1 gap-2 overflow-x-auto scroll-smooth" style={{ scrollbarWidth: 'none' }}>
+            <div ref={catScrollRef} className="menu-item-category-buttons-container">
               {categories.map((cat: Category, index) => {
-                const CategoryIcon = [Utensils, Coffee, CakeSlice, Salad, Soup][index % 5]
+                const CategoryIcon = categoryIconMap[cat.icon as keyof typeof categoryIconMap]
+                  ?? categoryIcons[index % categoryIcons.length].component
                 return (
                   <button type="button" key={cat.id} onClick={() => { setActiveCat(cat.id); setPage(1) }} className={[
                     'menu-item-category-button shrink-0 flex flex-col items-center rounded-xl border px-5 py-3 transition-all',
@@ -302,6 +299,19 @@ export default function MenuManagerPage() {
         reload()
         showToast(`Updated "${editingItem?.name}" successfully!`, 'success')
       }}
+    />
+
+    <NewMenuCategoryModal
+      isOpen={isCategoryModalOpen}
+      onClose={() => setCategoryModalOpen(false)}
+      onSubmit={submitCategory}
+    />
+    <NewMenuItemModal
+      isOpen={isItemModalOpen}
+      categories={categories}
+      defaultCategoryId={selectedCategoryId}
+      onClose={() => setItemModalOpen(false)}
+      onSubmit={submitDish}
     />
 
     {/* ── Toast Alert Banner ── */}

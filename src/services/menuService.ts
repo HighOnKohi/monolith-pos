@@ -1,6 +1,14 @@
 import { supabase } from '@/lib/supabase'
 import { DEFAULT_FOOD_PLACEHOLDER, type MenuItem, type Category } from '@/types/menu'
 
+function mapDietaryType(value: unknown): MenuItem['dietaryType'] {
+  return String(value).toUpperCase() === 'VEGETARIAN' || String(value).toLowerCase() === 'veg' ? 'veg' : 'non-veg'
+}
+
+function toDatabaseDietaryType(value: string): 'VEGETARIAN' | 'NON-VEGETARIAN' {
+  return value.toUpperCase() === 'VEGETARIAN' || value.toLowerCase() === 'veg' ? 'VEGETARIAN' : 'NON-VEGETARIAN'
+}
+
 function mapItem(row: Record<string, unknown>): MenuItem {
   return {
     id: String(row['ITEM_ID']),
@@ -8,8 +16,8 @@ function mapItem(row: Record<string, unknown>): MenuItem {
     code: String(row['ITEM_ID']),
     price: Number(row['ITEM_PRICE']),
     categoryId: String(row['CATEGORY_ID']),
-    dietaryType: 'non-veg', // DB doesn't have dietary type yet; default non-veg
-    imageUrl: (row['ITEM_IMAGE'] as string | undefined) || (row['ITEM_IMAGE_URL'] as string | undefined) || DEFAULT_FOOD_PLACEHOLDER,
+    dietaryType: mapDietaryType(row['MENU_ITEM_DIETARY']),
+    imageUrl: (row['ITEM_IMAGE_URL'] as string | undefined) || DEFAULT_FOOD_PLACEHOLDER,
     isAvailable: row['ITEM_STATUS'] !== 'OUT_OF_STOCK',
     isSoldOut: row['ITEM_STATUS'] === 'OUT_OF_STOCK',
     description: (row['ITEM_DESCRIPTION'] as string | undefined) ?? undefined,
@@ -21,6 +29,7 @@ function mapCategory(row: Record<string, unknown>, count: number): Category {
     id: String(row['CATEGORY_ID']),
     name: String(row['CATEGORY_NAME']),
     count,
+    icon: typeof row['CATEGORY_ICON'] === 'string' ? row['CATEGORY_ICON'] : undefined,
   }
 }
 
@@ -138,6 +147,7 @@ export async function createMenuItem(payload: {
   dietaryType: string
   imageUrl?: string
   description?: string
+  isAvailable?: boolean
 }): Promise<MenuItem> {
   const { data, error } = await supabase
     .from('Menu_Items')
@@ -145,8 +155,9 @@ export async function createMenuItem(payload: {
       ITEM_NAME: payload.name,
       ITEM_PRICE: payload.price,
       CATEGORY_ID: Number(payload.categoryId),
-      ITEM_STATUS: 'AVAILABLE',
-      ITEM_IMAGE: payload.imageUrl ?? null,
+      ITEM_STATUS: payload.isAvailable === false ? 'OUT_OF_STOCK' : 'AVAILABLE',
+      MENU_ITEM_DIETARY: toDatabaseDietaryType(payload.dietaryType),
+      ITEM_IMAGE_URL: payload.imageUrl ?? null,
       ITEM_DESCRIPTION: payload.description ?? null,
     })
     .select()
@@ -169,8 +180,9 @@ export async function updateMenuItem(id: string, patch: {
   if (patch.name        !== undefined) update['ITEM_NAME']        = patch.name
   if (patch.price       !== undefined) update['ITEM_PRICE']       = patch.price
   if (patch.categoryId  !== undefined) update['CATEGORY_ID']      = Number(patch.categoryId)
-  if (patch.imageUrl    !== undefined) update['ITEM_IMAGE']       = patch.imageUrl
+  if (patch.imageUrl    !== undefined) update['ITEM_IMAGE_URL']  = patch.imageUrl
   if (patch.description !== undefined) update['ITEM_DESCRIPTION'] = patch.description
+  if (patch.dietaryType !== undefined) update['MENU_ITEM_DIETARY'] = toDatabaseDietaryType(patch.dietaryType)
   if (patch.isAvailable !== undefined) update['ITEM_STATUS']      = patch.isAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK'
 
   const { error } = await supabase.from('Menu_Items').update(update).eq('ITEM_ID', Number(id))
@@ -182,16 +194,16 @@ export async function deleteMenuItem(id: string): Promise<void> {
   if (error) throw error
 }
 
-export async function createCategory(name: string): Promise<Category> {
+export async function createCategory(name: string, icon: string): Promise<Category> {
   const { data, error } = await supabase
     .from('Menu_Categories')
-    .insert({ CATEGORY_NAME: name })
+    .insert({ CATEGORY_NAME: name, CATEGORY_ICON: icon })
     .select()
     .single()
 
   if (error) throw error
   const row = data as Record<string, unknown>
-  return { id: String(row['CATEGORY_ID']), name: String(row['CATEGORY_NAME']), count: 0 }
+  return mapCategory(row, 0)
 }
 
 // ── Table lookup ──────────────────────────────────────────────────────────────

@@ -7,3 +7,5 @@ CATEGORY_NAME
 CATEGORY_ITEM_COUNT
 - this is the counter for how many items this category has
 
+CATEGORY_ICON
+- this is the icon of the category
