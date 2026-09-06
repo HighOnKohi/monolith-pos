@@ -1,11 +1,10 @@
 import { useState, useRef } from 'react'
-import { Search, Plus, ChevronLeft, ChevronRight, Edit2, Trash2, X, Utensils, Coffee, CakeSlice, Salad, Soup } from 'lucide-react'
+import { Search, Plus, ChevronLeft, ChevronRight, Edit2, Trash2, Utensils, Coffee, CakeSlice, Salad, Soup } from 'lucide-react'
 import { useMenu } from '@/hooks/useMenu'
 import {
   createMenuItem,
-  updateMenuItem,
-  deleteMenuItem,
   createCategory,
+  deleteMenuItem,
 } from '@/services/menuService'
 import type { MenuItem, Category } from '@/types/menu'
 
@@ -13,20 +12,8 @@ export default function MenuManagerPage() {
   const { items, categories, loadState, reload } = useMenu()
 
   const [activeCat, setActiveCat]       = useState<string>('all')
-  const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
   const [editingId, setEditingId]       = useState<string | null>(null)
   const [search, setSearch]             = useState('')
-  const [saving, setSaving]             = useState(false)
-  const [deleting, setDeleting]         = useState(false)
-
-  // Edit form state
-  const [formName,      setFormName]      = useState('')
-  const [formPrice,     setFormPrice]     = useState('')
-  const [formCatId,     setFormCatId]     = useState('')
-  const [formDietary,   setFormDietary]   = useState<'veg' | 'non-veg'>('non-veg')
-  const [formAvailable, setFormAvailable] = useState(true)
-  const [formImage,     setFormImage]     = useState('')
-  const [formDescription, setFormDescription] = useState('')
 
   const catScrollRef = useRef<HTMLDivElement>(null)
 
@@ -45,52 +32,11 @@ export default function MenuManagerPage() {
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
   function handleEdit(item: MenuItem) {
-    setSelectedItem(item)
-    setEditingId(item.id)
-    setFormName(item.name)
-    setFormPrice(String(item.price))
-    setFormCatId(item.categoryId)
-    setFormDietary(item.dietaryType)
-    setFormAvailable(item.isAvailable)
-    setFormImage(item.imageUrl ?? '')
-    setFormDescription(item.description ?? '')
+    setEditingId((prev) => (prev === item.id ? null : item.id))
   }
 
   function handleClose() {
-    setSelectedItem(null)
     setEditingId(null)
-  }
-
-  async function handleSave() {
-    if (!selectedItem) return
-    setSaving(true)
-    try {
-      await updateMenuItem(selectedItem.id, {
-        name:        formName,
-        price:       parseFloat(formPrice),
-        categoryId:  formCatId,
-        dietaryType: formDietary,
-        isAvailable: formAvailable,
-        imageUrl: formImage,
-        description: formDescription,
-      })
-      reload()
-      handleClose()
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function handleDelete() {
-    if (!selectedItem) return
-    setDeleting(true)
-    try {
-      await deleteMenuItem(selectedItem.id)
-      reload()
-      handleClose()
-    } finally {
-      setDeleting(false)
-    }
   }
 
   // ── Add Category ───────────────────────────────────────────────────────────
@@ -321,190 +267,8 @@ export default function MenuManagerPage() {
             </button>
           </div>
         </div>
-        </section>
-      </div>
-
-      {/* Order sidebar removed from the Menu Manager layout. */}
-      {false && <div className="menu-manager-order-sidebar order-sidebar">
-
-        {selectedItem ? (
-          <>
-            {/* Panel header */}
-            <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-[#9BA4B4]/20">
-              <div>
-                <p className="text-sm font-bold text-[#14274E]">Edit Dish</p>
-                <p className="text-[10px] text-[#9BA4B4]">
-                  ID: #{selectedItem?.id} •{' '}
-                  {categories.find((c: Category) => c.id === selectedItem?.categoryId)?.name ?? '—'}
-                </p>
-              </div>
-              <button onClick={handleClose} className="text-[#9BA4B4] hover:text-[#14274E] transition-colors">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Tabs (static — only Dish Details is functional for now) */}
-            <div className="shrink-0 flex gap-1 px-3 pt-2 pb-1 border-b border-[#9BA4B4]/20">
-              {['Dish Details', 'Modifiers', 'Pricing'].map((t, i) => (
-                <button
-                  key={t}
-                  className={[
-                    'flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors',
-                    i === 0 ? 'bg-[#14274E] text-white' : 'text-[#394867] hover:bg-[#F1F6F9]',
-                  ].join(' ')}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-
-            {/* Form — scrollable */}
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-
-              {/* Image */}
-              <div>
-                <p className="mb-1.5 text-xs font-semibold text-[#394867]">Item Imagery</p>
-                <div className="flex items-center gap-3">
-                  <img
-                    src={selectedItem?.imageUrl ?? ''}
-                    alt={selectedItem?.name ?? ''}
-                    className="h-14 w-14 rounded-lg object-cover border border-[#9BA4B4]/20"
-                  />
-                  <input
-                    value={formImage}
-                    onChange={e => setFormImage(e.target.value)}
-                    placeholder="Image URL"
-                    className="min-w-0 flex-1 rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-xs text-[#14274E] outline-none focus:border-[#14274E]"
-                  />
-                </div>
-              </div>
-
-              {/* Dish name */}
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[#394867]">Dish Name</label>
-                <input
-                  value={formName}
-                  onChange={e => setFormName(e.target.value)}
-                  className="w-full rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] outline-none focus:border-[#14274E] transition-colors"
-                />
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[#394867]">Description</label>
-                <textarea
-                  value={formDescription}
-                  onChange={e => setFormDescription(e.target.value)}
-                  rows={3}
-                  className="w-full resize-none rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] outline-none focus:border-[#14274E] transition-colors"
-                />
-              </div>
-
-              {/* Category + Price */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-[#394867]">Category</label>
-                  <select
-                    value={formCatId}
-                    onChange={e => setFormCatId(e.target.value)}
-                    className="w-full rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] bg-white outline-none focus:border-[#14274E] transition-colors"
-                  >
-                    {categories.filter((c: Category) => c.id !== 'all' && c.id !== 'best_sellers').map((c: Category) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-[#394867]">Price ($)</label>
-                  <input
-                    type="number"
-                    value={formPrice}
-                    onChange={e => setFormPrice(e.target.value)}
-                    className="w-full rounded-lg border border-[#9BA4B4]/30 px-3 py-2 text-sm text-[#14274E] outline-none focus:border-[#14274E] transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* Dietary classification */}
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-[#394867]">Dietary Classification</label>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setFormDietary('non-veg')}
-                    className={[
-                      'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
-                      formDietary === 'non-veg'
-                        ? 'border-[#C94A4A] bg-red-50 text-[#C94A4A]'
-                        : 'border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
-                    ].join(' ')}
-                  >
-                    Non-Veg
-                  </button>
-                  <button
-                    onClick={() => setFormDietary('veg')}
-                    className={[
-                      'flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors',
-                      formDietary === 'veg'
-                        ? 'border-[#E9C46A] bg-yellow-50 text-yellow-700'
-                        : 'border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
-                    ].join(' ')}
-                  >
-                    Vegetarian
-                  </button>
-                </div>
-              </div>
-
-              {/* In Stock toggle */}
-              <div className="flex items-center justify-between rounded-lg border border-[#9BA4B4]/20 px-3 py-2.5">
-                <div>
-                  <p className="text-xs font-semibold text-[#14274E]">In Stock &amp; Visible</p>
-                  <p className="text-[10px] text-[#9BA4B4]">Instant live sync to terminal</p>
-                </div>
-                <div
-                  onClick={() => setFormAvailable(v => !v)}
-                  className={[
-                    'relative h-6 w-11 rounded-full transition-colors cursor-pointer',
-                    formAvailable ? 'bg-[#14274E]' : 'bg-[#9BA4B4]/40',
-                  ].join(' ')}
-                >
-                  <div className={[
-                    'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform',
-                    formAvailable ? 'translate-x-5' : 'translate-x-0.5',
-                  ].join(' ')} />
-                </div>
-              </div>
-            </div>
-
-            {/* Footer actions */}
-            <div className="shrink-0 border-t border-[#9BA4B4]/20 px-3 pb-3 pt-2 space-y-2">
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="w-full rounded-xl bg-[#14274E] py-2.5 text-sm font-bold text-white hover:bg-[#394867] disabled:opacity-60 transition-colors"
-              >
-                {saving ? 'Saving...' : 'Save Changes →'}
-              </button>
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-[#C94A4A]/30 py-2 text-xs font-semibold text-[#C94A4A] hover:bg-red-50 disabled:opacity-60 transition-colors"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                {deleting ? 'Deleting...' : 'Delete Dish'}
-              </button>
-            </div>
-          </>
-        ) : (
-          /* Empty state — no dish selected */
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#F1F6F9] text-[#9BA4B4]">
-              <Edit2 className="h-5 w-5" />
-            </div>
-            <p className="text-sm font-semibold text-[#14274E]">No dish selected</p>
-            <p className="text-xs text-[#9BA4B4]">Click Edit on any dish to manage its details here.</p>
-          </div>
-        )}
-      </div>}
+      </section>
     </div>
-  )
+  </div>
+)
 }

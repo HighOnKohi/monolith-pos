@@ -39,6 +39,7 @@ export async function createOrder(
   items: CartItem[],
   diningType: DiningType,
   total: number,
+  requestedFrom: 'Cashier' | 'Customer' = 'Customer',
 ): Promise<Order> {
   // 1. Insert the order
   const { data: orderData, error: orderError } = await supabase
@@ -49,7 +50,7 @@ export async function createOrder(
       ORDER_STATUS: 'REQUESTED',
       ORDER_TYPE: DINING_TYPE_MAP[diningType],
       TOTAL_BILL: total,
-      REQUESTED_FROM: 'Customer',
+      REQUESTED_FROM: requestedFrom,
       TIME: new Date().toISOString(),
     })
     .select()
@@ -81,6 +82,24 @@ export async function createOrder(
 
   const { error: itemsError } = await supabase.from('Order_Items').insert(orderItems)
   if (itemsError) throw itemsError
+
+  // 3. Mark table as OCCUPIED if it was not already occupied/has_request
+  try {
+    const { data: tableData } = await supabase
+      .from('Restaurant_Tables')
+      .select('STATUS')
+      .eq('TABLE_ID', tableId)
+      .maybeSingle()
+
+    if (tableData && tableData.STATUS !== 'OCCUPIED' && tableData.STATUS !== 'HAS_REQUEST') {
+      await supabase
+        .from('Restaurant_Tables')
+        .update({ STATUS: 'OCCUPIED' })
+        .eq('TABLE_ID', tableId)
+    }
+  } catch (tErr) {
+    console.warn('[orderService] Failed to update table status to OCCUPIED:', tErr)
+  }
 
   return mapOrder(orderData as Record<string, unknown>)
 }
