@@ -11,11 +11,14 @@ import type { AssistanceRequest } from '@/types/assistance'
 import type { Order } from '@/types/order'
 import type { MenuItem } from '@/types/menu'
 import type { CartItem, DiningType } from '@/types/cart'
+import { buildReceiptSnapshot } from '@/components/receipt/buildReceipt'
+import { ReceiptPreviewModal } from '@/components/receipt/ReceiptPreviewModal'
+import type { ReceiptSnapshot } from '@/components/receipt/types'
 
 import { CashierHeader, type DietaryFilter } from './components/CashierHeader'
 import { CategoryCardsRow } from './components/CategoryCardsRow'
 import { ProductCard } from './components/ProductCard'
-import { CashierRightPanel, type CashierRightTab } from './components/CashierRightPanel'
+import { CashierRightPanel, type CashierRightTab, type DiscountInfo } from './components/CashierRightPanel'
 import { TableSelectorModal, type TableItem } from './components/TableSelectorModal'
 
 export default function CashierPage() {
@@ -42,6 +45,10 @@ export default function CashierPage() {
   const [isAssistanceOpen, setIsAssistanceOpen] = useState(false)
   const [isVerifiedOpen, setIsVerifiedOpen] = useState(false)
   const [isTableSelectorOpen, setIsTableSelectorOpen] = useState(false)
+
+  // Receipt state
+  const [currentReceipt, setCurrentReceipt] = useState<ReceiptSnapshot | null>(null)
+  const [showReceiptModal, setShowReceiptModal] = useState(false)
 
   // Toast feedback state
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
@@ -301,12 +308,28 @@ export default function CashierPage() {
   }
 
   // Bill Settlement Handler
-  const handleCompletePayment = async () => {
+  const handleCompletePayment = async (discountInfo: DiscountInfo) => {
     if (!selectedTable) return
     const tableId = selectedTable.TABLE_ID
     const tableNum = selectedTable.TABLE_NUM || selectedTable.TABLE_ID
 
+    // ── STEP 1: Snapshot receipt BEFORE any DB operations clear the table ──
+    // This is critical: once the bill-out runs, tableOrders will be empty.
+    const snapshot = buildReceiptSnapshot({
+      tableOrders,
+      discountType: discountInfo.discountType,
+      customPercent: discountInfo.customPercent,
+      activeBillRequest,
+      tableId,
+      tableNum,
+    })
+
+    // Show receipt preview immediately (data is safely captured in snapshot)
+    setCurrentReceipt(snapshot)
+    setShowReceiptModal(true)
+
     try {
+      // ── STEP 2: Execute bill-out DB operations ──
       // 1. If there is an active bill request, mark PAID
       if (activeBillRequest) {
         await updateBillRequestStatus(activeBillRequest.requestId, 'PAID', tableId)
@@ -331,9 +354,12 @@ export default function CashierPage() {
     }
   }
 
-  // Print Official Receipt
+  // Print Official Receipt — delegates to the receipt preview modal
+  // The modal has the Print button; this fallback is kept for external callers.
   const handlePrintReceipt = () => {
-    window.print()
+    if (currentReceipt) {
+      setShowReceiptModal(true)
+    }
   }
 
   // ── 7. Punch Cart Handlers ──
@@ -649,6 +675,14 @@ export default function CashierPage() {
         }}
         onClose={() => setIsTableSelectorOpen(false)}
       />
+
+      {/* Receipt Preview Modal */}
+      {showReceiptModal && currentReceipt && (
+        <ReceiptPreviewModal
+          receipt={currentReceipt}
+          onClose={() => setShowReceiptModal(false)}
+        />
+      )}
     </div>
   )
 }

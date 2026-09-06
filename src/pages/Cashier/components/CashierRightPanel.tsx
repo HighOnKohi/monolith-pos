@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import type { DiscountType } from '@/components/receipt/buildReceipt'
 import {
   Printer,
   Send,
@@ -19,6 +20,13 @@ import type { TableItem } from './TableSelectorModal'
 
 export type CashierRightTab = 'bill' | 'punch' | 'orders'
 
+/** Discount state passed upward on payment completion so the parent can build a receipt snapshot */
+export interface DiscountInfo {
+  discountType: DiscountType
+  customPercent: number
+  discountAmount: number
+}
+
 interface CashierRightPanelProps {
   selectedTable: TableItem | null
   activeTab: CashierRightTab
@@ -28,7 +36,7 @@ interface CashierRightPanelProps {
   tableOrders: Order[]
   activeBillRequest: BillRequest | null
   onAcknowledgeBillRequest: (req: BillRequest) => void
-  onCompletePayment: () => void
+  onCompletePayment: (discountInfo: DiscountInfo) => void
   onPrintReceipt: () => void
   // Punch Order State
   punchCart: CartItem[]
@@ -358,7 +366,13 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
             <div className="space-y-2 pt-1">
               <button
                 disabled={aggregatedItems.length === 0}
-                onClick={onCompletePayment}
+                onClick={() =>
+                  onCompletePayment({
+                    discountType,
+                    customPercent,
+                    discountAmount,
+                  })
+                }
                 className="w-full py-2.5 rounded-xl bg-[#14274E] hover:bg-[#203c73] disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
               >
                 <span>Complete Payment / Settle Bill →</span>

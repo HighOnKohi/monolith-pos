@@ -17,7 +17,7 @@ import PageLoader from '@/components/common/PageLoader'
 
 import { useMenu } from '@/hooks/useMenu'
 import { useRealtimeMenu, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
-import { useCart } from '@/hooks/useCart'
+import { useSharedCart } from '@/hooks/useSharedCart'
 import { useOrders } from '@/hooks/useOrders'
 import { useBillRequest } from '@/hooks/useBillRequest'
 import { getCachedTableAssistance, clearCachedTableAssistance } from '@/services/assistanceService'
@@ -114,7 +114,10 @@ export default function CustomerPage() {
     total,
     itemCount,
     clearCart,
-  } = useCart()
+    isLockedByOther,
+    acquireLock,
+    releaseLock,
+  } = useSharedCart(parsedTableId)
   const {
     orders,
     isSubmitting: isSubmittingOrder,
@@ -180,10 +183,20 @@ export default function CustomerPage() {
 
   // Handlers
   const handlePlaceOrder = async () => {
-    const success = await placeOrder(cartItems, 'dine-in', total)
-    if (success) {
-      clearCart()
-      handleTabChange('orders')
+    // Duplication protection: acquire cooperative lock before submitting
+    if (isLockedByOther) return // another device is placing right now
+
+    const gotLock = acquireLock()
+    if (!gotLock) return // race: another device just locked between our check and acquire
+
+    try {
+      const success = await placeOrder(cartItems, 'dine-in', total)
+      if (success) {
+        clearCart()
+        handleTabChange('orders')
+      }
+    } finally {
+      releaseLock()
     }
   }
 
@@ -326,6 +339,7 @@ export default function CustomerPage() {
         onPlaceOrder={handlePlaceOrder}
         onClear={clearCart}
         isSubmitting={isSubmittingOrder}
+        isLockedByOther={isLockedByOther}
       />
 
       {/* Mobile Bottom Navigation - permanent at bottom of page overlapping content */}

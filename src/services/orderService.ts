@@ -46,7 +46,6 @@ export async function createOrder(
     .from('Restaurant_Orders')
     .insert({
       TABLE_ID: tableId,
-      ORDER_ITEMS_ID: Date.now(), // Satisfy DB schema constraint
       ORDER_STATUS: 'REQUESTED',
       ORDER_TYPE: DINING_TYPE_MAP[diningType],
       TOTAL_BILL: total,
@@ -60,25 +59,13 @@ export async function createOrder(
 
   const orderId = Number((orderData as Record<string, unknown>)['ORDER_ID'])
 
-  // 2. Insert order items
-  // Unroll items by quantity to match original DBSchema (1 row per ordered item)
-  const orderItems: Array<{
-    ORDER_ID: number
-    ITEM_ID: number
-    ORDER_ITEM_STATUS: string
-    QUANTITY: number
-  }> = []
-
-  for (const ci of items) {
-    for (let q = 0; q < ci.quantity; q++) {
-      orderItems.push({
-        ORDER_ID: orderId,
-        ITEM_ID: Number(ci.item.id),
-        ORDER_ITEM_STATUS: 'PENDING',
-        QUANTITY: 1,
-      })
-    }
-  }
+  // 2. Insert order items — one row per distinct item with its quantity
+  const orderItems = items.map((ci) => ({
+    ORDER_ID: orderId,
+    ITEM_ID: Number(ci.item.id),
+    ORDER_ITEM_STATUS: 'PENDING',
+    QUANTITY: ci.quantity,
+  }))
 
   const { error: itemsError } = await supabase.from('Order_Items').insert(orderItems)
   if (itemsError) throw itemsError
