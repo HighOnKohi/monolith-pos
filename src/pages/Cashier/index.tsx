@@ -154,8 +154,8 @@ export default function CashierPage() {
               n &&
               oldO.orderId === n.orderId &&
               oldO.orderStatus === n.orderStatus &&
-              oldO.totalAmount === n.totalAmount &&
-              oldO.items.length === n.items.length
+              oldO.totalBill === n.totalBill &&
+              (oldO.items?.length ?? 0) === (n.items?.length ?? 0)
             )
           })
           if (isSame) return prev
@@ -180,7 +180,7 @@ export default function CashierPage() {
             const n = bData[idx]
             return (
               n &&
-              oldB.billRequestId === n.billRequestId &&
+              oldB.requestId === n.requestId &&
               oldB.status === n.status &&
               oldB.paymentMethod === n.paymentMethod
             )

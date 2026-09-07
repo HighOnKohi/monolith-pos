@@ -477,10 +477,26 @@ Click "Complete Payment / Settle Bill →"
 
 ---
 
-### 5. Supabase & PostgreSQL Considerations
-- **Postgres Replica Identity (`55000`)**: When a table is in a publication (e.g. `supabase_realtime`) without a primary key or `REPLICA IDENTITY FULL`, PostgreSQL rejects `UPDATE` and `DELETE` queries.
-- **Migration 005**: `Context/migrations/005_fix_orders_replica_identity_and_status.sql` sets `REPLICA IDENTITY FULL` on `Restaurant_Orders` and `Order_Items`, and updates `ORDER_STATUS` check constraint to permit `'CANCELLED'` and `'COMPLETED'`.
-- **Frontend Safeguards**: All service functions (`settleTableOrders`, `cancelKitchenOrder`, `fetchOrdersByTable`, `fetchKitchenOrders`) implement child-item cascade deletion and item-existence validation, ensuring rock-solid stability both before and after migration 005 is run in the Supabase SQL editor.
+---
+
+### 6. Order Logs Interface & Lifecycle Event System
+- **Route**: `/order-logs` (configured in `src/routes/index.tsx` and `src/config/navigation.ts`).
+- **Purpose**: Staff/Admin audit trail providing complete historical transparency into all restaurant orders, timeline milestones, financial reconciliations, and cancellations.
+- **Key Capabilities**:
+  - **Summary KPI Header**: 8 key performance indicators reflecting the active filtered dataset: Total Orders, Completed Orders (% rate), Cancelled / Rejected Orders, Filtered Revenue, Average Order Value (AOV), Average Serving Time, Customers Served, and Paid vs Unpaid status.
+  - **Multi-Criteria Filter Bar**: Realtime text search across Order ID, Table, and Notes (debounced 300ms); Date range quick presets (Today, Yesterday, Last 7 Days, Last 30 Days, All Time, Custom Range); Dropdown selectors for Order Status, Payment Status, Payment Method, Order Source (Customer App vs Cashier Station), and Table selector.
+  - **Order Log Table & Mobile Cards**: Responsive layout with sorting on Order ID, Date/Time, Total Bill, and Status. Visual badges for source channel, payment status, and order status.
+  - **Order Details Side Drawer (`OrderDetailsDrawer`)**: 
+    - **Header**: Order ID, status pill, table / merged session indicator, guest count, and date.
+    - **Order Items Tab**: Aggregated line items grouped by category with quantity counters, unit prices, line subtotals, and special instructions.
+    - **Timeline & Audit Tab**: Visual chronological milestones from creation to completion with actor badges and notes.
+    - **Payment & Billing Tab**: Itemized financial breakdown (subtotal, senior/PWD/custom discounts, net total, payment method) alongside operational stage timestamps.
+  - **Export Capabilities**:
+    - **CSV Export** (`orderLogsCsv.ts`): RFC-4180 compliant CSV generator with quoted values and accurate currency fields.
+    - **PDF Export** (`orderLogsPdf.ts`): Multi-page branded PDF report using `jspdf` and `jspdf-autotable` with corporate header, summary KPI grid, and paginated order table.
+    - **Native Print**: Dedicated CSS `@media print` rules hiding navigation shell, filter bar, and pagination for clean thermal/office paper printing.
+  - **Database Migration 010**: `Context/migrations/010_order_logs_and_events.sql` introducing `Order_Events` table, `PAYMENT_METHOD` on `Restaurant_Orders`, and indexes. Fallback synthetic timeline milestones ensure full audit logs even on historic database records.
+- **Service Layer**: `src/services/orderLogsService.ts` encapsulates all filtering, pagination, summary calculations, item detail fetching, and timeline event logging.
 
 ---
 

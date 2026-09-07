@@ -43,6 +43,9 @@ export interface Order {
   orderStatus: OrderStatus
   orderType: OrderType
   totalBill: number
+  subtotalBill?: number
+  requestedFrom?: 'Cashier' | 'Customer'
+  paymentMethod?: string
   createdAt?: string
   kitchenNote?: string
   serverNote?: string
@@ -51,6 +54,18 @@ export interface Order {
   servedAt?: string
   completedAt?: string
   items?: OrderItem[]
+}
+
+export interface OrderTimelineEvent {
+  eventId?: number
+  orderId: number
+  eventType: string
+  previousStatus?: string | null
+  newStatus: string
+  timestamp: string
+  actor?: string | null
+  reason?: string | null
+  metadata?: Record<string, unknown> | null
 }
 
 export interface CompressedOrderItem {

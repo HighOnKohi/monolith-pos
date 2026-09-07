@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import type { CartItem, DiningType } from '@/types/cart'
 import type { Order, OrderStatus } from '@/types/order'
+import { logOrderEvent } from '@/services/orderLogsService'
 
 const DINING_TYPE_MAP: Record<DiningType, string> = {
   'dine-in': 'DINE-IN',
@@ -116,6 +117,14 @@ export async function createOrder(
   } catch (tErr) {
     console.warn('[orderService] Failed to update table status to OCCUPIED:', tErr)
   }
+
+  // Log lifecycle event to Order_Events
+  logOrderEvent(orderId, {
+    eventType: 'ORDER_PLACED',
+    newStatus: 'REQUESTED',
+    actor: requestedFrom === 'Customer' ? 'Customer App' : 'Cashier Station',
+    reason: serverNote || 'Order placed into system',
+  })
 
   return mapOrder(orderData as Record<string, unknown>)
 }
@@ -296,6 +305,13 @@ export async function createOrderFromExisting(order: Order): Promise<void> {
   )
 
   if (itemsError) throw itemsError
+
+  logOrderEvent(orderId, {
+    eventType: 'ORDER_PLACED',
+    newStatus: 'REQUESTED',
+    actor: 'Cashier Station',
+    reason: 'Re-ordered items from previous order',
+  })
 }
 
 export async function deleteOrder(orderId: number): Promise<void> {
@@ -349,6 +365,18 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
       .is('SERVED_AT', null)
   } catch (servedErr) {
     console.warn('[orderService] Could not backfill SERVED_AT on settlement:', servedErr)
+  }
+
+  if (!updateErr) {
+    for (const id of orderIds) {
+      logOrderEvent(id, {
+        eventType: 'SETTLED',
+        previousStatus: 'SERVED',
+        newStatus: 'COMPLETED',
+        actor: 'Cashier',
+        reason: 'Table bill settled and payment processed',
+      }).catch(() => {})
+    }
   }
 
   if (updateErr) {

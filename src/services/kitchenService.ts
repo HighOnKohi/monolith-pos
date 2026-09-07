@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 import type { Order, OrderItem, OrderStatus } from '@/types/order'
 import { resolveTableGroupByList } from '@/services/tableGroupService'
 import type { TableData } from '@/services/tableService'
+import { logOrderEvent } from '@/services/orderLogsService'
 
 type KitchenOrderItem = Omit<OrderItem, 'quantity'>
 
@@ -115,6 +116,14 @@ export async function advanceKitchenOrderStatus(
 
   if (error) throw error
 
+  // Log lifecycle event to Order_Events
+  logOrderEvent(orderId, {
+    eventType: `STATUS_${nextStatus}`,
+    newStatus: nextStatus,
+    actor: 'Kitchen Staff',
+    reason: `Kitchen transitioned order to ${nextStatus}`,
+  })
+
   // The database uses DONE for individual items while the order uses SERVED.
   if (nextStatus === 'SERVED') {
     const { error: itemError } = await supabase
@@ -217,6 +226,14 @@ export async function cancelKitchenOrder(
     .from('Restaurant_Orders')
     .update({ ORDER_STATUS: 'CANCELLED', KITCHEN_NOTE: reason.trim() || null })
     .eq('ORDER_ID', orderId)
+
+  // Log cancellation event
+  logOrderEvent(orderId, {
+    eventType: 'ORDER_CANCELLED',
+    newStatus: 'CANCELLED',
+    actor: 'Kitchen Staff',
+    reason: reason.trim() || 'Cancelled by kitchen',
+  })
 
   if (updateError) {
     console.warn(

@@ -523,7 +523,10 @@
 /* Hide number input arrows */
 .tm-stepper-val::-webkit-inner-spin-button,
 .tm-stepper-val::-webkit-outer-spin-button { -webkit-appearance: none; }
-.tm-stepper-val[type=number] { -moz-appearance: textfield; }
+.tm-stepper-val[type=number] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
 
 /* ── Sidebar action buttons ── */
 .tm-sidebar-btn {

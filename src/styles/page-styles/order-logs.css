@@ -1,3 +1,68 @@
+/* ─── Order Logs Page Styles ─────────────────────────────────────────────── */
+
 .order-logs-page-container {
-  /* Order Logs page styles */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem;
+  background-color: var(--color-background, #F1F6F9);
+}
+
+@media (max-width: 640px) {
+  .order-logs-page-container {
+    padding: 1rem;
+  }
+}
+
+/* ─── Print Stylesheet ─────────────────────────────────────────────────── */
+@media print {
+  /* Hide interactive shell, navigation, sidebars and headers */
+  .AppSidebar,
+  .staff-shell > .website-container > .AppSidebar,
+  nav,
+  header,
+  aside,
+  .no-print,
+  button,
+  form,
+  .staff-workspace > div:first-child {
+    display: none !important;
+  }
+
+  /* Reset body and container for standard full-page printing */
+  html,
+  body,
+  #root,
+  .website,
+  .staff-shell,
+  .website-container,
+  .staff-workspace,
+  main,
+  .order-logs-page-container {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background-color: #ffffff !important;
+    color: #14274E !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Keep table formatted cleanly */
+  .order-logs-page-container table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  .order-logs-page-container tr {
+    page-break-inside: avoid !important;
+  }
+
+  .order-logs-page-container th,
+  .order-logs-page-container td {
+    border-bottom: 1px solid #E2E8F0 !important;
+    padding: 8px 10px !important;
+  }
 }

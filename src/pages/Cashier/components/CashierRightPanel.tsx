@@ -178,6 +178,29 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
         {/* ── Tab 1: Active Orders and Bill ── */}
         {activeTab === 'active' && (
           <div className="cashier-order-status-panel">
+            {/* Active Customer Bill-Out Request Banner */}
+            {activeBillRequest && (
+              <div className="mx-4 mt-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200/90 text-amber-900 flex items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-2 text-xs">
+                  <Receipt className="w-4 h-4 text-amber-600 shrink-0" />
+                  <div>
+                    <span className="font-bold text-amber-800">Bill-out requested: </span>
+                    <span className="font-black text-amber-950">
+                      {PAYMENT_METHOD_LABEL[activeBillRequest.paymentMethod] ?? activeBillRequest.paymentMethod}
+                    </span>
+                  </div>
+                </div>
+                {onAcknowledgeBillRequest && (
+                  <button
+                    type="button"
+                    onClick={() => onAcknowledgeBillRequest(activeBillRequest)}
+                    className="px-2 py-1 rounded-lg text-[10px] font-black bg-amber-200/80 hover:bg-amber-300 text-amber-900 transition-colors cursor-pointer shrink-0"
+                  >
+                    Acknowledge
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Line Items List */}
             <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
