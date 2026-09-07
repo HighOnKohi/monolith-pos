@@ -489,7 +489,7 @@ export default function KitchenPage() {
                       <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#9BA4B4]/15">
                         <div className="flex items-center gap-2">
                           <span className="text-base font-black text-[#14274E]">
-                            Table {order.tableNum ?? order.tableId}
+                            {order.tableDisplay || `Table ${order.tableNum ?? order.tableId}`}
                           </span>
                           <span className="text-[10px] font-bold text-[#9BA4B4] bg-[#F1F6F9] px-2 py-0.5 rounded-md">
                             #{order.orderId}

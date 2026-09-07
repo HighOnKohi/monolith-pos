@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { CartItem, DiningType } from '@/types/cart'
 import type { Order, OrderStatus } from '@/types/order'
@@ -48,7 +48,7 @@ interface UseOrdersResult {
   orders: Order[]
   isSubmitting: boolean
   submitError: string | null
-  placeOrder: (items: CartItem[], diningType: DiningType, total: number) => Promise<boolean>
+  placeOrder: (items: CartItem[], diningType: DiningType, total: number, serverNote?: string) => Promise<boolean>
   clearError: () => void
   latestStatusUpdate: OrderStatusNotification | null
   hasUnreadStatusChange: boolean
@@ -56,17 +56,48 @@ interface UseOrdersResult {
   dismissLatestStatusUpdate: () => void
 }
 
-export function useOrders(tableId: number | null): UseOrdersResult {
+export function useOrders(
+  tableId: number | null,
+  memberTableIds?: number[],
+): UseOrdersResult {
   const [orders, setOrders] = useState<Order[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [latestStatusUpdate, setLatestStatusUpdate] = useState<OrderStatusNotification | null>(null)
   const [hasUnreadStatusChange, setHasUnreadStatusChange] = useState(false)
 
+  const memberIdsKey = memberTableIds ? memberTableIds.join(',') : ''
+  const targetTableIds = useMemo(() => {
+    if (memberTableIds && memberTableIds.length > 0) return memberTableIds
+    return tableId ? [tableId] : []
+  }, [tableId, memberIdsKey])
+
   // Shared function to update orders and detect status changes
   const applyFetchedOrders = useCallback(
     (newOrders: Order[]) => {
       setOrders((prev) => {
+        let hasChanges = prev.length !== newOrders.length
+        if (!hasChanges) {
+          for (let i = 0; i < prev.length; i++) {
+            const p = prev[i]
+            const n = newOrders[i]
+            if (
+              !n ||
+              p.orderId !== n.orderId ||
+              p.orderStatus !== n.orderStatus ||
+              p.totalAmount !== n.totalAmount ||
+              p.items.length !== n.items.length
+            ) {
+              hasChanges = true
+              break
+            }
+          }
+        }
+
+        if (!hasChanges) {
+          return prev
+        }
+
         // Compare previous orders with new orders to trigger live notifications
         for (const newOrder of newOrders) {
           const existing = prev.find((o) => o.orderId === newOrder.orderId)
@@ -97,25 +128,26 @@ export function useOrders(tableId: number | null): UseOrdersResult {
 
   // Fetch function
   const refreshOrders = useCallback(async () => {
-    if (!tableId) return
+    if (!tableId || targetTableIds.length === 0) return
     try {
-      const fresh = await fetchOrdersByTable(tableId)
+      const fresh = await fetchOrdersByTable(tableId, undefined, targetTableIds)
       applyFetchedOrders(fresh)
     } catch (err) {
       console.error('[useOrders] fetch error', err)
     }
-  }, [tableId, applyFetchedOrders])
+  }, [tableId, targetTableIds, applyFetchedOrders])
 
-  // Initial fetch + Constant background polling (every 2.5s) + Visibility sync
+  // Initial fetch + Constant background polling (every 5s) + Visibility sync
   useEffect(() => {
-    if (!tableId) return
+    if (!tableId || targetTableIds.length === 0) return
 
     refreshOrders()
 
-    // Constantly fetch updates every 2500ms
     const interval = setInterval(() => {
-      refreshOrders()
-    }, 2500)
+      if (document.visibilityState === 'visible') {
+        refreshOrders()
+      }
+    }, 5000)
 
     // Immediate sync when tab becomes visible again
     const handleVisibilityChange = () => {
@@ -129,24 +161,27 @@ export function useOrders(tableId: number | null): UseOrdersResult {
       clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [tableId, refreshOrders])
+  }, [tableId, targetTableIds, refreshOrders])
 
   // Realtime subscription to order status updates
   useEffect(() => {
-    if (!tableId) return
+    if (!tableId || targetTableIds.length === 0) return
 
+    const channelName = `orders-table-realtime-${targetTableIds.join('-')}`
     const channel = supabase
-      .channel(`orders-table-realtime-${tableId}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
           table: 'Restaurant_Orders',
-          filter: `TABLE_ID=eq.${tableId}`,
         },
-        () => {
-          refreshOrders()
+        (payload) => {
+          const rowTableId = Number(payload.new?.TABLE_ID || payload.old?.TABLE_ID)
+          if (targetTableIds.includes(rowTableId)) {
+            refreshOrders()
+          }
         },
       )
       .on(
@@ -163,16 +198,16 @@ export function useOrders(tableId: number | null): UseOrdersResult {
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [tableId, refreshOrders])
+  }, [tableId, targetTableIds, refreshOrders])
 
   const placeOrder = useCallback(
-    async (items: CartItem[], diningType: DiningType, total: number): Promise<boolean> => {
+    async (items: CartItem[], diningType: DiningType, total: number, serverNote?: string): Promise<boolean> => {
       if (!tableId || items.length === 0) return false
       setIsSubmitting(true)
       setSubmitError(null)
       try {
-        const newOrder = await createOrder(tableId, items, diningType, total)
-        setOrders((prev) => [newOrder, ...prev])
+        const newOrder = await createOrder(tableId, items, diningType, total, 'Customer', serverNote)
+        setOrders((prev) => [newOrder, ...prev.filter((o) => o.orderId !== newOrder.orderId)])
         return true
       } catch (err) {
         console.error('[useOrders] placeOrder error', err)

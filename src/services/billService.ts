@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import type { BillRequest, PaymentMethod, BillStatus } from '@/types/bill'
+import { getMergeGroupMemberIds } from '@/services/assistanceService'
 
 function mapBillRequest(row: Record<string, unknown>): BillRequest {
   return {
@@ -32,11 +33,15 @@ export async function createBillRequest(
   return mapBillRequest(data as Record<string, unknown>)
 }
 
-export async function fetchActiveBillRequest(tableId: number): Promise<BillRequest | null> {
+export async function fetchActiveBillRequest(
+  tableId: number,
+  memberTableIds?: number[],
+): Promise<BillRequest | null> {
+  const targetIds = memberTableIds && memberTableIds.length > 0 ? memberTableIds : [tableId]
   const { data, error } = await supabase
     .from('Bill_Requests')
     .select('*')
-    .eq('TABLE_ID', tableId)
+    .in('TABLE_ID', targetIds)
     .not('STATUS', 'eq', 'PAID')
     .not('STATUS', 'eq', 'CANCELLED')
     .order('REQUESTED_AT', { ascending: false })
@@ -82,4 +87,33 @@ export async function updateBillRequestStatus(
     }
   }
 }
+
+/**
+ * Clears BILL_OUT_REQUESTED for a table and all tables in its merge group,
+ * and marks any active Bill_Requests for these tables as PAID/resolved.
+ * Returns the list of affected table IDs.
+ */
+export async function resolveBillOutRequest(tableId: number): Promise<number[]> {
+  const targetIds = await getMergeGroupMemberIds(tableId)
+
+  try {
+    // 1. Clear table flag for all tables in merge group
+    await supabase
+      .from('Restaurant_Tables')
+      .update({ BILL_OUT_REQUESTED: false })
+      .in('TABLE_ID', targetIds)
+
+    // 2. Mark active Bill_Requests as resolved
+    await supabase
+      .from('Bill_Requests')
+      .update({ STATUS: 'PAID' })
+      .in('TABLE_ID', targetIds)
+      .in('STATUS', ['REQUESTED', 'PROCESSING'])
+  } catch (err) {
+    console.error('[billService] Failed to resolve bill out request:', err)
+  }
+
+  return targetIds
+}
+
 

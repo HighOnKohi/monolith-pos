@@ -6,6 +6,7 @@ interface CashierHeaderProps {
   searchQuery: string
   onSearchChange: (query: string) => void
   selectedTable: TableItem | null
+  selectedTableLabel?: string
   onOpenTableSelector: () => void
 }
 
@@ -13,6 +14,7 @@ export const CashierHeader: React.FC<CashierHeaderProps> = ({
   searchQuery,
   onSearchChange,
   selectedTable,
+  selectedTableLabel,
   onOpenTableSelector,
 }) => {
   return (
@@ -41,7 +43,7 @@ export const CashierHeader: React.FC<CashierHeaderProps> = ({
         >
           <LayoutGrid className="w-3.5 h-3.5 text-[#14274E]" />
           <span className="font-extrabold text-[#14274E]">
-            Table {selectedTable ? (selectedTable.TABLE_NUM || selectedTable.TABLE_ID) : '—'}
+            {selectedTableLabel || (selectedTable ? `Table ${selectedTable.TABLE_NUM || selectedTable.TABLE_ID}` : '—')}
           </span>
           {selectedTable?.BILL_OUT_REQUESTED && (
             <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />

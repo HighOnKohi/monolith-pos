@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { BillRequest, PaymentMethod } from '@/types/bill'
 import { createBillRequest, fetchActiveBillRequest } from '@/services/billService'
@@ -11,30 +11,54 @@ interface UseBillRequestResult {
   clearError: () => void
 }
 
-export function useBillRequest(tableId: number | null): UseBillRequestResult {
+export function useBillRequest(
+  tableId: number | null,
+  memberTableIds?: number[],
+): UseBillRequestResult {
   const [billRequest, setBillRequest] = useState<BillRequest | null>(null)
   const [isRequesting, setIsRequesting] = useState(false)
   const [requestError, setRequestError] = useState<string | null>(null)
 
+  const memberIdsKey = memberTableIds ? memberTableIds.join(',') : ''
+  const targetTableIds = useMemo(() => {
+    if (memberTableIds && memberTableIds.length > 0) return memberTableIds
+    return tableId ? [tableId] : []
+  }, [tableId, memberIdsKey])
+
   const refreshBillRequest = useCallback(async () => {
-    if (!tableId) return
+    if (!tableId || targetTableIds.length === 0) return
     try {
-      const active = await fetchActiveBillRequest(tableId)
-      setBillRequest(active)
+      const active = await fetchActiveBillRequest(tableId, targetTableIds)
+      setBillRequest((prev) => {
+        if (!prev && !active) return prev
+        if (
+          prev &&
+          active &&
+          prev.billRequestId === active.billRequestId &&
+          prev.status === active.status &&
+          prev.paymentMethod === active.paymentMethod &&
+          prev.tableId === active.tableId
+        ) {
+          return prev
+        }
+        return active
+      })
     } catch (err) {
       console.error('[useBillRequest] fetch error', err)
     }
-  }, [tableId])
+  }, [tableId, targetTableIds])
 
-  // Initial fetch + Constant background polling (every 2.5s) + Visibility sync
+  // Initial fetch + Constant background polling (every 5s) + Visibility sync
   useEffect(() => {
-    if (!tableId) return
+    if (!tableId || targetTableIds.length === 0) return
 
     refreshBillRequest()
 
     const interval = setInterval(() => {
-      refreshBillRequest()
-    }, 2500)
+      if (document.visibilityState === 'visible') {
+        refreshBillRequest()
+      }
+    }, 5000)
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
@@ -47,30 +71,33 @@ export function useBillRequest(tableId: number | null): UseBillRequestResult {
       clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [tableId, refreshBillRequest])
+  }, [tableId, targetTableIds, refreshBillRequest])
 
   // Realtime subscription to bill request status changes
   useEffect(() => {
-    if (!tableId) return
+    if (!tableId || targetTableIds.length === 0) return
 
+    const channelName = `bill-requests-table-${targetTableIds.join('-')}`
     const channel = supabase
-      .channel(`bill-requests-table-${tableId}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'Bill_Requests',
-          filter: `TABLE_ID=eq.${tableId}`,
         },
-        () => {
-          refreshBillRequest()
+        (payload) => {
+          const rowTableId = Number(payload.new?.TABLE_ID || payload.old?.TABLE_ID)
+          if (targetTableIds.includes(rowTableId)) {
+            refreshBillRequest()
+          }
         },
       )
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [tableId, refreshBillRequest])
+  }, [tableId, targetTableIds, refreshBillRequest])
 
   const requestBill = useCallback(
     async (paymentMethod: PaymentMethod, orderId?: number): Promise<boolean> => {

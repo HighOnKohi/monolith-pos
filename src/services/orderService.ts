@@ -102,7 +102,10 @@ export async function createOrder(
 export async function fetchOrdersByTable(
   tableId: number,
   statuses: OrderStatus[] = ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'CANCELLED'],
+  memberTableIds?: number[],
 ): Promise<Order[]> {
+  const targetIds = memberTableIds && memberTableIds.length > 0 ? memberTableIds : [tableId]
+
   const { data, error } = await supabase
     .from('Restaurant_Orders')
     .select(`
@@ -130,7 +133,7 @@ export async function fetchOrdersByTable(
         )
       )
     `)
-    .eq('TABLE_ID', tableId)
+    .in('TABLE_ID', targetIds)
     .in('ORDER_STATUS', statuses)
     .order('ORDER_ID', { ascending: false })
 
@@ -188,20 +191,22 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
   const totalItemCount = items.reduce((sum, it) => sum + it.quantity, 0)
 
   // Determine overall table status:
-  // If all orders are SERVED -> SERVED
-  // If any is READY -> READY
-  // If any is PREPARING -> PREPARING
-  // If any is VERIFIED -> VERIFIED
-  // Else -> REQUESTED
+  // Precedence from least complete to most complete (Prompt 2 §5 & §29):
+  // REQUESTED -> VERIFIED -> PREPARING -> READY -> SERVED -> COMPLETED
   let overallStatus: OrderStatus = 'REQUESTED'
-  if (orders.every((o) => o.orderStatus === 'SERVED')) {
+  const activeOrders = orders.filter((o) => o.orderStatus !== 'CANCELLED')
+  if (activeOrders.length === 0) {
+    overallStatus = 'REQUESTED'
+  } else if (activeOrders.every((o) => o.orderStatus === 'SERVED')) {
     overallStatus = 'SERVED'
-  } else if (orders.some((o) => o.orderStatus === 'READY')) {
-    overallStatus = 'READY'
-  } else if (orders.some((o) => o.orderStatus === 'PREPARING')) {
-    overallStatus = 'PREPARING'
-  } else if (orders.some((o) => o.orderStatus === 'VERIFIED')) {
+  } else if (activeOrders.some((o) => o.orderStatus === 'REQUESTED')) {
+    overallStatus = 'REQUESTED'
+  } else if (activeOrders.some((o) => o.orderStatus === 'VERIFIED')) {
     overallStatus = 'VERIFIED'
+  } else if (activeOrders.some((o) => o.orderStatus === 'PREPARING')) {
+    overallStatus = 'PREPARING'
+  } else if (activeOrders.some((o) => o.orderStatus === 'READY')) {
+    overallStatus = 'READY'
   }
 
   // Bill out is only enabled once ALL table orders are completed/marked as SERVED
@@ -273,11 +278,12 @@ export async function deleteOrder(orderId: number): Promise<void> {
   if (orderError) throw orderError
 }
 
-export async function settleTableOrders(tableId: number): Promise<void> {
+export async function settleTableOrders(tableId: number, memberTableIds?: number[]): Promise<void> {
+  const targetIds = memberTableIds && memberTableIds.length > 0 ? memberTableIds : [tableId]
   const { data: activeOrders, error: fetchErr } = await supabase
     .from('Restaurant_Orders')
     .select('ORDER_ID')
-    .eq('TABLE_ID', tableId)
+    .in('TABLE_ID', targetIds)
     .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED'])
 
   if (fetchErr) {

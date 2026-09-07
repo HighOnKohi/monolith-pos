@@ -1,5 +1,7 @@
-import React from 'react'
-import { X, Users, CheckCircle2, AlertCircle, Receipt, Utensils } from 'lucide-react'
+import React, { useMemo } from 'react'
+import { X, Users, CheckCircle2, AlertCircle, Receipt, Utensils, GitMerge } from 'lucide-react'
+import { resolveTableGroupByList, type TableGroupInfo } from '@/services/tableGroupService'
+import type { TableData } from '@/services/tableService'
 
 export interface TableItem {
   TABLE_ID: number
@@ -8,6 +10,7 @@ export interface TableItem {
   GUEST_CAPACITY: number
   CURRENT_GUEST_COUNT: number
   BILL_OUT_REQUESTED: boolean
+  MERGE_GROUP_ID?: number | null
 }
 
 interface TableSelectorModalProps {
@@ -25,6 +28,23 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
   onSelectTable,
   onClose,
 }) => {
+  // Deduplicate and aggregate merged tables into single dining groups
+  const diningGroups = useMemo(() => {
+    const groupsMap = new Map<number, TableGroupInfo>()
+    const tableDataList = tables as unknown as TableData[]
+
+    for (const table of tables) {
+      const grp = resolveTableGroupByList(table.TABLE_ID, tableDataList)
+      if (!groupsMap.has(grp.anchorTableId)) {
+        groupsMap.set(grp.anchorTableId, grp)
+      }
+    }
+
+    return Array.from(groupsMap.values()).sort(
+      (a, b) => a.anchorTableNum - b.anchorTableNum,
+    )
+  }, [tables])
+
   if (!isOpen) return null
 
   return (
@@ -38,7 +58,7 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
               Select Table
             </h3>
             <p className="text-xs text-slate-500">
-              Pick a dining table to view active bills, punch orders, or check status
+              Pick an active dining table or merged group to view shared bills and punch orders
             </p>
           </div>
           <button
@@ -51,11 +71,11 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
 
         {/* Tables Grid */}
         <div className="p-6 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
-          {tables.map((table) => {
-            const isSelected = table.TABLE_ID === selectedTableId
-            const isHasRequest = table.STATUS === 'HAS_REQUEST'
-            const isBillOut = table.BILL_OUT_REQUESTED
-            const isOccupied = table.STATUS === 'OCCUPIED'
+          {diningGroups.map((group) => {
+            const isSelected = group.memberTableIds.includes(selectedTableId)
+            const isHasRequest = group.status === 'HAS_REQUEST'
+            const isBillOut = group.billOutRequested
+            const isOccupied = group.status === 'OCCUPIED'
 
             let statusColor = 'bg-emerald-50 text-emerald-700 border-emerald-200'
             let statusLabel = 'Available'
@@ -69,16 +89,19 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
             } else if (isOccupied) {
               statusColor = 'bg-blue-50 text-blue-700 border-blue-200'
               statusLabel = 'Occupied'
-            } else if (table.STATUS === 'RESERVED') {
+            } else if (group.status === 'RESERVED') {
               statusColor = 'bg-purple-50 text-purple-700 border-purple-200'
               statusLabel = 'Reserved'
+            } else if (group.status === 'UNAVAILABLE') {
+              statusColor = 'bg-slate-100 text-slate-500 border-slate-200'
+              statusLabel = 'Unavailable'
             }
 
             return (
               <div
-                key={table.TABLE_ID}
+                key={group.anchorTableId}
                 onClick={() => {
-                  onSelectTable(table.TABLE_ID)
+                  onSelectTable(group.anchorTableId)
                   onClose()
                 }}
                 className={[
@@ -97,18 +120,26 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
                 )}
 
                 <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-base font-black text-[#14274E]">
-                      Table {table.TABLE_NUM || table.TABLE_ID}
-                    </span>
+                  <div className="flex items-start justify-between mb-1.5 gap-1">
+                    <div className="min-w-0">
+                      <span className="text-sm font-black text-[#14274E] block truncate" title={group.displayLabel}>
+                        {group.displayLabel}
+                      </span>
+                      {group.isMerged && (
+                        <span className="inline-flex items-center gap-1 text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200/60 px-1.5 py-0.2 rounded-md mt-0.5">
+                          <GitMerge className="w-2.5 h-2.5" />
+                          Merged ({group.memberTableIds.length} tables)
+                        </span>
+                      )}
+                    </div>
                     {isSelected && (
-                      <CheckCircle2 className="w-4 h-4 text-[#14274E]" />
+                      <CheckCircle2 className="w-4 h-4 text-[#14274E] shrink-0 mt-0.5" />
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-2">
-                    <Users className="w-3.5 h-3.5" />
+                    <Users className="w-3.5 h-3.5 shrink-0" />
                     <span>
-                      {table.CURRENT_GUEST_COUNT || 0} / {table.GUEST_CAPACITY || 4}
+                      {group.currentGuestCount || 0} / {group.capacity || 4}
                     </span>
                   </div>
                 </div>
@@ -132,7 +163,9 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
 
         {/* Footer */}
         <div className="px-6 py-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
-          <span>{tables.length} dining tables active</span>
+          <span>
+            {diningGroups.length} dining session{diningGroups.length !== 1 ? 's' : ''} ({tables.length} physical tables)
+          </span>
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold transition-colors cursor-pointer"

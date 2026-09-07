@@ -1,21 +1,14 @@
 // ─── Realtime Shared Cart ──────────────────────────────────────────────────────
 //
-// Replaces the local-only useState cart with a cart that is shared in realtime
-// across ALL devices at the same table via Supabase Broadcast channels.
+// Replaces local-only cart with a cart shared in realtime across ALL devices
+// at the same table/group via Supabase Broadcast channels.
 //
 // Architecture:
-//   - Each table has its own broadcast channel: `shared-cart-table-{tableId}`
-//   - Every cart mutation (add, remove, increase, decrease, clear) broadcasts
-//     the FULL new cart state to all subscribers on that channel
-//   - All devices receive the broadcast and update their local cart state
-//   - This means if Device A adds an item, Device B immediately sees it
-//
-// Duplication protection:
-//   - Cart state includes a `lockedBy` field set to a session UUID during
-//     order placement. If a device sees the cart is locked by another session,
-//     it shows a "Someone else is placing this order" message and prevents double-submit.
-//   - The lock is cleared after order placement succeeds or fails.
-//   - A 15s timeout auto-clears a stale lock in case the locking device crashes.
+//   - Each merged group/table shares a broadcast channel: `shared-cart-group-{tableId}`
+//   - When a new device joins, it emits `request_cart_sync` and any active peer responds
+//   - LocalStorage caches the current session so single-device reloads preserve cart items
+//   - Every cart mutation broadcasts the full cart state to all subscribers
+//   - Lock mechanism prevents two devices from double-submitting simultaneously
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -42,6 +35,33 @@ interface SharedCartState {
 
 const EMPTY_CART: SharedCartState = { items: [], lockedBy: null, lockedAt: null }
 const LOCK_TIMEOUT_MS = 15_000 // 15 seconds — auto-clears stale lock
+
+function getStoredCart(tableId: number | null): SharedCartState {
+  if (!tableId) return EMPTY_CART
+  try {
+    const raw = localStorage.getItem(`monolith_shared_cart_table_${tableId}`)
+    if (raw) {
+      const parsed = JSON.parse(raw) as SharedCartState
+      return { items: parsed.items || [], lockedBy: null, lockedAt: null }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return EMPTY_CART
+}
+
+function persistStoredCart(tableId: number | null, state: SharedCartState) {
+  if (!tableId) return
+  try {
+    if (state.items.length === 0) {
+      localStorage.removeItem(`monolith_shared_cart_table_${tableId}`)
+    } else {
+      localStorage.setItem(`monolith_shared_cart_table_${tableId}`, JSON.stringify(state))
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 export interface UseSharedCartReturn {
   items: CartItem[]
@@ -73,22 +93,34 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
   const sessionId = useRef(getSessionId())
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
-  const [cartState, setCartState] = useState<SharedCartState>(EMPTY_CART)
+  const [cartState, setCartState] = useState<SharedCartState>(() => getStoredCart(tableId))
   const [diningType, setDiningType] = useState<DiningType>('dine-in')
+
+  // Keep a ref to the latest cartState for peer responses
+  const cartStateRef = useRef<SharedCartState>(cartState)
+  useEffect(() => {
+    cartStateRef.current = cartState
+  }, [cartState])
+
+  // Sync state if tableId changes
+  useEffect(() => {
+    setCartState(getStoredCart(tableId))
+  }, [tableId])
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
-  /** Broadcast new state to all subscribers on this table's channel, then apply locally. */
+  /** Broadcast new state to all subscribers on this group channel, then apply locally. */
   const broadcast = useCallback(
     (newState: SharedCartState) => {
       setCartState(newState)
+      persistStoredCart(tableId, newState)
       channelRef.current?.send({
         type: 'broadcast',
         event: 'cart_update',
         payload: newState,
       })
     },
-    [],
+    [tableId],
   )
 
   // ── Realtime channel subscription ─────────────────────────────────────────────
@@ -96,7 +128,7 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
   useEffect(() => {
     if (!tableId) return
 
-    const channelName = `shared-cart-table-${tableId}`
+    const channelName = `shared-cart-group-${tableId}`
 
     const channel = supabase
       .channel(channelName, {
@@ -113,13 +145,35 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
           incoming.lockedAt &&
           Date.now() - incoming.lockedAt > LOCK_TIMEOUT_MS
         ) {
-          setCartState({ ...incoming, lockedBy: null, lockedAt: null })
+          const cleared = { ...incoming, lockedBy: null, lockedAt: null }
+          setCartState(cleared)
+          persistStoredCart(tableId, cleared)
           return
         }
 
         setCartState(incoming)
+        persistStoredCart(tableId, incoming)
       })
-      .subscribe()
+      .on('broadcast', { event: 'request_cart_sync' }, () => {
+        // A newly joined peer is asking for the current cart state
+        if (cartStateRef.current.items.length > 0) {
+          channel.send({
+            type: 'broadcast',
+            event: 'cart_update',
+            payload: cartStateRef.current,
+          })
+        }
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          // Announce presence and request latest state from existing peers
+          channel.send({
+            type: 'broadcast',
+            event: 'request_cart_sync',
+            payload: { requestedAt: Date.now() },
+          })
+        }
+      })
 
     channelRef.current = channel
 
@@ -141,7 +195,7 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
             )
           : [...prev.items, { item, quantity: 1, notes }]
         const next = { ...prev, items: newItems }
-        // Broadcast after state derivation to avoid stale closure
+        persistStoredCart(tableId, next)
         channelRef.current?.send({
           type: 'broadcast',
           event: 'cart_update',
@@ -150,16 +204,17 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
         return next
       })
     },
-    [],
+    [tableId],
   )
 
   const removeItem = useCallback((itemId: string) => {
     setCartState((prev) => {
       const next = { ...prev, items: prev.items.filter((ci) => ci.item.id !== itemId) }
+      persistStoredCart(tableId, next)
       channelRef.current?.send({ type: 'broadcast', event: 'cart_update', payload: next })
       return next
     })
-  }, [])
+  }, [tableId])
 
   const increaseQty = useCallback((itemId: string) => {
     setCartState((prev) => {
@@ -169,10 +224,11 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
           ci.item.id === itemId ? { ...ci, quantity: ci.quantity + 1 } : ci,
         ),
       }
+      persistStoredCart(tableId, next)
       channelRef.current?.send({ type: 'broadcast', event: 'cart_update', payload: next })
       return next
     })
-  }, [])
+  }, [tableId])
 
   const decreaseQty = useCallback((itemId: string) => {
     setCartState((prev) => {
@@ -184,10 +240,11 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
           )
           .filter((ci) => ci.quantity > 0),
       }
+      persistStoredCart(tableId, next)
       channelRef.current?.send({ type: 'broadcast', event: 'cart_update', payload: next })
       return next
     })
-  }, [])
+  }, [tableId])
 
   const updateNotes = useCallback((itemId: string, notes: string) => {
     setCartState((prev) => {
@@ -195,10 +252,11 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
         ...prev,
         items: prev.items.map((ci) => (ci.item.id === itemId ? { ...ci, notes } : ci)),
       }
+      persistStoredCart(tableId, next)
       channelRef.current?.send({ type: 'broadcast', event: 'cart_update', payload: next })
       return next
     })
-  }, [])
+  }, [tableId])
 
   const clearCart = useCallback(() => {
     broadcast(EMPTY_CART)
@@ -228,21 +286,23 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
         lockedBy: sessionId.current,
         lockedAt: Date.now(),
       }
+      persistStoredCart(tableId, next)
       channelRef.current?.send({ type: 'broadcast', event: 'cart_update', payload: next })
       return next
     })
     return acquired
-  }, [])
+  }, [tableId])
 
   const releaseLock = useCallback(() => {
     setCartState((prev) => {
       // Only release if WE hold it
       if (prev.lockedBy !== sessionId.current) return prev
       const next: SharedCartState = { ...prev, lockedBy: null, lockedAt: null }
+      persistStoredCart(tableId, next)
       channelRef.current?.send({ type: 'broadcast', event: 'cart_update', payload: next })
       return next
     })
-  }, [])
+  }, [tableId])
 
   // ── Derived state ─────────────────────────────────────────────────────────────
 

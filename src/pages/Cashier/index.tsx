@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllBillRequests, updateBillRequestStatus } from '@/services/billService'
 import {
@@ -16,12 +16,22 @@ import type { CartItem, DiningType } from '@/types/cart'
 import { buildReceiptSnapshot } from '@/components/receipt/buildReceipt'
 import { ReceiptPreviewModal } from '@/components/receipt/ReceiptPreviewModal'
 import type { ReceiptSnapshot } from '@/components/receipt/types'
+import { resolveTableGroupByList } from '@/services/tableGroupService'
+import type { TableData } from '@/services/tableService'
 
 import { CashierHeader } from './components/CashierHeader'
 import { CategoryCardsRow } from './components/CategoryCardsRow'
 import { ProductCard } from './components/ProductCard'
 import { CashierRightPanel, type CashierRightTab, type DiscountInfo } from './components/CashierRightPanel'
 import { TableSelectorModal, type TableItem } from './components/TableSelectorModal'
+import { TableAlertsBanner } from '@/components/alerts/TableAlertsBanner'
+import {
+  resolveTableAssistance,
+  recordAssistanceRequest,
+  removeAssistanceRequest,
+} from '@/services/assistanceService'
+import { resolveBillOutRequest } from '@/services/billService'
+import type { AssistanceRequest } from '@/types/assistance'
 
 export default function CashierPage() {
   // ── 1. Data States ──
@@ -68,20 +78,32 @@ export default function CashierPage() {
   const [diningType, setDiningType] = useState<DiningType>('dine-in')
   const [serverNote, setServerNote] = useState('')
 
-  // Selected table object
-  const selectedTable = useMemo(
-    () => tables.find((t) => t.TABLE_ID === selectedTableId) || (tables.length > 0 ? tables[0] : null),
-    [tables, selectedTableId]
+  // Selected table group object (resolves merged tables into unified dining session)
+  const selectedGroup = useMemo(
+    () => resolveTableGroupByList(selectedTableId, tables as unknown as TableData[]),
+    [tables, selectedTableId],
   )
 
-  // Active bill request for the selected table (if customer requested checkout)
-  const activeBillRequest = useMemo(
-    () => billRequests.find((r) => r.tableId === selectedTableId) || null,
-    [billRequests, selectedTableId]
+  // Selected table object (primary/anchor table)
+  const selectedTable = useMemo(
+    () => tables.find((t) => t.TABLE_ID === selectedGroup.anchorTableId) || (tables.length > 0 ? tables[0] : null),
+    [tables, selectedGroup.anchorTableId],
   )
+
+  // Active bill request for any table belonging to this dining session
+  const activeBillRequest = useMemo(
+    () => billRequests.find((r) => selectedGroup.memberTableIds.includes(r.tableId)) || null,
+    [billRequests, selectedGroup.memberTableIds],
+  )
+
+  // Keep a ref to selectedTableId to avoid recreating loadInitialData when table selection changes
+  const selectedTableIdRef = useRef(selectedTableId)
+  useEffect(() => {
+    selectedTableIdRef.current = selectedTableId
+  }, [selectedTableId])
 
   // ── 5. Fetch Data ──
-  const loadTables = useCallback(async () => {
+  const loadTables = useCallback(async (): Promise<TableItem[]> => {
     try {
       const { data, error } = await supabase
         .from('Restaurant_Tables')
@@ -90,21 +112,56 @@ export default function CashierPage() {
 
       if (error) throw error
       const tList = (data as TableItem[]) ?? []
-      setTables(tList)
+      setTables((prev) => {
+        if (prev.length === tList.length) {
+          const isSame = prev.every((oldT, idx) => {
+            const n = tList[idx]
+            return (
+              n &&
+              oldT.TABLE_ID === n.TABLE_ID &&
+              oldT.STATUS === n.STATUS &&
+              oldT.GUEST_CAPACITY === n.GUEST_CAPACITY &&
+              oldT.CURRENT_GUEST_COUNT === n.CURRENT_GUEST_COUNT &&
+              oldT.MERGE_GROUP_ID === n.MERGE_GROUP_ID &&
+              oldT.BILL_OUT_REQUESTED === n.BILL_OUT_REQUESTED
+            )
+          })
+          if (isSame) return prev
+        }
+        return tList
+      })
 
       // If current selected table doesn't exist, pick the first
-      if (tList.length > 0 && !tList.some((t) => t.TABLE_ID === selectedTableId)) {
+      const curId = selectedTableIdRef.current
+      if (tList.length > 0 && (!curId || !tList.some((t) => t.TABLE_ID === curId))) {
         setSelectedTableId(tList[0].TABLE_ID)
       }
+      return tList
     } catch (err) {
       console.error('[Cashier] Failed to load tables:', err)
+      return []
     }
-  }, [selectedTableId])
+  }, [])
 
-  const loadTableOrders = useCallback(async (tableId: number) => {
+  const loadTableOrders = useCallback(async (anchorId: number, memberIds?: number[]) => {
     try {
-      const orders = await fetchOrdersByTable(tableId)
-      setTableOrders(orders)
+      const orders = await fetchOrdersByTable(anchorId, undefined, memberIds)
+      setTableOrders((prev) => {
+        if (prev.length === orders.length) {
+          const isSame = prev.every((oldO, idx) => {
+            const n = orders[idx]
+            return (
+              n &&
+              oldO.orderId === n.orderId &&
+              oldO.orderStatus === n.orderStatus &&
+              oldO.totalAmount === n.totalAmount &&
+              oldO.items.length === n.items.length
+            )
+          })
+          if (isSame) return prev
+        }
+        return orders
+      })
     } catch (err) {
       console.error('[Cashier] Failed to fetch orders for table:', err)
     }
@@ -113,29 +170,55 @@ export default function CashierPage() {
   const loadInitialData = useCallback(async () => {
     try {
       // 1. Tables
-      await loadTables()
+      const tList = await loadTables()
 
       // 2. Bill Requests
       const bData = await fetchAllBillRequests()
-      setBillRequests(bData)
+      setBillRequests((prev) => {
+        if (prev.length === bData.length) {
+          const isSame = prev.every((oldB, idx) => {
+            const n = bData[idx]
+            return (
+              n &&
+              oldB.billRequestId === n.billRequestId &&
+              oldB.status === n.status &&
+              oldB.paymentMethod === n.paymentMethod
+            )
+          })
+          if (isSame) return prev
+        }
+        return bData
+      })
 
-      // 3. Orders for current selected table
-      if (selectedTableId) {
-        await loadTableOrders(selectedTableId)
+      // 3. Orders for current selected table group
+      const curId = selectedTableIdRef.current
+      if (curId && tList.length > 0) {
+        const grp = resolveTableGroupByList(curId, tList as unknown as TableData[])
+        await loadTableOrders(grp.anchorTableId, grp.memberTableIds)
       }
     } catch (err) {
       console.error('[Cashier] Load data error:', err)
     }
-  }, [loadTables, loadTableOrders, selectedTableId])
+  }, [loadTables, loadTableOrders])
+
+  // Sync orders when selected table changes
+  useEffect(() => {
+    if (selectedTableId && tables.length > 0) {
+      const grp = resolveTableGroupByList(selectedTableId, tables as unknown as TableData[])
+      void loadTableOrders(grp.anchorTableId, grp.memberTableIds)
+    }
+  }, [selectedTableId, tables, loadTableOrders])
 
   // Initial load + Realtime & Polling
   useEffect(() => {
     loadInitialData()
 
-    // Constant background polling every 2500ms
+    // Constant background polling every 5000ms when visible
     const interval = setInterval(() => {
-      loadInitialData()
-    }, 2500)
+      if (document.visibilityState === 'visible') {
+        loadInitialData()
+      }
+    }, 5000)
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
@@ -180,21 +263,39 @@ export default function CashierPage() {
       )
       .subscribe()
 
+    // Realtime subscription for Assistance broadcasts
+    const assistanceChannel = supabase
+      .channel('cashier-assistance-sync')
+      .on('broadcast', { event: 'assistance_request' }, (payload) => {
+        if (payload?.payload) {
+          recordAssistanceRequest(payload.payload as AssistanceRequest)
+        }
+        loadTables()
+      })
+      .on('broadcast', { event: 'assistance_resolved' }, (payload) => {
+        const tId = payload?.payload?.tableId
+        const tIds = payload?.payload?.tableIds
+        removeAssistanceRequest(tId, tIds)
+        loadTables()
+      })
+      .subscribe()
+
     return () => {
       clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       supabase.removeChannel(billChannel)
       supabase.removeChannel(ordersChannel)
       supabase.removeChannel(tablesChannel)
+      supabase.removeChannel(assistanceChannel)
     }
   }, [loadInitialData, loadTables])
 
   // When selected table changes, fetch its orders immediately
   useEffect(() => {
     if (selectedTableId) {
-      loadTableOrders(selectedTableId)
+      loadTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
     }
-  }, [selectedTableId, loadTableOrders])
+  }, [selectedTableId, selectedGroup.anchorTableId, selectedGroup.memberTableIds, loadTableOrders])
 
 
   // ── 6. Handlers ──
@@ -213,11 +314,48 @@ export default function CashierPage() {
     }
   }
 
+  const handleClearAssistance = useCallback(async (tableId: number) => {
+    try {
+      const affectedIds = await resolveTableAssistance(tableId)
+      setTables((prev) =>
+        prev.map((t) =>
+          affectedIds.includes(t.TABLE_ID)
+            ? { ...t, STATUS: 'OCCUPIED', BILL_OUT_REQUESTED: false }
+            : t,
+        ),
+      )
+      showToast('Assistance alert cleared.', 'info')
+    } catch (err) {
+      console.error(err)
+      showToast('Failed to clear assistance alert.', 'error')
+    }
+  }, [showToast])
+
+  const handleClearBillOut = useCallback(async (tableId: number) => {
+    try {
+      const affectedIds = await resolveBillOutRequest(tableId)
+      setTables((prev) =>
+        prev.map((t) =>
+          affectedIds.includes(t.TABLE_ID)
+            ? { ...t, BILL_OUT_REQUESTED: false }
+            : t,
+        ),
+      )
+      setBillRequests((prev) =>
+        prev.filter((r) => !affectedIds.includes(r.tableId)),
+      )
+      showToast('Bill out request cleared.', 'info')
+    } catch (err) {
+      console.error(err)
+      showToast('Failed to clear bill out request.', 'error')
+    }
+  }, [showToast])
+
   // Bill Settlement Handler
   const handleCompletePayment = async (discountInfo: DiscountInfo) => {
     if (!selectedTable) return
-    const tableId = selectedTable.TABLE_ID
-    const tableNum = selectedTable.TABLE_NUM || selectedTable.TABLE_ID
+    const tableId = selectedGroup.anchorTableId
+    const tableNum = selectedGroup.displayLabel
 
     // ── STEP 1: Snapshot receipt BEFORE any DB operations clear the table ──
     // This is critical: once the bill-out runs, tableOrders will be cleared.
@@ -232,16 +370,21 @@ export default function CashierPage() {
 
     try {
       // ── STEP 2: Execute bill-out DB operations ──
-      // 1. Settle all active table orders in the database
-      await settleTableOrders(tableId)
+      // 1. Settle all active table orders across all member tables in the group
+      await settleTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
 
-      // 2. If there is an active bill request, mark PAID
-      if (activeBillRequest) {
-        await updateBillRequestStatus(activeBillRequest.requestId, 'PAID', tableId)
-        setBillRequests((prev) => prev.filter((r) => r.requestId !== activeBillRequest.requestId))
+      // 2. If there are active bill requests for any member table, mark PAID
+      const matchedRequests = billRequests.filter((r) =>
+        selectedGroup.memberTableIds.includes(r.tableId),
+      )
+      for (const req of matchedRequests) {
+        await updateBillRequestStatus(req.requestId, 'PAID', req.tableId)
       }
+      setBillRequests((prev) =>
+        prev.filter((r) => !selectedGroup.memberTableIds.includes(r.tableId)),
+      )
 
-      // 3. Clear table bill-out requested and mark table AVAILABLE
+      // 3. Clear table bill-out requested and mark all member tables AVAILABLE
       await supabase
         .from('Restaurant_Tables')
         .update({
@@ -249,7 +392,7 @@ export default function CashierPage() {
           STATUS: 'AVAILABLE',
           CURRENT_GUEST_COUNT: 0,
         })
-        .eq('TABLE_ID', tableId)
+        .in('TABLE_ID', selectedGroup.memberTableIds)
 
       // ── STEP 3: Clear active cashier state ONLY after DB operations succeed ──
       setTableOrders([])
@@ -259,7 +402,7 @@ export default function CashierPage() {
       setCurrentReceipt(snapshot)
       setShowReceiptModal(true)
 
-      showToast(`Table ${tableNum} bill settled and marked Available!`, 'success')
+      showToast(`${tableNum} bill settled and marked Available!`, 'success')
       await loadInitialData()
     } catch (err) {
       console.error('Payment completion error:', err)
@@ -359,13 +502,13 @@ export default function CashierPage() {
       const subtotal = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
       const total = subtotal * 1.05
 
-      await createOrder(selectedTableId, punchCart, diningType, total, 'Cashier', serverNote)
+      await createOrder(selectedGroup.anchorTableId, punchCart, diningType, total, 'Cashier', serverNote)
 
-      showToast(`Order sent to Kitchen for Table ${selectedTable?.TABLE_NUM || selectedTableId}!`, 'success')
+      showToast(`Order sent to Kitchen for ${selectedGroup.displayLabel}!`, 'success')
       setPunchCart([])
       setServerNote('')
       setActiveRightTab('pending')
-      await loadTableOrders(selectedTableId)
+      await loadTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
       await loadTables()
     } catch (err) {
       console.error('Failed to punch order:', err)
@@ -425,7 +568,22 @@ export default function CashierPage() {
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
               selectedTable={selectedTable}
+              selectedTableLabel={selectedGroup.displayLabel}
               onOpenTableSelector={() => setIsTableSelectorOpen(true)}
+            />
+          </div>
+
+          {/* ── Table Alerts (Bill Out & Assistance) placed just below search bar ── */}
+          <div className="px-6 pt-1 pb-1 shrink-0">
+            <TableAlertsBanner
+              tables={tables}
+              billRequests={billRequests}
+              onSelectTable={(tableId) => {
+                setSelectedTableId(tableId)
+                showToast(`Switched to Table ${tableId}`, 'info')
+              }}
+              onClearAssistance={handleClearAssistance}
+              onClearBillOut={handleClearBillOut}
             />
           </div>
 
@@ -519,6 +677,7 @@ export default function CashierPage() {
         >
           <CashierRightPanel
             selectedTable={selectedTable}
+            tableLabel={selectedGroup.displayLabel}
             activeTab={activeRightTab}
             onTabChange={setActiveRightTab}
             tableOrders={tableOrders}

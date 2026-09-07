@@ -1,10 +1,13 @@
 import { supabase } from '@/lib/supabase'
 import type { Order, OrderItem, OrderStatus } from '@/types/order'
+import { resolveTableGroupByList } from '@/services/tableGroupService'
+import type { TableData } from '@/services/tableService'
 
 type KitchenOrderItem = Omit<OrderItem, 'quantity'>
 
 export interface KitchenOrder extends Omit<Order, 'items'> {
   tableNum?: number
+  tableDisplay?: string
   items: KitchenOrderItem[]
 }
 
@@ -39,36 +42,47 @@ function mapKitchenOrder(row: Record<string, unknown>): KitchenOrder {
 }
 
 export async function fetchKitchenOrders(): Promise<KitchenOrder[]> {
-  const { data, error } = await supabase
-    .from('Restaurant_Orders')
-    .select(`
-      ORDER_ID,
-      TABLE_ID,
-      ORDER_STATUS,
-      ORDER_TYPE,
-      TOTAL_BILL,
-      TIME,
-      KITCHEN_NOTE,
-      SERVER_NOTE,
-      Order_Items (
-        ORDER_ITEM_ID,
-        ITEM_ID,
-        ORDER_ITEM_STATUS,
-        IS_FLAGGED,
-        Menu_Items (
+  const [ordersRes, tablesRes] = await Promise.all([
+    supabase
+      .from('Restaurant_Orders')
+      .select(`
+        ORDER_ID,
+        TABLE_ID,
+        ORDER_STATUS,
+        ORDER_TYPE,
+        TOTAL_BILL,
+        TIME,
+        KITCHEN_NOTE,
+        SERVER_NOTE,
+        Order_Items (
+          ORDER_ITEM_ID,
           ITEM_ID,
-          ITEM_NAME,
-          ITEM_PRICE,
-          ITEM_IMAGE_URL
+          ORDER_ITEM_STATUS,
+          IS_FLAGGED,
+          Menu_Items (
+            ITEM_ID,
+            ITEM_NAME,
+            ITEM_PRICE,
+            ITEM_IMAGE_URL
+          )
         )
-      )
-    `)
-    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED'])
-    .order('ORDER_ID', { ascending: false })
+      `)
+      .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED'])
+      .order('ORDER_ID', { ascending: false }),
+    supabase.from('Restaurant_Tables').select('*'),
+  ])
 
-  if (error) throw error
-  return (data ?? [])
-    .map((row) => mapKitchenOrder(row as Record<string, unknown>))
+  if (ordersRes.error) throw ordersRes.error
+  const allTables = (tablesRes.data as TableData[]) ?? []
+
+  return (ordersRes.data ?? [])
+    .map((row) => {
+      const ko = mapKitchenOrder(row as Record<string, unknown>)
+      const grp = resolveTableGroupByList(ko.tableId, allTables)
+      ko.tableNum = grp.anchorTableNum
+      ko.tableDisplay = grp.displayLabel
+      return ko
+    })
     .filter((order) => order.items && order.items.length > 0)
 }
 

@@ -20,6 +20,7 @@ import { useRealtimeMenu, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 import { useSharedCart } from '@/hooks/useSharedCart'
 import { useOrders } from '@/hooks/useOrders'
 import { useBillRequest } from '@/hooks/useBillRequest'
+import { useTableGroup } from '@/services/tableGroupService'
 import { getCachedTableAssistance, clearCachedTableAssistance } from '@/services/assistanceService'
 import { supabase } from '@/lib/supabase'
 import type { MenuItem } from '@/types/menu'
@@ -29,7 +30,15 @@ import type { AssistanceRequest } from '@/types/assistance'
 export default function CustomerPage() {
   const { tableId } = useParams<{ tableId: string }>()
   const parsedTableId = tableId ? (Number(tableId.replace(/\D/g, '')) || 1) : 1
-  const tableLabel = `Table ${parsedTableId}`
+
+  // Resolve table group (handles single tables as well as merged groups)
+  const { groupInfo } = useTableGroup(parsedTableId)
+  const effectiveAnchorId = groupInfo?.anchorTableId ?? parsedTableId
+  const memberTableIds = useMemo(
+    () => groupInfo?.memberTableIds ?? [parsedTableId],
+    [groupInfo?.memberTableIds, parsedTableId],
+  )
+  const tableLabel = groupInfo?.displayLabel ?? `Table ${parsedTableId}`
 
   // Global States
   const [activeTab, setActiveTab] = useState<TabType>('menu')
@@ -77,8 +86,9 @@ export default function CustomerPage() {
       )
       .subscribe()
 
-    // Background poll every 3 seconds to guarantee cache consistency
+    // Background poll every 8 seconds when visible
     const interval = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return
       try {
         const { data } = await supabase
           .from('Restaurant_Tables')
@@ -93,7 +103,7 @@ export default function CustomerPage() {
       } catch {
         // Ignore network hiccups during background sync
       }
-    }, 3000)
+    }, 8000)
 
     return () => {
       clearInterval(interval)
@@ -117,7 +127,7 @@ export default function CustomerPage() {
     isLockedByOther,
     acquireLock,
     releaseLock,
-  } = useSharedCart(parsedTableId)
+  } = useSharedCart(effectiveAnchorId)
   const {
     orders,
     isSubmitting: isSubmittingOrder,
@@ -126,8 +136,8 @@ export default function CustomerPage() {
     hasUnreadStatusChange,
     markStatusUpdateAsRead,
     dismissLatestStatusUpdate,
-  } = useOrders(parsedTableId)
-  const { billRequest, isRequesting: isRequestingBill, requestBill } = useBillRequest(parsedTableId)
+  } = useOrders(effectiveAnchorId, memberTableIds)
+  const { billRequest, isRequesting: isRequestingBill, requestBill } = useBillRequest(effectiveAnchorId, memberTableIds)
 
   // We maintain a local copy of menu items to apply realtime updates without triggering a full re-fetch
   const [liveItems, setLiveItems] = useState<MenuItem[]>([])
@@ -190,7 +200,10 @@ export default function CustomerPage() {
     if (!gotLock) return // race: another device just locked between our check and acquire
 
     try {
-      const success = await placeOrder(cartItems, 'dine-in', total)
+      const serverNote = groupInfo?.isMerged && parsedTableId !== effectiveAnchorId
+        ? `Customer entered via Table ${parsedTableId}`
+        : undefined
+      const success = await placeOrder(cartItems, 'dine-in', total, serverNote)
       if (success) {
         clearCart()
         handleTabChange('orders')
