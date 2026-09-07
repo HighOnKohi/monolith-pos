@@ -46,6 +46,10 @@ export interface Order {
   createdAt?: string
   kitchenNote?: string
   serverNote?: string
+  guestCount?: number
+  readyAt?: string
+  servedAt?: string
+  completedAt?: string
   items?: OrderItem[]
 }
 

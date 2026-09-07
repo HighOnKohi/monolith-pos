@@ -54,6 +54,7 @@ import { TableAlertsBanner } from '@/components/alerts/TableAlertsBanner'
 import { TableQrPreview } from '@/components/table-qr/TableQrPreview'
 import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
 import { printBulkQrPdf } from '@/components/table-qr/tableQrPrinter'
+import { resolveTableGroupByList } from '@/services/tableGroupService'
 import {
   fetchAllTables,
   fetchTablesByIds,
@@ -468,6 +469,7 @@ function UnmergeModal({ primaryTable, allTables, onClose, onUnmerged, showToast,
 
 interface TableCardProps {
   table: TableData
+  allTables: TableData[]
   mode: PageMode
   isActive: boolean        // sidebar is showing this table (normal mode)
   isSelected: boolean      // checked in multi mode
@@ -480,14 +482,25 @@ interface TableCardProps {
 }
 
 const TableCard = memo(function TableCard({
-  table, mode, isActive, isSelected, isMergedPrimary, isMergedSecondary,
+  table, allTables, mode, isActive, isSelected, isMergedPrimary, isMergedSecondary,
   mergedWithNums, summary, onClick, onQrClick,
 }: TableCardProps) {
   const hasRequest = table.STATUS === 'HAS_REQUEST'
   const isOccupied = OCCUPIED_STATUSES.includes(table.STATUS)
   const isUnavailable = table.STATUS === 'UNAVAILABLE'
   const isReserved = table.STATUS === 'RESERVED'
-  const paxFull = table.CURRENT_GUEST_COUNT >= table.GUEST_CAPACITY && table.GUEST_CAPACITY > 0
+
+  const anchorTable = isMergedSecondary
+    ? allTables.find((t) => t.TABLE_ID === table.MERGE_GROUP_ID)
+    : null
+  const displayGuestCount = isMergedSecondary && anchorTable
+    ? anchorTable.CURRENT_GUEST_COUNT
+    : table.CURRENT_GUEST_COUNT
+  const displayCapacity = isMergedSecondary && anchorTable
+    ? anchorTable.GUEST_CAPACITY
+    : table.GUEST_CAPACITY
+
+  const paxFull = displayGuestCount >= displayCapacity && displayCapacity > 0
   const isMerged = isMergedPrimary || isMergedSecondary
 
   const cardClass = [
@@ -552,7 +565,7 @@ const TableCard = memo(function TableCard({
       {/* Pax */}
       <div className={`tm-pax-row ${paxFull ? 'tm-pax-full' : ''}`}>
         <Users className="w-3 h-3 shrink-0" />
-        <span>{table.CURRENT_GUEST_COUNT}/{table.GUEST_CAPACITY}</span>
+        <span>{displayGuestCount}/{displayCapacity}</span>
       </div>
 
       {/* Order info */}
@@ -576,6 +589,9 @@ const TableCard = memo(function TableCard({
       {isMergedPrimary && mergedWithNums.length > 0 && (
         <div className="tm-merge-snippet">+ T{mergedWithNums.join(', T')}</div>
       )}
+      {isMergedSecondary && anchorTable && (
+        <div className="tm-merge-snippet">with T{anchorTable.TABLE_NUM}</div>
+      )}
     </div>
   )
 })
@@ -596,7 +612,12 @@ interface SidebarDraft {
   reservationNotes: string
 }
 
-function tableToDraft(t: TableData): SidebarDraft {
+function tableToDraft(t: TableData, allTables: TableData[]): SidebarDraft {
+  const group = resolveTableGroupByList(t.TABLE_ID, allTables)
+  const isMerged = group.isMerged
+  const capacity = isMerged ? group.capacity : t.GUEST_CAPACITY
+  const seatedPax = isMerged ? group.currentGuestCount : t.CURRENT_GUEST_COUNT
+
   let date = '', time = ''
   if (t.RESERVED_SINCE) {
     try {
@@ -607,10 +628,10 @@ function tableToDraft(t: TableData): SidebarDraft {
   }
   return {
     tableNum: String(t.TABLE_NUM),
-    capacity: t.GUEST_CAPACITY,
-    seatedPax: t.CURRENT_GUEST_COUNT,
+    capacity,
+    seatedPax,
     reservationName: t.RESERVATION_NAME ?? '',
-    reservationPax: t.RESERVATION_PAX ?? t.GUEST_CAPACITY,
+    reservationPax: t.RESERVATION_PAX ?? capacity,
     reservationDate: date,
     reservationTime: time,
     reservationNotes: t.RESERVATION_NOTES ?? '',
@@ -649,43 +670,61 @@ function TableSidebar({
   const [reserving, setReserving] = useState(false)
   const [cancelling, setCancelling] = useState(false)
 
+  const groupInfo = useMemo(() => {
+    if (!table) return null
+    return resolveTableGroupByList(table.TABLE_ID, allTables)
+  }, [table, allTables])
+  const isMerged = Boolean(groupInfo?.isMerged)
+
   // Use a ref to track the previous table ID to know when to reset draft
   const prevTableIdRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (table?.TABLE_ID !== prevTableIdRef.current) {
       prevTableIdRef.current = table?.TABLE_ID ?? null
-      setDraft(table ? tableToDraft(table) : null)
+      setDraft(table ? tableToDraft(table, allTables) : null)
       setShowReservationForm(false)
       setSidebarError('')
     }
-  })
+  }, [table, allTables])
 
   // Check if draft differs from current table data (unsaved changes)
   const isDirty = useMemo(() => {
-    if (!draft || !table) return false
+    if (!draft || !table || !groupInfo) return false
+    const baselineCapacity = groupInfo.isMerged ? groupInfo.capacity : table.GUEST_CAPACITY
+    const baselineSeatedPax = groupInfo.isMerged ? groupInfo.currentGuestCount : table.CURRENT_GUEST_COUNT
     return (
       draft.tableNum !== String(table.TABLE_NUM) ||
-      draft.capacity !== table.GUEST_CAPACITY ||
-      draft.seatedPax !== table.CURRENT_GUEST_COUNT
+      (!groupInfo.isMerged && draft.capacity !== baselineCapacity) ||
+      draft.seatedPax !== baselineSeatedPax
     )
-  }, [draft, table])
+  }, [draft, table, groupInfo])
 
   // ── Save changes ──
   async function handleSave() {
-    if (!table || !draft) return
+    if (!table || !draft || !groupInfo) return
     setSidebarError(''); setSaving(true)
     try {
       const numVal = parseInt(draft.tableNum, 10)
       if (isNaN(numVal) || numVal < 1) throw new Error('Table number must be a positive integer.')
-      if (draft.seatedPax > draft.capacity) throw new Error('Seated pax cannot exceed capacity.')
-      const updated = await updateTable(table.TABLE_ID, {
+      const effectiveCap = groupInfo.isMerged ? groupInfo.capacity : draft.capacity
+      if (draft.seatedPax > effectiveCap) throw new Error(`Seated pax cannot exceed capacity (${effectiveCap}).`)
+
+      const baselineCapacity = groupInfo.isMerged ? groupInfo.capacity : table.GUEST_CAPACITY
+      const baselineSeatedPax = groupInfo.isMerged ? groupInfo.currentGuestCount : table.CURRENT_GUEST_COUNT
+
+      const updatedRows = await updateTable(table.TABLE_ID, {
         tableNum: numVal !== table.TABLE_NUM ? numVal : undefined,
-        capacity: draft.capacity !== table.GUEST_CAPACITY ? draft.capacity : undefined,
-        seatedPax: draft.seatedPax !== table.CURRENT_GUEST_COUNT ? draft.seatedPax : undefined,
+        capacity: !groupInfo.isMerged && draft.capacity !== baselineCapacity ? draft.capacity : undefined,
+        seatedPax: draft.seatedPax !== baselineSeatedPax ? draft.seatedPax : undefined,
       })
-      onTableUpdated(updated)
-      showToast(`Table ${updated.TABLE_NUM} saved.`, 'success')
+
+      onTablesPatched(updatedRows)
+      const primaryUpdated = updatedRows.find(r => r.TABLE_ID === (table.MERGE_GROUP_ID ?? table.TABLE_ID)) ?? updatedRows[0]
+      if (primaryUpdated) {
+        onTableUpdated(primaryUpdated)
+      }
+      showToast(`Table ${table.TABLE_NUM}${groupInfo.isMerged ? ' (merged group)' : ''} saved.`, 'success')
     } catch (err: unknown) {
       setSidebarError((err as Error).message)
     } finally {
@@ -897,7 +936,6 @@ function TableSidebar({
   const isMergedPrimary = mergeGroupMap.has(table.TABLE_ID)
   const isMergedSecondary = table.MERGE_GROUP_ID !== null && table.MERGE_GROUP_ID !== undefined
   const mergedWithNums = mergeGroupMap.get(table.TABLE_ID) ?? []
-  const isMerged = isMergedPrimary || isMergedSecondary
   const secondaryMergedWithTable = isMergedSecondary
     ? allTables.find((t) => t.TABLE_ID === table.MERGE_GROUP_ID)
     : null
@@ -932,22 +970,36 @@ function TableSidebar({
             />
           </div>
           <div>
-            <label className="tm-field-label">Maximum Pax (Capacity)</label>
+            <label className="tm-field-label">
+              Maximum Pax (Capacity)
+              {isMerged && <span className="ml-1 text-slate-400 font-normal normal-case">(Group Combined)</span>}
+            </label>
             <PaxStepper
               value={draft.capacity} min={Math.max(1, draft.seatedPax)} max={99}
+              disabled={isMerged}
               onChange={v => setDraft(d => d ? { ...d, capacity: v } : d)}
             />
+            {isMerged && groupInfo && (
+              <p className="text-[0.68rem] text-slate-400 mt-1">
+                Combined capacity of {groupInfo.memberTableNums.map(n => `Table ${n}`).join(' + ')}.
+              </p>
+            )}
           </div>
-          {isOccupied && (
+          {table.STATUS !== 'UNAVAILABLE' && (
             <div>
               <label className="tm-field-label">
-                Seated Pax
+                {isMerged ? 'Seated Pax (Group Total)' : 'Seated Pax'}
                 {draft.seatedPax >= draft.capacity && <span className="ml-1 text-amber-600 normal-case"> (Full)</span>}
               </label>
               <PaxStepper
                 value={draft.seatedPax} min={0} max={draft.capacity}
                 onChange={v => setDraft(d => d ? { ...d, seatedPax: v } : d)}
               />
+              {isMerged && groupInfo && (
+                <p className="text-[0.68rem] text-slate-400 mt-1">
+                  Applies to the entire merged group ({groupInfo.memberTableNums.map(n => `T${n}`).join('+')}).
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -1565,6 +1617,7 @@ export default function TableManagerPage() {
                 <TableCard
                   key={table.TABLE_ID}
                   table={table}
+                  allTables={tables}
                   mode={mode}
                   isActive={sidebarTableId === table.TABLE_ID}
                   isSelected={selectedIds.has(table.TABLE_ID)}

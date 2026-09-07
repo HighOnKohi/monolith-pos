@@ -99,9 +99,18 @@ export async function advanceKitchenOrderStatus(
   orderId: number,
   nextStatus: OrderStatus,
 ): Promise<void> {
+  const nowIso = new Date().toISOString()
+  const updatePayload: Record<string, unknown> = { ORDER_STATUS: nextStatus }
+
+  if (nextStatus === 'READY') {
+    updatePayload.READY_AT = nowIso
+  } else if (nextStatus === 'SERVED') {
+    updatePayload.SERVED_AT = nowIso
+  }
+
   const { error } = await supabase
     .from('Restaurant_Orders')
-    .update({ ORDER_STATUS: nextStatus })
+    .update(updatePayload)
     .eq('ORDER_ID', orderId)
 
   if (error) throw error

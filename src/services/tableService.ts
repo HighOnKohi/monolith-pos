@@ -214,24 +214,53 @@ export async function batchCreateTables(
 export async function updateTable(
   tableId: number,
   fields: { tableNum?: number; capacity?: number; seatedPax?: number },
-): Promise<TableData> {
+): Promise<TableData[]> {
   const current = await fetchTableWithOrders(tableId)
   if (!current) throw new Error('Table not found.')
 
-  const newCapacity = fields.capacity ?? current.GUEST_CAPACITY
-  const newSeatedPax = fields.seatedPax ?? current.CURRENT_GUEST_COUNT
-  const newTableNum = fields.tableNum ?? current.TABLE_NUM
+  // Check if this table is part of a merge group (as anchor or secondary)
+  const anchorId = current.MERGE_GROUP_ID ?? current.TABLE_ID
+  const { data: secondariesData, error: secErr } = await supabase
+    .from('Restaurant_Tables')
+    .select('*')
+    .eq('MERGE_GROUP_ID', anchorId)
 
-  if (fields.capacity !== undefined && newCapacity < current.CURRENT_GUEST_COUNT) {
+  if (secErr) throw secErr
+
+  const secondaries = (secondariesData ?? []) as TableData[]
+  const isMerged = current.MERGE_GROUP_ID !== null || secondaries.length > 0
+
+  const memberIds = new Set<number>()
+  memberIds.add(anchorId)
+  secondaries.forEach((s) => memberIds.add(Number(s.TABLE_ID)))
+  const targetIds = Array.from(memberIds)
+
+  const allMembers = isMerged ? await fetchTablesByIds(targetIds) : [current]
+  const anchorTable = allMembers.find((t) => t.TABLE_ID === anchorId) ?? current
+
+  const effectiveCapacity = isMerged
+    ? anchorTable.GUEST_CAPACITY
+    : (fields.capacity ?? current.GUEST_CAPACITY)
+  const currentPax = isMerged ? anchorTable.CURRENT_GUEST_COUNT : current.CURRENT_GUEST_COUNT
+
+  // Validate capacity
+  if (fields.capacity !== undefined && !isMerged && fields.capacity < currentPax) {
     throw new Error(
-      `Cannot reduce capacity to ${newCapacity}. Table currently has ${current.CURRENT_GUEST_COUNT} seated guests. Reduce seated pax first.`,
+      `Cannot reduce capacity to ${fields.capacity}. Table currently has ${currentPax} seated guests. Reduce seated pax first.`,
     )
   }
+
+  // Validate seatedPax
   if (fields.seatedPax !== undefined) {
-    if (!Number.isInteger(newSeatedPax) || newSeatedPax < 0) throw new Error('Seated pax must be 0 or greater.')
-    if (newSeatedPax > newCapacity) throw new Error(`Seated pax (${newSeatedPax}) cannot exceed capacity (${newCapacity}).`)
+    if (!Number.isInteger(fields.seatedPax) || fields.seatedPax < 0) {
+      throw new Error('Seated pax must be 0 or greater.')
+    }
+    if (fields.seatedPax > effectiveCapacity) {
+      throw new Error(`Seated pax (${fields.seatedPax}) cannot exceed capacity (${effectiveCapacity}).`)
+    }
   }
 
+  // Validate tableNum (tableNum applies to the specific table selected)
   if (fields.tableNum !== undefined && fields.tableNum !== current.TABLE_NUM) {
     const { data: dup } = await supabase
       .from('Restaurant_Tables')
@@ -240,22 +269,66 @@ export async function updateTable(
       .neq('TABLE_ID', tableId)
       .maybeSingle()
     if (dup) throw new Error(`Table ${fields.tableNum} already exists.`)
+
+    const { error: numErr } = await supabase
+      .from('Restaurant_Tables')
+      .update({ TABLE_NUM: fields.tableNum })
+      .eq('TABLE_ID', tableId)
+    if (numErr) throw numErr
   }
 
-  const payload: Record<string, unknown> = {}
-  if (fields.tableNum !== undefined) payload.TABLE_NUM = newTableNum
-  if (fields.capacity !== undefined) payload.GUEST_CAPACITY = newCapacity
-  if (fields.seatedPax !== undefined) payload.CURRENT_GUEST_COUNT = newSeatedPax
+  // Update capacity (only for non-merged single tables)
+  if (fields.capacity !== undefined && !isMerged) {
+    const { error: capErr } = await supabase
+      .from('Restaurant_Tables')
+      .update({ GUEST_CAPACITY: fields.capacity })
+      .eq('TABLE_ID', tableId)
+    if (capErr) throw capErr
+  }
 
-  const { data, error } = await supabase
-    .from('Restaurant_Tables')
-    .update(payload)
-    .eq('TABLE_ID', tableId)
-    .select()
-    .single()
+  // Update seatedPax
+  if (fields.seatedPax !== undefined) {
+    const newPax = fields.seatedPax
 
-  if (error || !data) throw error ?? new Error('Failed to update table.')
-  return data as TableData
+    if (isMerged) {
+      // For merged groups: store guest count on anchor table; ensure secondaries have 0
+      const { error: anchorPaxErr } = await supabase
+        .from('Restaurant_Tables')
+        .update({ CURRENT_GUEST_COUNT: newPax })
+        .eq('TABLE_ID', anchorId)
+      if (anchorPaxErr) throw anchorPaxErr
+
+      if (secondaries.length > 0) {
+        const secIds = secondaries.map((s) => s.TABLE_ID)
+        await supabase
+          .from('Restaurant_Tables')
+          .update({ CURRENT_GUEST_COUNT: 0 })
+          .in('TABLE_ID', secIds)
+      }
+
+      // If newPax > 0 and group status was AVAILABLE or RESERVED, update all members to OCCUPIED
+      if (newPax > 0 && (anchorTable.STATUS === 'AVAILABLE' || anchorTable.STATUS === 'RESERVED')) {
+        const { error: statusErr } = await supabase
+          .from('Restaurant_Tables')
+          .update({ STATUS: 'OCCUPIED' })
+          .in('TABLE_ID', targetIds)
+        if (statusErr) throw statusErr
+      }
+    } else {
+      // Single table
+      const payload: Record<string, unknown> = { CURRENT_GUEST_COUNT: newPax }
+      if (newPax > 0 && (current.STATUS === 'AVAILABLE' || current.STATUS === 'RESERVED')) {
+        payload.STATUS = 'OCCUPIED'
+      }
+      const { error: paxErr } = await supabase
+        .from('Restaurant_Tables')
+        .update(payload)
+        .eq('TABLE_ID', tableId)
+      if (paxErr) throw paxErr
+    }
+  }
+
+  return fetchTablesByIds(targetIds)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -690,6 +763,21 @@ export async function unmergeTables(primaryTableId: number): Promise<TableData[]
     .in('TABLE_ID', secondaryIds)
   if (releaseErr) throw releaseErr
 
+  // Restore primary capacity if it was combined
+  const secTotalCap = secondaryList.reduce((sum, s) => sum + (s.GUEST_CAPACITY || 0), 0)
+  const { data: primary } = await supabase
+    .from('Restaurant_Tables')
+    .select('GUEST_CAPACITY')
+    .eq('TABLE_ID', primaryTableId)
+    .single()
+  if (primary && secTotalCap > 0) {
+    const restoredCap = Math.max(1, (primary.GUEST_CAPACITY || 0) - secTotalCap)
+    await supabase
+      .from('Restaurant_Tables')
+      .update({ GUEST_CAPACITY: restoredCap })
+      .eq('TABLE_ID', primaryTableId)
+  }
+
   // Return fresh data for all affected rows
   return fetchTablesByIds([primaryTableId, ...secondaryIds])
 }
@@ -699,26 +787,8 @@ export async function unmergeTables(primaryTableId: number): Promise<TableData[]
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function updateSeatedPax(tableId: number, newCount: number): Promise<TableData> {
-  const { data: table, error: fetchErr } = await supabase
-    .from('Restaurant_Tables')
-    .select('GUEST_CAPACITY, TABLE_NUM')
-    .eq('TABLE_ID', tableId)
-    .maybeSingle()
-
-  if (fetchErr) throw fetchErr
-  if (!table) throw new Error('Table not found.')
-
-  if (!Number.isInteger(newCount) || newCount < 0) throw new Error('Seated pax must be 0 or greater.')
-  const cap = (table as { GUEST_CAPACITY: number }).GUEST_CAPACITY
-  if (newCount > cap) throw new Error(`Seated pax (${newCount}) cannot exceed capacity (${cap}).`)
-
-  const { data, error } = await supabase
-    .from('Restaurant_Tables')
-    .update({ CURRENT_GUEST_COUNT: newCount })
-    .eq('TABLE_ID', tableId)
-    .select()
-    .single()
-
-  if (error || !data) throw error ?? new Error('Failed to update pax.')
-  return data as TableData
+  const updatedRows = await updateTable(tableId, { seatedPax: newCount })
+  const updated = updatedRows.find((r) => r.TABLE_ID === tableId) ?? updatedRows[0]
+  if (!updated) throw new Error('Failed to update pax.')
+  return updated
 }

@@ -34,6 +34,10 @@ function mapOrder(row: Record<string, unknown>): Order {
     createdAt: (row['TIME'] ?? row['CREATED_AT']) as string | undefined,
     kitchenNote: (row['KITCHEN_NOTE'] as string | null) ?? undefined,
     serverNote: (row['SERVER_NOTE'] as string | null) ?? undefined,
+    guestCount: row['GUEST_COUNT'] ? Number(row['GUEST_COUNT']) : undefined,
+    readyAt: (row['READY_AT'] as string | null) ?? undefined,
+    servedAt: (row['SERVED_AT'] as string | null) ?? undefined,
+    completedAt: (row['COMPLETED_AT'] as string | null) ?? undefined,
     items,
   }
 }
@@ -45,7 +49,23 @@ export async function createOrder(
   total: number,
   requestedFrom: 'Cashier' | 'Customer' = 'Customer',
   serverNote?: string,
+  guestCount?: number,
 ): Promise<Order> {
+  // Determine party size / guest count
+  let partySize = guestCount
+  if (!partySize || partySize <= 0) {
+    try {
+      const { data: tRow } = await supabase
+        .from('Restaurant_Tables')
+        .select('CURRENT_GUEST_COUNT')
+        .eq('TABLE_ID', tableId)
+        .maybeSingle()
+      partySize = Math.max(Number(tRow?.CURRENT_GUEST_COUNT) || 1, 1)
+    } catch {
+      partySize = 1
+    }
+  }
+
   // 1. Insert the order
   const { data: orderData, error: orderError } = await supabase
     .from('Restaurant_Orders')
@@ -56,6 +76,7 @@ export async function createOrder(
       TOTAL_BILL: total,
       REQUESTED_FROM: requestedFrom,
       SERVER_NOTE: serverNote?.trim() || null,
+      GUEST_COUNT: partySize,
       TIME: new Date().toISOString(),
     })
     .select()
@@ -233,6 +254,20 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
  *    are reliably cleared without throwing foreign key or database constraint errors.
  */
 export async function createOrderFromExisting(order: Order): Promise<void> {
+  let partySize = order.guestCount
+  if (!partySize || partySize <= 0) {
+    try {
+      const { data: tRow } = await supabase
+        .from('Restaurant_Tables')
+        .select('CURRENT_GUEST_COUNT')
+        .eq('TABLE_ID', order.tableId)
+        .maybeSingle()
+      partySize = Math.max(Number(tRow?.CURRENT_GUEST_COUNT) || 1, 1)
+    } catch {
+      partySize = 1
+    }
+  }
+
   const { data: orderData, error: orderError } = await supabase
     .from('Restaurant_Orders')
     .insert({
@@ -242,6 +277,7 @@ export async function createOrderFromExisting(order: Order): Promise<void> {
       TOTAL_BILL: order.totalBill,
       REQUESTED_FROM: 'Cashier',
       SERVER_NOTE: order.serverNote ?? null,
+      GUEST_COUNT: partySize,
       TIME: new Date().toISOString(),
     })
     .select()
@@ -293,12 +329,27 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
   if (!activeOrders || activeOrders.length === 0) return
 
   const orderIds = activeOrders.map((o) => Number(o['ORDER_ID']))
+  const nowIso = new Date().toISOString()
 
-  // Attempt to transition ORDER_STATUS to 'COMPLETED'
+  // Attempt to transition ORDER_STATUS to 'COMPLETED' with COMPLETED_AT timestamp
   const { error: updateErr } = await supabase
     .from('Restaurant_Orders')
-    .update({ ORDER_STATUS: 'COMPLETED' })
+    .update({
+      ORDER_STATUS: 'COMPLETED',
+      COMPLETED_AT: nowIso,
+    })
     .in('ORDER_ID', orderIds)
+
+  // Ensure SERVED_AT is populated if not yet set
+  try {
+    await supabase
+      .from('Restaurant_Orders')
+      .update({ SERVED_AT: nowIso })
+      .in('ORDER_ID', orderIds)
+      .is('SERVED_AT', null)
+  } catch (servedErr) {
+    console.warn('[orderService] Could not backfill SERVED_AT on settlement:', servedErr)
+  }
 
   if (updateErr) {
     console.warn(
