@@ -5,8 +5,6 @@ import {
   Edit2,
   ShieldAlert,
   KeyRound,
-  CheckCircle2,
-  XCircle,
   AlertTriangle,
   UserCheck,
   UserX,

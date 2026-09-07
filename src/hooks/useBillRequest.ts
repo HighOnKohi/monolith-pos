@@ -34,7 +34,7 @@ export function useBillRequest(
         if (
           prev &&
           active &&
-          prev.billRequestId === active.billRequestId &&
+          prev.requestId === active.requestId &&
           prev.status === active.status &&
           prev.paymentMethod === active.paymentMethod &&
           prev.tableId === active.tableId
@@ -88,7 +88,9 @@ export function useBillRequest(
           table: 'Bill_Requests',
         },
         (payload) => {
-          const rowTableId = Number(payload.new?.TABLE_ID || payload.old?.TABLE_ID)
+          const newRow = payload.new as Record<string, any> | null
+          const oldRow = payload.old as Record<string, any> | null
+          const rowTableId = Number(newRow?.TABLE_ID || oldRow?.TABLE_ID)
           if (targetTableIds.includes(rowTableId)) {
             refreshBillRequest()
           }

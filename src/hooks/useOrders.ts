@@ -85,8 +85,8 @@ export function useOrders(
               !n ||
               p.orderId !== n.orderId ||
               p.orderStatus !== n.orderStatus ||
-              p.totalAmount !== n.totalAmount ||
-              p.items.length !== n.items.length
+              p.totalBill !== n.totalBill ||
+              (p.items?.length ?? 0) !== (n.items?.length ?? 0)
             ) {
               hasChanges = true
               break
@@ -178,7 +178,9 @@ export function useOrders(
           table: 'Restaurant_Orders',
         },
         (payload) => {
-          const rowTableId = Number(payload.new?.TABLE_ID || payload.old?.TABLE_ID)
+          const newRow = payload.new as Record<string, any> | null
+          const oldRow = payload.old as Record<string, any> | null
+          const rowTableId = Number(newRow?.TABLE_ID || oldRow?.TABLE_ID)
           if (targetTableIds.includes(rowTableId)) {
             refreshOrders()
           }

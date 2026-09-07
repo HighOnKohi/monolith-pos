@@ -2,16 +2,13 @@ import React, { useState, useEffect } from 'react'
 import {
   X,
   Save,
-  CheckCircle2,
   AlertCircle,
-  Shield,
   Mail,
   Phone,
   Calendar,
   Clock,
   User,
   Check,
-  AlertTriangle,
   KeyRound,
 } from 'lucide-react'
 import type {
@@ -49,7 +46,6 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
   onClose,
   onSave,
   onSendPasswordReset,
-  onToggleStatus,
 }) => {
   // Form State
   const [fullName, setFullName] = useState('')

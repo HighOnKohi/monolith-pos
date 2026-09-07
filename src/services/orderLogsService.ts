@@ -508,13 +508,15 @@ export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetail
 
   // Aggregate items by ITEM_ID
   const itemMap = new Map<number, OrderLogItemDetail>()
-  for (const it of rawItems ?? []) {
-    const menuItem = it['Menu_Items'] as Record<string, unknown> | null
+  for (const it of (rawItems as any[]) ?? []) {
+    const rawMenuItem = (it as any)['Menu_Items']
+    const menuItem = (Array.isArray(rawMenuItem) ? rawMenuItem[0] : rawMenuItem) as Record<string, unknown> | null
     if (!menuItem) continue
     const itemId = Number(menuItem['ITEM_ID'])
     const itemName = String(menuItem['ITEM_NAME'] || `Item #${itemId}`)
     const price = Number(menuItem['ITEM_PRICE'] || 0)
-    const catObj = menuItem['Menu_Categories'] as Record<string, unknown> | null
+    const rawCat = (menuItem as any)['Menu_Categories']
+    const catObj = (Array.isArray(rawCat) ? rawCat[0] : rawCat) as Record<string, unknown> | null
     const categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'General'
     const status = String(it['ORDER_ITEM_STATUS'] || 'PENDING')
 
