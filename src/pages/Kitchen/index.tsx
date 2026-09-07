@@ -26,6 +26,7 @@ import {
   advanceKitchenOrderStatus,
   cancelKitchenOrder,
   toggleItemAvailability,
+  saveKitchenOrderFlags,
   type KitchenOrder,
 } from '@/services/kitchenService'
 import { CancelOrderModal } from '@/components/kitchen/CancelOrderModal'
@@ -145,10 +146,11 @@ export default function KitchenPage() {
     }
   }
 
-  const handleConfirmCancel = async (reason: string, outOfStockItemIds: string[]) => {
+  const handleConfirmCancel = async (note: string, flaggedItemIds: string[]) => {
     if (!cancelModalOrder) return
     try {
-      await cancelKitchenOrder(cancelModalOrder.orderId, reason, outOfStockItemIds)
+      await saveKitchenOrderFlags(cancelModalOrder.orderId, flaggedItemIds)
+      await cancelKitchenOrder(cancelModalOrder.orderId, note, [])
       setOrders((prev) => prev.filter((o) => o.orderId !== cancelModalOrder.orderId))
       setCancelModalOrder(null)
       reloadMenu()
@@ -525,25 +527,44 @@ export default function KitchenPage() {
                         </span>
                       </div>
 
-                      {/* Items List */}
+                      {/* Grouped Items List */}
                       <div className="space-y-2 py-2">
-                        {order.items?.map((item) => (
-                          <div
-                            key={item.orderItemId}
-                            className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-[#F1F6F9]/60"
-                          >
-                            <span className="font-bold text-[#14274E]">
-                              <span className="text-red-600 font-black mr-1.5">
-                                {item.quantity}x
-                              </span>
-                              {item.name}
-                            </span>
-                            <span className="text-[10px] text-[#9BA4B4] font-semibold">
-                              {item.status}
-                            </span>
-                          </div>
-                        ))}
+                        {Array.from(
+                          order.items.reduce((groups, item) => {
+                            const group = groups.get(item.itemId)
+                            if (group) group.items.push(item)
+                             else groups.set(item.itemId, { name: item.name, items: [item] })
+                            return groups
+                          }, new Map<string, { name?: string; isFlagged?: boolean; items: typeof order.items }>()),
+                        ).map(([itemId, group]) => {
+                          const activeItems = group.items.filter((item) => item.status !== 'CANCELLED')
+                          const status = activeItems[0]?.status ?? 'CANCELLED'
+                          const isFlagged = group.items.some((item) => item.isFlagged === true)
+                          return (
+                            <div
+                              key={itemId}
+                              className="flex items-center justify-between gap-2 text-xs py-2 px-2 rounded-lg bg-[#F1F6F9]/60"
+                            >
+                              <div className="min-w-0">
+                                <span className="font-bold text-[#14274E]">{group.name}</span>
+                                <span className="ml-2 text-[10px] font-black text-[#394867]">x{group.items.length}</span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-[10px] text-[#9BA4B4] font-semibold">{status}</span>
+                                {isFlagged && (
+                                  <span className="text-[10px] font-black text-amber-600">FLAGGED</span>
+                                )}
+                                {activeItems.length > 0 && (
+                                  <span className="text-[10px] text-slate-400">
+                                    {activeItems.length} available
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
+
                     </div>
 
                     {/* Action Bar */}

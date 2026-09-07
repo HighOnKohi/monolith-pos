@@ -5,6 +5,7 @@ import {
   Utensils,
   UtensilsCrossed,
   X,
+  XCircle,
   ArrowRight,
   Sparkles,
 } from 'lucide-react'
@@ -46,6 +47,18 @@ const STATUS_CONFIG = {
     color: 'border-emerald-400 bg-emerald-50/95 text-emerald-950',
     iconBg: 'bg-emerald-600 text-white',
     badge: 'bg-emerald-100 text-emerald-800',
+  },
+  CANCELLED: {
+    icon: XCircle,
+    color: 'border-rose-400 bg-rose-50/95 text-rose-950',
+    iconBg: 'bg-rose-600 text-white',
+    badge: 'bg-rose-100 text-rose-800',
+  },
+  COMPLETED: {
+    icon: CheckCircle2,
+    color: 'border-slate-300 bg-slate-50/95 text-slate-900',
+    iconBg: 'bg-slate-600 text-white',
+    badge: 'bg-slate-100 text-slate-800',
   },
 }
 

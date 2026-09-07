@@ -27,7 +27,9 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
   }
 
   const compressed = compressTableOrders(orders)
-  if (!compressed) return null
+  if (!compressed) {
+    return null
+  }
 
   // Check if any order is fully SERVED to highlight bill out, or can bill out anytime after order placed
   const canBillOut = compressed.canBillOut

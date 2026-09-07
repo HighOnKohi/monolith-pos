@@ -45,7 +45,7 @@ create table public."Order_Items" (
   "ITEM_ID" bigint null,
   "DISCOUNT_ID" bigint null,
   "ORDER_ITEM_STATUS" text null default 'PENDING'::text,
-  "QUANTITY" bigint null default '1'::bigint,
+  "IS_FLAGGED" boolean null,
   constraint Order_Items_pkey primary key ("ORDER_ITEM_ID"),
   constraint Order_Items_ITEM_ID_fkey foreign KEY ("ITEM_ID") references "Menu_Items" ("ITEM_ID"),
   constraint Order_Items_ORDER_ID_fkey foreign KEY ("ORDER_ID") references "Restaurant_Orders" ("ORDER_ID"),
@@ -72,20 +72,10 @@ create table public."Restaurant_Orders" (
   "SUBTOTAL_BILL" double precision null default '0'::double precision,
   "TOTAL_BILL" double precision null default '0'::double precision,
   "TIME" timestamp without time zone null,
+  "KITCHEN_NOTE" text null,
+  "SERVER_NOTE" text null,
   constraint customer_orders_order_id_unique unique ("ORDER_ID"),
   constraint Customer_Orders_TABLE_ID_fkey foreign KEY ("TABLE_ID") references "Restaurant_Tables" ("TABLE_ID"),
-  constraint Restaurant_Orders_ORDER_STATUS_check check (
-    (
-      "ORDER_STATUS" = any (
-        array[
-          'REQUESTED'::text,
-          'PREPARING'::text,
-          'READY'::text,
-          'SERVED'::text
-        ]
-      )
-    )
-  ),
   constraint restaurant_orders_order_status_check check (
     (
       "ORDER_STATUS" = any (
@@ -94,7 +84,9 @@ create table public."Restaurant_Orders" (
           'VERIFIED'::text,
           'PREPARING'::text,
           'READY'::text,
-          'SERVED'::text
+          'SERVED'::text,
+          'CANCELLED'::text,
+          'COMPLETED'::text
         ]
       )
     )
@@ -106,7 +98,7 @@ create table public."Restaurant_Orders" (
   ),
   constraint restaurant_orders_type_check check (
     (
-      "ORDER_TYPE" = any (array['DINE_IN'::text, 'TAKEOUT'::text])
+      "ORDER_TYPE" = any (array['DINE-IN'::text, 'TAKEOUT'::text])
     )
   )
 ) TABLESPACE pg_default;

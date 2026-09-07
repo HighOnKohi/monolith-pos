@@ -63,15 +63,14 @@ export function buildReceiptSnapshot(params: ReceiptBuildParams): ReceiptSnapsho
   for (const ord of tableOrders) {
     for (const it of ord.items ?? []) {
       const id = it.itemId
-      const qty = it.quantity || 1
       const pr = it.price || 0
       const nm = it.name || `Item #${id}`
 
       if (!itemAggMap[id]) {
         itemAggMap[id] = { itemId: id, name: nm, price: pr, quantity: 0, total: 0 }
       }
-      itemAggMap[id].quantity += qty
-      itemAggMap[id].total += pr * qty
+      itemAggMap[id].quantity += 1
+      itemAggMap[id].total += pr
     }
   }
 

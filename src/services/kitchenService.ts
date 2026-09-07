@@ -1,8 +1,11 @@
 import { supabase } from '@/lib/supabase'
-import type { Order, OrderStatus } from '@/types/order'
+import type { Order, OrderItem, OrderStatus } from '@/types/order'
 
-export interface KitchenOrder extends Order {
+type KitchenOrderItem = Omit<OrderItem, 'quantity'>
+
+export interface KitchenOrder extends Omit<Order, 'items'> {
   tableNum?: number
+  items: KitchenOrderItem[]
 }
 
 function mapKitchenOrder(row: Record<string, unknown>): KitchenOrder {
@@ -13,8 +16,8 @@ function mapKitchenOrder(row: Record<string, unknown>): KitchenOrder {
       orderItemId: Number(oi['ORDER_ITEM_ID']),
       orderId: Number(row['ORDER_ID']),
       itemId: String(oi['ITEM_ID']),
-      quantity: Number(oi['QUANTITY'] ?? 1),
       status: String(oi['ORDER_ITEM_STATUS'] ?? 'PENDING'),
+      isFlagged: Boolean(oi['IS_FLAGGED']),
       name: menuItem ? String(menuItem['ITEM_NAME']) : `Item #${oi['ITEM_ID']}`,
       price: menuItem ? Number(menuItem['ITEM_PRICE']) : undefined,
       imageUrl: menuItem ? (menuItem['ITEM_IMAGE_URL'] as string | undefined) : undefined,
@@ -29,6 +32,8 @@ function mapKitchenOrder(row: Record<string, unknown>): KitchenOrder {
     orderType: row['ORDER_TYPE'] as Order['orderType'],
     totalBill: Number(row['TOTAL_BILL'] ?? 0),
     createdAt: (row['TIME'] ?? row['CREATED_AT']) as string | undefined,
+    kitchenNote: (row['KITCHEN_NOTE'] as string | null) ?? undefined,
+    serverNote: (row['SERVER_NOTE'] as string | null) ?? undefined,
     items,
   }
 }
@@ -43,11 +48,13 @@ export async function fetchKitchenOrders(): Promise<KitchenOrder[]> {
       ORDER_TYPE,
       TOTAL_BILL,
       TIME,
+      KITCHEN_NOTE,
+      SERVER_NOTE,
       Order_Items (
         ORDER_ITEM_ID,
         ITEM_ID,
-        QUANTITY,
         ORDER_ITEM_STATUS,
+        IS_FLAGGED,
         Menu_Items (
           ITEM_ID,
           ITEM_NAME,
@@ -85,17 +92,47 @@ export async function advanceKitchenOrderStatus(
 
   if (error) throw error
 
-  // If marking SERVED, also update line items status to SERVED
+  // The database uses DONE for individual items while the order uses SERVED.
   if (nextStatus === 'SERVED') {
-    try {
-      await supabase
-        .from('Order_Items')
-        .update({ ORDER_ITEM_STATUS: 'SERVED' })
-        .eq('ORDER_ID', orderId)
-    } catch (err) {
-      console.warn('Failed to update line items to SERVED:', err)
-    }
+    const { error: itemError } = await supabase
+      .from('Order_Items')
+      .update({ ORDER_ITEM_STATUS: 'DONE' })
+      .eq('ORDER_ID', orderId)
+      .neq('ORDER_ITEM_STATUS', 'CANCELLED')
+
+    if (itemError) throw itemError
   }
+}
+
+export async function saveKitchenOrderFlags(
+  orderId: number,
+  flaggedItemIds: string[],
+): Promise<void> {
+  const { error: clearError } = await supabase
+    .from('Order_Items')
+    .update({ IS_FLAGGED: false })
+    .eq('ORDER_ID', orderId)
+
+  if (clearError) throw clearError
+
+  for (const itemId of flaggedItemIds) {
+    const { error } = await supabase
+      .from('Order_Items')
+      .update({ IS_FLAGGED: true })
+      .eq('ORDER_ID', orderId)
+      .eq('ITEM_ID', Number(itemId))
+
+    if (error) throw error
+  }
+}
+
+export async function saveKitchenNote(orderId: number, note: string): Promise<void> {
+  const { error } = await supabase
+    .from('Restaurant_Orders')
+    .update({ KITCHEN_NOTE: note.trim() || null })
+    .eq('ORDER_ID', orderId)
+
+  if (error) throw error
 }
 
 export async function markItemOutOfStock(itemId: string | number): Promise<void> {
@@ -155,7 +192,7 @@ export async function cancelKitchenOrder(
   // 2. Try updating ORDER_STATUS to CANCELLED
   const { error: updateError } = await supabase
     .from('Restaurant_Orders')
-    .update({ ORDER_STATUS: 'CANCELLED' })
+    .update({ ORDER_STATUS: 'CANCELLED', KITCHEN_NOTE: reason.trim() || null })
     .eq('ORDER_ID', orderId)
 
   if (updateError) {

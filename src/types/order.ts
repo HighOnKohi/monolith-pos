@@ -1,7 +1,14 @@
 // ─── Order Types ──────────────────────────────────────────────────────────────
 
-/** DB ORDER_STATUS values (after migration adds SERVED) */
-export type OrderStatus = 'REQUESTED' | 'VERIFIED' | 'PREPARING' | 'READY' | 'SERVED'
+/** DB ORDER_STATUS values used by the order lifecycle */
+export type OrderStatus =
+  | 'REQUESTED'
+  | 'VERIFIED'
+  | 'PREPARING'
+  | 'READY'
+  | 'SERVED'
+  | 'CANCELLED'
+  | 'COMPLETED'
 
 /** Customer-facing display labels */
 export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
@@ -10,6 +17,8 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   PREPARING: 'Preparing',
   READY: 'Ready',
   SERVED: 'Food Served',
+  CANCELLED: 'Cancelled',
+  COMPLETED: 'Completed',
 }
 
 export type OrderType = 'DINE-IN' | 'TAKEOUT'
@@ -18,9 +27,11 @@ export interface OrderItem {
   orderItemId: number
   orderId: number
   itemId: string
-  quantity: number
   notes?: string
   status: string
+  isFlagged?: boolean
+  pwd?: boolean
+  senior?: boolean
   name?: string
   price?: number
   imageUrl?: string
@@ -33,6 +44,8 @@ export interface Order {
   orderType: OrderType
   totalBill: number
   createdAt?: string
+  kitchenNote?: string
+  serverNote?: string
   items?: OrderItem[]
 }
 

@@ -7,7 +7,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background-color: #f5f7fb;
+  background-color: var(--interface-background);
   color: #14274e;
   overflow: hidden;
   position: relative;
@@ -28,6 +28,139 @@
 }
 .cashier-page-container ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* Main split layout controllers */
+.cashier-page-container .cashier-layout {
+  --cashier-interface-width: 62%;
+  --cashier-sidebar-width: 38%;
+  --cashier-layout-gap: 1rem;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  gap: var(--cashier-layout-gap);
+  overflow: hidden;
+}
+
+.cashier-page-container .inner-cashier-interface-container {
+  width: var(--cashier-interface-width);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cashier-page-container .sidebar-container {
+  width: var(--cashier-sidebar-width);
+  min-width: 0;
+  padding: 1rem;
+  padding-left: 0rem;
+  display: flex;
+  overflow: hidden;
+}
+
+.cashier-page-container .cashier-header {
+  --cashier-header-padding: 1rem 1.5rem 0.75rem;
+  --cashier-header-gap: 1.25rem;
+  --cashier-header-height: auto;
+  --cashier-header-radius: 30px;
+  --cashier-search-width: 700px;
+  --cashier-table-selector-width: auto;
+  flex-shrink: 0;
+  height: var(--cashier-header-height);
+  margin-top: var(--cashier-header-margin-top) !important;
+  margin-left: var(--cashier-header-margin-left) !important;
+  border-radius: var(--cashier-header-radius) !important;
+  overflow: hidden;
+}
+
+/* These rules intentionally use !important so the Tailwind utility classes
+   on CashierHeader cannot override the editable header controllers above. */
+.cashier-page-container .cashier-header .cashier-top-bar {
+  width: 100% !important;
+  max-width: none !important;
+  height: var(--cashier-header-height) !important;
+  padding: var(--cashier-header-padding) !important;
+  gap: var(--cashier-header-gap) !important;
+  background:#f5f7fb00;
+}
+
+.cashier-page-container .cashier-header .cashier-top-bar > div:first-child {
+  width: var(--cashier-search-width) !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  flex: 0 1 auto !important;
+}
+
+.cashier-page-container .cashier-header .cashier-top-bar > div:last-child {
+  width: var(--cashier-table-selector-width) !important;
+  min-width: max-content !important;
+  margin-left: auto !important;
+  flex: 0 0 auto !important;
+  justify-content: flex-end;
+}
+
+.cashier-page-container .cashier-header .cashier-search-wrapper {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.267);
+  width: 100% !important;
+}
+
+.cashier-page-container .cashier-header .cashier-pill-table {
+  width: auto;
+  min-width: var(--cashier-table-selector-width);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.267); 
+}
+
+.cashier-page-container .cashier-categories {
+  --cashier-category-padding: 0.8rem 1.1rem;
+  --cashier-category-icon-color: #14274e;
+  --cashier-category-icon-stroke: 2;
+  --cashier-category-font-size: 0.75rem;
+  --cashier-category-font-weight: 700;
+  --cashier-category-border-width: 1px;
+  --cashier-category-background: #0285c700;
+  flex-shrink: 0;
+  background-color: var(--cashier-category-background) !important;
+}
+
+.cashier-page-container .cashier-categories > div {
+  background-color: var(--cashier-category-background) !important;
+}
+
+.cashier-page-container .cashier-categories .cashier-category-card {
+  padding: var(--cashier-category-padding);
+  border-width: 2.4px;
+  border-color:#8b9eb8;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
+}
+
+.cashier-page-container .cashier-categories .cashier-category-icon {
+  color: var(--cashier-category-icon-color);
+  stroke-width: var(--cashier-category-icon-stroke);
+  width: 1rem;
+  height: 1rem;
+}
+
+.cashier-page-container .cashier-categories .cashier-category-card > div:nth-child(2) span {
+  font-size: var(--cashier-category-font-size);
+  font-weight: var(--cashier-category-font-weight);
+}
+
+.cashier-page-container .cashier-menu-items {
+  flex: 1;
+  min-height: 0;
+  padding: 1rem;
+  overflow: hidden;
+}
+
+.cashier-page-container .cashier-menu-items-content {
+  height: 100%;
+}
+
+.cashier-page-container .cashier-selected-category-label {
+  --cashier-selected-category-margin-left: 0rem;
+  margin-left: 20px;
 }
 
 /* Top bar styling */
@@ -155,28 +288,43 @@
   padding: 0.8rem 1.1rem;
   background-color: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 1.25rem;
+  border-radius: 1.65rem;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-width 0.2s ease, border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   user-select: none;
   text-align: center;
 }
 
 .cashier-page-container .cashier-category-card:hover {
-  border-color: #cbd5e1;
+  border-width: 2.4px;
+  border-color:#515e70;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .cashier-page-container .cashier-category-card.is-active {
   background-color: #ffffff;
-  border: 2px solid #14274e;
-  box-shadow: 0 6px 16px rgba(20, 39, 78, 0.12);
+  border-width: 2.4px;
+  border-color:#14274E;
   transform: translateY(-2px);
+}
+
+@keyframes cashierMenuCardEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Product cards matching the reference image */
 .cashier-page-container .cashier-dish-card {
+  --cashier-card-image-height: auto;
+  --cashier-card-name-size: 1rem;
+  --cashier-card-price-size: 1.125rem;
+  animation: cashierMenuCardEnter 0.32s ease both;
   background-color: #ffffff;
   border-radius: 1.5rem;
   border: 1px solid #e8ecf2;
@@ -187,9 +335,21 @@
   flex-direction: column;
 }
 
+.cashier-page-container .cashier-dish-image-container {
+  height: var(--cashier-card-image-height);
+}
+
+.cashier-page-container .cashier-dish-card h4 {
+  font-size: var(--cashier-card-name-size) !important;
+}
+
+.cashier-page-container .cashier-dish-card > div:nth-last-child(1) > span:first-child {
+  font-size: var(--cashier-card-price-size) !important;
+}
+
 .cashier-page-container .cashier-dish-card:hover {
   border-color: #cbd5e1;
-  box-shadow: 0 8px 24px rgba(20, 39, 78, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
   transform: translateY(-3px);
 }
 
@@ -211,6 +371,30 @@
 }
 
 /* Segmented tab pill in right panel */
+.cashier-page-container .cashier-order-sidebar-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cashier-page-container .cashier-order-sidebar-body > .cashier-tabs-nav {
+  margin: 0.75rem 1rem;
+  flex-shrink: 0;
+}
+
+.cashier-page-container .cashier-order-status-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cashier-page-container .cashier-order-list {
+  min-height: 0;
+}
+
 .cashier-page-container .cashier-tabs-nav {
   display: flex;
   background-color: #f1f4f9;
@@ -220,7 +404,7 @@
 }
 
 .cashier-page-container .cashier-tab-btn {
-  flex: 1;
+  flex: 1 0 auto;
   text-align: center;
   padding: 0.4rem 0.5rem;
   font-size: 0.75rem;
@@ -236,7 +420,7 @@
 
 .cashier-page-container .cashier-tab-btn.is-active {
   background-color: #14274e;
-  color: #ffffff;
+  color: #e9c46a;
   box-shadow: 0 2px 6px rgba(20, 39, 78, 0.2);
 }
 

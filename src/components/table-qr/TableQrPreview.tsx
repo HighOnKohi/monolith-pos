@@ -47,7 +47,7 @@ export function TableQrPreview({
         dark: '#14274E',
         light: '#FFFFFF',
       },
-    }).catch((err) => {
+    }).catch((err: unknown) => {
       console.error('[TableQrPreview] Failed to generate QR code canvas:', err)
     })
   }, [url])

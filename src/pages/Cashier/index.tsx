@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllBillRequests, updateBillRequestStatus } from '@/services/billService'
-import { resolveTableAssistance } from '@/services/assistanceService'
-import { fetchOrdersByTable, createOrder, settleTableOrders } from '@/services/orderService'
+import {
+  fetchOrdersByTable,
+  createOrder,
+  settleTableOrders,
+  deleteOrder,
+} from '@/services/orderService'
 import { useMenu } from '@/hooks/useMenu'
 import { useRealtimeMenu, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 import type { BillRequest } from '@/types/bill'
-import type { AssistanceRequest } from '@/types/assistance'
 import type { Order } from '@/types/order'
 import type { MenuItem } from '@/types/menu'
 import type { CartItem, DiningType } from '@/types/cart'
@@ -14,7 +17,7 @@ import { buildReceiptSnapshot } from '@/components/receipt/buildReceipt'
 import { ReceiptPreviewModal } from '@/components/receipt/ReceiptPreviewModal'
 import type { ReceiptSnapshot } from '@/components/receipt/types'
 
-import { CashierHeader, type DietaryFilter } from './components/CashierHeader'
+import { CashierHeader } from './components/CashierHeader'
 import { CategoryCardsRow } from './components/CategoryCardsRow'
 import { ProductCard } from './components/ProductCard'
 import { CashierRightPanel, type CashierRightTab, type DiscountInfo } from './components/CashierRightPanel'
@@ -26,21 +29,15 @@ export default function CashierPage() {
   const [selectedTableId, setSelectedTableId] = useState<number>(1)
   const [tableOrders, setTableOrders] = useState<Order[]>([])
   const [billRequests, setBillRequests] = useState<BillRequest[]>([])
-  const [assistanceRequests, setAssistanceRequests] = useState<AssistanceRequest[]>([])
-  const [verifiedOrders, setVerifiedOrders] = useState<Order[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false)
 
   // ── 2. UI & Filter States ──
   const [searchQuery, setSearchQuery] = useState('')
-  const [dietaryFilter, setDietaryFilter] = useState<DietaryFilter>('all')
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
-  const [activeRightTab, setActiveRightTab] = useState<CashierRightTab>('bill')
+  const [activeRightTab, setActiveRightTab] = useState<CashierRightTab>('new')
   const [mobileActiveView, setMobileActiveView] = useState<'menu' | 'cart'>('menu')
 
   // Popovers & Modals
-  const [isAssistanceOpen, setIsAssistanceOpen] = useState(false)
-  const [isVerifiedOpen, setIsVerifiedOpen] = useState(false)
   const [isTableSelectorOpen, setIsTableSelectorOpen] = useState(false)
 
   // Receipt state
@@ -69,6 +66,7 @@ export default function CashierPage() {
   // ── 4. Punch Cart State (for cashier order entry) ──
   const [punchCart, setPunchCart] = useState<CartItem[]>([])
   const [diningType, setDiningType] = useState<DiningType>('dine-in')
+  const [serverNote, setServerNote] = useState('')
 
   // Selected table object
   const selectedTable = useMemo(
@@ -112,8 +110,7 @@ export default function CashierPage() {
     }
   }, [])
 
-  const loadInitialData = useCallback(async (silent = false) => {
-    if (!silent) setIsLoading(true)
+  const loadInitialData = useCallback(async () => {
     try {
       // 1. Tables
       await loadTables()
@@ -122,70 +119,27 @@ export default function CashierPage() {
       const bData = await fetchAllBillRequests()
       setBillRequests(bData)
 
-      // 3. Verified Kitchen Orders
-      const { data: vData } = await supabase
-        .from('Restaurant_Orders')
-        .select('*')
-        .eq('ORDER_STATUS', 'VERIFIED')
-        .order('ORDER_ID', { ascending: false })
-
-      if (vData) {
-        setVerifiedOrders(
-          vData.map((row) => ({
-            orderId: Number(row['ORDER_ID']),
-            tableId: Number(row['TABLE_ID']),
-            orderStatus: row['ORDER_STATUS'],
-            orderType: row['ORDER_TYPE'],
-            totalBill: Number(row['TOTAL_BILL'] ?? 0),
-            createdAt: row['TIME'],
-          }))
-        )
-      }
-
-      // 4. Assistance requests from tables with HAS_REQUEST
-      const { data: tData } = await supabase
-        .from('Restaurant_Tables')
-        .select('TABLE_ID, TABLE_NUM, STATUS, BILL_OUT_REQUESTED')
-        .eq('STATUS', 'HAS_REQUEST')
-
-      if (tData && tData.length > 0) {
-        const active: AssistanceRequest[] = tData.map((t) => ({
-          id: `table_req_${t.TABLE_ID}`,
-          tableId: Number(t.TABLE_ID),
-          tableNum: Number(t.TABLE_NUM),
-          type: t.BILL_OUT_REQUESTED ? 'BILL_OUT' : 'WAITER',
-          title: t.BILL_OUT_REQUESTED ? 'Bill Out Assistance' : 'Table Assistance Needed',
-          status: 'PENDING',
-          requestedAt: new Date().toISOString(),
-        }))
-        setAssistanceRequests(active)
-      } else {
-        setAssistanceRequests([])
-      }
-
-      // 5. Orders for current selected table
+      // 3. Orders for current selected table
       if (selectedTableId) {
         await loadTableOrders(selectedTableId)
       }
     } catch (err) {
       console.error('[Cashier] Load data error:', err)
-    } finally {
-      if (!silent) setIsLoading(false)
     }
   }, [loadTables, loadTableOrders, selectedTableId])
 
   // Initial load + Realtime & Polling
   useEffect(() => {
-    loadInitialData(false)
+    loadInitialData()
 
     // Constant background polling every 2500ms
     const interval = setInterval(() => {
-      loadInitialData(true)
+      loadInitialData()
     }, 2500)
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        loadInitialData(true)
+        loadInitialData()
       }
     }
     document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -197,7 +151,7 @@ export default function CashierPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'Bill_Requests' },
         () => {
-          loadInitialData(true)
+          loadInitialData()
         }
       )
       .subscribe()
@@ -209,7 +163,7 @@ export default function CashierPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'Restaurant_Orders' },
         () => {
-          loadInitialData(true)
+          loadInitialData()
         }
       )
       .subscribe()
@@ -226,29 +180,12 @@ export default function CashierPage() {
       )
       .subscribe()
 
-    // Realtime subscription for Assistance Broadcasts
-    const assistChannel = supabase
-      .channel('table-assistance')
-      .on('broadcast', { event: 'assistance_request' }, (payload) => {
-        const req = payload.payload as AssistanceRequest
-        setAssistanceRequests((prev) => {
-          const filtered = prev.filter((r) => r.tableId !== req.tableId)
-          return [req, ...filtered]
-        })
-      })
-      .on('broadcast', { event: 'assistance_resolved' }, (payload) => {
-        const { tableId } = payload.payload as { tableId: number }
-        setAssistanceRequests((prev) => prev.filter((r) => r.tableId !== tableId))
-      })
-      .subscribe()
-
     return () => {
       clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       supabase.removeChannel(billChannel)
       supabase.removeChannel(ordersChannel)
       supabase.removeChannel(tablesChannel)
-      supabase.removeChannel(assistChannel)
     }
   }, [loadInitialData, loadTables])
 
@@ -261,30 +198,6 @@ export default function CashierPage() {
 
 
   // ── 6. Handlers ──
-
-  // Assistance Handlers
-  const handleResolveAssistance = async (tableId: number) => {
-    setAssistanceRequests((prev) => prev.filter((r) => r.tableId !== tableId))
-    await resolveTableAssistance(tableId)
-    showToast(`Assistance for Table ${tableId} resolved.`)
-  }
-
-  // Kitchen-Verified Order Handlers
-  const handleAcknowledgeVerifiedOrder = async (orderId: number) => {
-    try {
-      await supabase
-        .from('Restaurant_Orders')
-        .update({ ORDER_STATUS: 'PREPARING' })
-        .eq('ORDER_ID', orderId)
-
-      setVerifiedOrders((prev) => prev.filter((o) => o.orderId !== orderId))
-      showToast(`Order #${orderId} confirmed and moved to prep!`)
-      loadInitialData(true)
-    } catch (err) {
-      console.error('Failed to acknowledge order:', err)
-      showToast('Failed to acknowledge order.', 'error')
-    }
-  }
 
   // Bill Request Handlers
   const handleAcknowledgeBillRequest = async (req: BillRequest) => {
@@ -347,7 +260,7 @@ export default function CashierPage() {
       setShowReceiptModal(true)
 
       showToast(`Table ${tableNum} bill settled and marked Available!`, 'success')
-      await loadInitialData(true)
+      await loadInitialData()
     } catch (err) {
       console.error('Payment completion error:', err)
       showToast('Failed to complete payment. Order state preserved.', 'error')
@@ -359,6 +272,45 @@ export default function CashierPage() {
   const handlePrintReceipt = () => {
     if (currentReceipt) {
       setShowReceiptModal(true)
+    }
+  }
+
+  const handleReorder = (order: Order) => {
+    const restoredItems = (order.items ?? []).reduce<CartItem[]>((cart, orderItem) => {
+      if (orderItem.status === 'CANCELLED') return cart
+
+      const menuItem = liveItems.find((item) => item.id === orderItem.itemId)
+      if (!menuItem) return cart
+
+      const existing = cart.find((entry) => entry.item.id === menuItem.id)
+      if (existing) {
+        existing.quantity += 1
+      } else {
+        cart.push({ item: menuItem, quantity: 1 })
+      }
+
+      return cart
+    }, [])
+
+    if (restoredItems.length === 0) {
+      showToast('The cancelled order items are no longer available.', 'error')
+      return
+    }
+
+    setPunchCart(restoredItems)
+    setDiningType(order.orderType === 'TAKEOUT' ? 'take-away' : 'dine-in')
+    setActiveRightTab('new')
+    showToast(`Order #${order.orderId} moved to New Orders for editing.`, 'success')
+  }
+
+  const handleDeleteCancelledOrder = async (order: Order) => {
+    try {
+      await deleteOrder(order.orderId)
+      showToast(`Cancelled Order #${order.orderId} deleted.`, 'success')
+      await loadTableOrders(selectedTableId)
+    } catch (err) {
+      console.error('Failed to delete cancelled order:', err)
+      showToast('Failed to delete cancelled order.', 'error')
     }
   }
 
@@ -394,12 +346,6 @@ export default function CashierPage() {
     setPunchCart((prev) => prev.filter((ci) => ci.item.id !== itemId))
   }
 
-  const handleUpdatePunchNotes = (itemId: string, notes: string) => {
-    setPunchCart((prev) =>
-      prev.map((ci) => (ci.item.id === itemId ? { ...ci, notes } : ci))
-    )
-  }
-
   const handleClearPunchCart = () => {
     setPunchCart([])
   }
@@ -413,11 +359,12 @@ export default function CashierPage() {
       const subtotal = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
       const total = subtotal * 1.05
 
-      await createOrder(selectedTableId, punchCart, diningType, total, 'Cashier')
+      await createOrder(selectedTableId, punchCart, diningType, total, 'Cashier', serverNote)
 
       showToast(`Order sent to Kitchen for Table ${selectedTable?.TABLE_NUM || selectedTableId}!`, 'success')
       setPunchCart([])
-      setActiveRightTab('orders')
+      setServerNote('')
+      setActiveRightTab('pending')
       await loadTableOrders(selectedTableId)
       await loadTables()
     } catch (err) {
@@ -444,10 +391,6 @@ export default function CashierPage() {
       } else if (selectedCategory !== 'all' && item.categoryId !== selectedCategory) {
         return false
       }
-      // 3. Dietary Filter
-      if (dietaryFilter !== 'all' && item.dietaryType !== dietaryFilter) {
-        return false
-      }
       return true
     })
 
@@ -457,7 +400,7 @@ export default function CashierPage() {
       if (!a.isBestSeller && b.isBestSeller) return 1
       return 0
     })
-  }, [liveItems, searchQuery, selectedCategory, dietaryFilter])
+  }, [liveItems, searchQuery, selectedCategory])
 
   const currentCategoryName = useMemo(() => {
     if (selectedCategory === 'all') return 'All Menu'
@@ -475,91 +418,61 @@ export default function CashierPage() {
         </div>
       )}
 
-      {/* Top Header Bar */}
-      <CashierHeader
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        dietaryFilter={dietaryFilter}
-        onDietaryChange={setDietaryFilter}
-        selectedTable={selectedTable}
-        onOpenTableSelector={() => setIsTableSelectorOpen(true)}
-        assistanceRequests={assistanceRequests}
-        verifiedOrders={verifiedOrders}
-        isAssistanceOpen={isAssistanceOpen}
-        isVerifiedOpen={isVerifiedOpen}
-        onToggleAssistance={() => {
-          setIsAssistanceOpen((v) => !v)
-          setIsVerifiedOpen(false)
-        }}
-        onToggleVerified={() => {
-          setIsVerifiedOpen((v) => !v)
-          setIsAssistanceOpen(false)
-        }}
-        onCloseAllPopovers={() => {
-          setIsAssistanceOpen(false)
-          setIsVerifiedOpen(false)
-        }}
-        onResolveAssistance={handleResolveAssistance}
-        onAcknowledgeVerifiedOrder={handleAcknowledgeVerifiedOrder}
-        onRefresh={() => void loadInitialData()}
-        isRefreshing={isLoading}
-      />
+      <div className="cashier-layout">
+        <div className="inner-cashier-interface-container">
+          <div className="cashier-header">
+            <CashierHeader
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              selectedTable={selectedTable}
+              onOpenTableSelector={() => setIsTableSelectorOpen(true)}
+            />
+          </div>
 
-      {/* Category Cards Carousel Row matching reference image */}
-      <CategoryCardsRow
-        categories={categories}
-        selectedCategory={selectedCategory}
-        onSelectCategory={setSelectedCategory}
-      />
+          <div className="cashier-categories">
+            <CategoryCardsRow
+              categories={categories}
+              selectedCategory={selectedCategory}
+              onSelectCategory={setSelectedCategory}
+            />
+          </div>
 
-      {/* Mobile View Switcher (Menu Dishes vs Ticket & Cart) - only visible on < lg */}
-      <div className="flex lg:hidden px-3 pt-2 pb-1 shrink-0">
-        <div className="flex bg-slate-200/80 p-1 rounded-xl w-full gap-1">
-          <button
-            onClick={() => setMobileActiveView('menu')}
-            className={[
-              'flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer',
-              mobileActiveView === 'menu'
-                ? 'bg-white text-[#14274E] shadow-xs font-extrabold'
-                : 'text-slate-600 hover:text-[#14274E]',
-            ].join(' ')}
-          >
-            <span>Menu Dishes</span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
-              {filteredItems.length}
-            </span>
-          </button>
-          <button
-            onClick={() => setMobileActiveView('cart')}
-            className={[
-              'flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer',
-              mobileActiveView === 'cart'
-                ? 'bg-white text-[#14274E] shadow-xs font-extrabold'
-                : 'text-slate-600 hover:text-[#14274E]',
-            ].join(' ')}
-          >
-            <span>Ticket &amp; Cart</span>
-            {punchCart.length > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#14274E] text-white font-extrabold">
-                {punchCart.reduce((sum, i) => sum + i.quantity, 0)}
-              </span>
-            )}
-          </button>
-        </div>
-      </div>
+          <div className="flex lg:hidden px-3 pt-2 pb-1 shrink-0">
+            <div className="flex bg-slate-200/80 p-1 rounded-xl w-full gap-1">
+              <button
+                onClick={() => setMobileActiveView('menu')}
+                className={[
+                  'flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer',
+                  mobileActiveView === 'menu' ? 'bg-white text-[#14274E] shadow-xs font-extrabold' : 'text-slate-600 hover:text-[#14274E]',
+                ].join(' ')}
+              >
+                <span>Menu Dishes</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">{filteredItems.length}</span>
+              </button>
+              <button
+                onClick={() => setMobileActiveView('cart')}
+                className={[
+                  'flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer',
+                  mobileActiveView === 'cart' ? 'bg-white text-[#14274E] shadow-xs font-extrabold' : 'text-slate-600 hover:text-[#14274E]',
+                ].join(' ')}
+              >
+                <span>Ticket &amp; Cart</span>
+                {punchCart.length > 0 && <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#14274E] text-white font-extrabold">{punchCart.reduce((sum, i) => sum + i.quantity, 0)}</span>}
+              </button>
+            </div>
+          </div>
 
-      {/* Main Content Area: Split View on Desktop / Tabbed on Mobile */}
-      <div className="flex-1 min-w-0 max-w-full flex overflow-hidden p-4 sm:p-5 lg:p-6 gap-4 lg:gap-5">
-        {/* Left Section: Menu Items Grid (Fully Scrollable) */}
-        <div
-          className={[
-            'flex-1 min-w-0 flex-col overflow-hidden',
-            mobileActiveView === 'menu' ? 'flex' : 'hidden lg:flex',
-          ].join(' ')}
-        >
+          <div className="cashier-menu-items">
+            {/* Left Section: Menu Items Grid */}
+            <div
+              className={[
+                'cashier-menu-items-content min-w-0 flex-col overflow-hidden',
+                mobileActiveView === 'menu' ? 'flex' : 'hidden lg:flex',
+              ].join(' ')}
+            >
           {/* Header count bar for Category */}
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80 shrink-0 text-xs text-slate-500">
-            <span className="font-semibold">
+            <span className="cashier-selected-category-label font-semibold">
               <strong className="text-[#14274E] font-extrabold">{currentCategoryName}</strong>
               <span className="ml-1.5 text-slate-400">({filteredItems.length} dish{filteredItems.length !== 1 ? 'es' : ''})</span>
             </span>
@@ -573,7 +486,10 @@ export default function CashierPage() {
                 <span>Try adjusting your search or category filter.</span>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5 pb-6">
+              <div
+                key={selectedCategory}
+                className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5 pb-6"
+              >
                 {filteredItems.map((item) => {
                   const cartEntry = punchCart.find((ci) => ci.item.id === item.id)
                   const quantityInCart = cartEntry ? cartEntry.quantity : 0
@@ -583,7 +499,6 @@ export default function CashierPage() {
                       item={item}
                       quantityInCart={quantityInCart}
                       onAddToCart={handleAddToCart}
-                      onIncreaseQty={handleIncreasePunchQty}
                       onDecreaseQty={handleDecreasePunchQty}
                     />
                   )
@@ -591,12 +506,14 @@ export default function CashierPage() {
               </div>
             )}
           </div>
+            </div>
+          </div>
         </div>
 
-        {/* Right Section: POS Inspector / Order / Receipt Panel (320px-340px wide on desktop, full width on mobile) */}
+        {/* Floating order sidebar */}
         <div
           className={[
-            'w-full lg:w-[320px] xl:w-[340px] shrink-0 min-w-0 h-full flex-col',
+            'sidebar-container min-w-0 h-full flex-col',
             mobileActiveView === 'cart' ? 'flex' : 'hidden lg:flex',
           ].join(' ')}
         >
@@ -604,19 +521,21 @@ export default function CashierPage() {
             selectedTable={selectedTable}
             activeTab={activeRightTab}
             onTabChange={setActiveRightTab}
-            onOpenTableSelector={() => setIsTableSelectorOpen(true)}
             tableOrders={tableOrders}
             activeBillRequest={activeBillRequest}
             onAcknowledgeBillRequest={handleAcknowledgeBillRequest}
             onCompletePayment={handleCompletePayment}
             onPrintReceipt={handlePrintReceipt}
+            onReorder={handleReorder}
+            onDeleteCancelledOrder={handleDeleteCancelledOrder}
             punchCart={punchCart}
             diningType={diningType}
             onDiningTypeChange={setDiningType}
+            serverNote={serverNote}
+            onServerNoteChange={setServerNote}
             onIncreasePunchQty={handleIncreasePunchQty}
             onDecreasePunchQty={handleDecreasePunchQty}
             onRemovePunchItem={handleRemovePunchItem}
-            onUpdatePunchNotes={handleUpdatePunchNotes}
             onSendOrderToKitchen={handleSendOrderToKitchen}
             onClearPunchCart={handleClearPunchCart}
             isSubmittingOrder={isSubmittingOrder}
@@ -631,7 +550,7 @@ export default function CashierPage() {
         selectedTableId={selectedTableId}
         onSelectTable={(tableId) => {
           setSelectedTableId(tableId)
-          setActiveRightTab('bill')
+          setActiveRightTab('new')
         }}
         onClose={() => setIsTableSelectorOpen(false)}
       />

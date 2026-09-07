@@ -15,8 +15,10 @@ function mapOrder(row: Record<string, unknown>): Order {
       orderItemId: Number(oi['ORDER_ITEM_ID']),
       orderId: Number(row['ORDER_ID']),
       itemId: String(oi['ITEM_ID']),
-      quantity: Number(oi['QUANTITY'] ?? 1),
       status: String(oi['ORDER_ITEM_STATUS'] ?? 'PENDING'),
+      isFlagged: Boolean(oi['IS_FLAGGED']),
+      pwd: Boolean(Array.isArray(oi['Discounts']) ? oi['Discounts'][0]?.['PWD'] : (oi['Discounts'] as Record<string, unknown> | undefined)?.['PWD']),
+      senior: Boolean(Array.isArray(oi['Discounts']) ? oi['Discounts'][0]?.['SENIOR'] : (oi['Discounts'] as Record<string, unknown> | undefined)?.['SENIOR']),
       name: menuItem ? String(menuItem['ITEM_NAME']) : undefined,
       price: menuItem ? Number(menuItem['ITEM_PRICE']) : undefined,
       imageUrl: menuItem ? (menuItem['ITEM_IMAGE_URL'] as string | undefined) : undefined,
@@ -30,6 +32,8 @@ function mapOrder(row: Record<string, unknown>): Order {
     orderType: row['ORDER_TYPE'] as Order['orderType'],
     totalBill: Number(row['TOTAL_BILL'] ?? 0),
     createdAt: (row['TIME'] ?? row['CREATED_AT']) as string | undefined,
+    kitchenNote: (row['KITCHEN_NOTE'] as string | null) ?? undefined,
+    serverNote: (row['SERVER_NOTE'] as string | null) ?? undefined,
     items,
   }
 }
@@ -40,6 +44,7 @@ export async function createOrder(
   diningType: DiningType,
   total: number,
   requestedFrom: 'Cashier' | 'Customer' = 'Customer',
+  serverNote?: string,
 ): Promise<Order> {
   // 1. Insert the order
   const { data: orderData, error: orderError } = await supabase
@@ -50,6 +55,7 @@ export async function createOrder(
       ORDER_TYPE: DINING_TYPE_MAP[diningType],
       TOTAL_BILL: total,
       REQUESTED_FROM: requestedFrom,
+      SERVER_NOTE: serverNote?.trim() || null,
       TIME: new Date().toISOString(),
     })
     .select()
@@ -59,13 +65,15 @@ export async function createOrder(
 
   const orderId = Number((orderData as Record<string, unknown>)['ORDER_ID'])
 
-  // 2. Insert order items — one row per distinct item with its quantity
-  const orderItems = items.map((ci) => ({
-    ORDER_ID: orderId,
-    ITEM_ID: Number(ci.item.id),
-    ORDER_ITEM_STATUS: 'PENDING',
-    QUANTITY: ci.quantity,
-  }))
+  // 2. Insert one database row for every ordered unit
+  const orderItems = items.flatMap((ci) =>
+    Array.from({ length: ci.quantity }, () => ({
+      ORDER_ID: orderId,
+      ITEM_ID: Number(ci.item.id),
+      ORDER_ITEM_STATUS: 'PENDING',
+      IS_FLAGGED: false,
+    })),
+  )
 
   const { error: itemsError } = await supabase.from('Order_Items').insert(orderItems)
   if (itemsError) throw itemsError
@@ -91,7 +99,10 @@ export async function createOrder(
   return mapOrder(orderData as Record<string, unknown>)
 }
 
-export async function fetchOrdersByTable(tableId: number): Promise<Order[]> {
+export async function fetchOrdersByTable(
+  tableId: number,
+  statuses: OrderStatus[] = ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'CANCELLED'],
+): Promise<Order[]> {
   const { data, error } = await supabase
     .from('Restaurant_Orders')
     .select(`
@@ -101,11 +112,17 @@ export async function fetchOrdersByTable(tableId: number): Promise<Order[]> {
       ORDER_TYPE,
       TOTAL_BILL,
       TIME,
+      KITCHEN_NOTE,
+      SERVER_NOTE,
       Order_Items (
         ORDER_ITEM_ID,
         ITEM_ID,
-        QUANTITY,
         ORDER_ITEM_STATUS,
+        IS_FLAGGED,
+        Discounts (
+          PWD,
+          SENIOR
+        ),
         Menu_Items (
           ITEM_ID,
           ITEM_NAME,
@@ -114,7 +131,7 @@ export async function fetchOrdersByTable(tableId: number): Promise<Order[]> {
       )
     `)
     .eq('TABLE_ID', tableId)
-    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED'])
+    .in('ORDER_STATUS', statuses)
     .order('ORDER_ID', { ascending: false })
 
   if (error) throw error
@@ -137,7 +154,6 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
   for (const order of orders) {
     for (const item of order.items ?? []) {
       const id = item.itemId
-      const qty = item.quantity || 1
       const name = item.name || `Item #${id}`
       const price = item.price || 0
       const st = (item.status || 'PENDING').toUpperCase()
@@ -155,15 +171,15 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
         }
       }
 
-      itemMap[id].quantity += qty
-      itemMap[id].total += price * qty
+      itemMap[id].quantity += 1
+      itemMap[id].total += price
 
-      if (st === 'SERVED') {
-        itemMap[id].servedCount += qty
+      if (st === 'SERVED' || st === 'DONE') {
+        itemMap[id].servedCount += 1
       } else if (st === 'PREPARING' || order.orderStatus === 'PREPARING') {
-        itemMap[id].preparingCount += qty
-      } else {
-        itemMap[id].pendingCount += qty
+        itemMap[id].preparingCount += 1
+      } else if (st !== 'CANCELLED') {
+        itemMap[id].pendingCount += 1
       }
     }
   }
@@ -211,6 +227,52 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
  *    of child Order_Items first and then Restaurant_Orders to ensure the table and active queue
  *    are reliably cleared without throwing foreign key or database constraint errors.
  */
+export async function createOrderFromExisting(order: Order): Promise<void> {
+  const { data: orderData, error: orderError } = await supabase
+    .from('Restaurant_Orders')
+    .insert({
+      TABLE_ID: order.tableId,
+      ORDER_STATUS: 'REQUESTED',
+      ORDER_TYPE: order.orderType,
+      TOTAL_BILL: order.totalBill,
+      REQUESTED_FROM: 'Cashier',
+      SERVER_NOTE: order.serverNote ?? null,
+      TIME: new Date().toISOString(),
+    })
+    .select()
+    .single()
+
+  if (orderError || !orderData) throw orderError ?? new Error('Failed to re-order')
+
+  const orderId = Number((orderData as Record<string, unknown>)['ORDER_ID'])
+  const { error: itemsError } = await supabase.from('Order_Items').insert(
+    (order.items ?? []).map((item) => ({
+      ORDER_ID: orderId,
+      ITEM_ID: Number(item.itemId),
+      ORDER_ITEM_STATUS: 'PENDING',
+      IS_FLAGGED: false,
+    })),
+  )
+
+  if (itemsError) throw itemsError
+}
+
+export async function deleteOrder(orderId: number): Promise<void> {
+  const { error: itemsError } = await supabase
+    .from('Order_Items')
+    .delete()
+    .eq('ORDER_ID', orderId)
+
+  if (itemsError) throw itemsError
+
+  const { error: orderError } = await supabase
+    .from('Restaurant_Orders')
+    .delete()
+    .eq('ORDER_ID', orderId)
+
+  if (orderError) throw orderError
+}
+
 export async function settleTableOrders(tableId: number): Promise<void> {
   const { data: activeOrders, error: fetchErr } = await supabase
     .from('Restaurant_Orders')

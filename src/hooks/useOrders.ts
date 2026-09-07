@@ -34,6 +34,14 @@ const STATUS_MESSAGES: Record<OrderStatus, { title: string; message: string }> =
     title: 'Food Has Been Served!',
     message: 'All items for this order have been delivered to your table. Enjoy!',
   },
+  CANCELLED: {
+    title: 'Order Cancelled',
+    message: 'The kitchen cancelled this order. Please contact the waiter or cashier.',
+  },
+  COMPLETED: {
+    title: 'Order Completed',
+    message: 'This order has been completed.',
+  },
 }
 
 interface UseOrdersResult {

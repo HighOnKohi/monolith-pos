@@ -9,8 +9,8 @@ import {
   Percent,
   Plus,
   Minus,
-  MessageSquare,
-  ExternalLink,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import type { Order } from '@/types/order'
 import type { CartItem, DiningType } from '@/types/cart'
@@ -18,7 +18,7 @@ import type { BillRequest } from '@/types/bill'
 import { PAYMENT_METHOD_LABEL } from '@/types/bill'
 import type { TableItem } from './TableSelectorModal'
 
-export type CashierRightTab = 'bill' | 'punch' | 'orders'
+export type CashierRightTab = 'new' | 'pending' | 'cancelled' | 'active'
 
 /** Discount state passed upward on payment completion so the parent can build a receipt snapshot */
 export interface DiscountInfo {
@@ -31,21 +31,23 @@ interface CashierRightPanelProps {
   selectedTable: TableItem | null
   activeTab: CashierRightTab
   onTabChange: (tab: CashierRightTab) => void
-  onOpenTableSelector: () => void
   // Current Bill State
   tableOrders: Order[]
   activeBillRequest: BillRequest | null
   onAcknowledgeBillRequest: (req: BillRequest) => void
   onCompletePayment: (discountInfo: DiscountInfo) => void
   onPrintReceipt: () => void
+  onReorder: (order: Order) => void
+  onDeleteCancelledOrder: (order: Order) => void
   // Punch Order State
   punchCart: CartItem[]
   diningType: DiningType
   onDiningTypeChange: (type: DiningType) => void
+  serverNote: string
+  onServerNoteChange: (note: string) => void
   onIncreasePunchQty: (itemId: string) => void
   onDecreasePunchQty: (itemId: string) => void
   onRemovePunchItem: (itemId: string) => void
-  onUpdatePunchNotes: (itemId: string, notes: string) => void
   onSendOrderToKitchen: () => void
   onClearPunchCart: () => void
   isSubmittingOrder: boolean
@@ -55,19 +57,21 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   selectedTable,
   activeTab,
   onTabChange,
-  onOpenTableSelector,
   tableOrders,
   activeBillRequest,
   onAcknowledgeBillRequest,
   onCompletePayment,
   onPrintReceipt,
+  onReorder,
+  onDeleteCancelledOrder,
   punchCart,
   diningType,
   onDiningTypeChange,
+  serverNote,
+  onServerNoteChange,
   onIncreasePunchQty,
   onDecreasePunchQty,
   onRemovePunchItem,
-  onUpdatePunchNotes,
   onSendOrderToKitchen,
   onClearPunchCart,
   isSubmittingOrder,
@@ -75,22 +79,29 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   // Discount state
   const [discountType, setDiscountType] = useState<'none' | 'senior' | 'pwd' | 'custom'>('none')
   const [customPercent, setCustomPercent] = useState<number>(10)
+  const [expandedOrders, setExpandedOrders] = useState<Record<number, boolean>>({})
 
   const tableNum = selectedTable ? (selectedTable.TABLE_NUM || selectedTable.TABLE_ID) : 1
+  const pendingOrders = tableOrders.filter((order) => order.orderStatus === 'REQUESTED')
+  const activeOrders = tableOrders.filter((order) =>
+    ['VERIFIED', 'PREPARING', 'READY', 'SERVED'].includes(order.orderStatus),
+  )
+  const cancelledOrders = tableOrders.filter((order) => order.orderStatus === 'CANCELLED')
 
-  // Aggregate all ordered items for line item receipt
+  // Aggregate active ordered items for line item receipt
   const itemAggMap: Record<string, { itemId: string; name: string; price: number; quantity: number; total: number }> = {}
-  for (const ord of tableOrders) {
+  for (const ord of activeOrders) {
     for (const it of ord.items ?? []) {
+      if (it.status === 'CANCELLED') continue
+
       const id = it.itemId
-      const qty = it.quantity || 1
       const pr = it.price || 0
       const nm = it.name || `Dish #${id}`
       if (!itemAggMap[id]) {
         itemAggMap[id] = { itemId: id, name: nm, price: pr, quantity: 0, total: 0 }
       }
-      itemAggMap[id].quantity += qty
-      itemAggMap[id].total += pr * qty
+      itemAggMap[id].quantity += 1
+      itemAggMap[id].total += pr
     }
   }
   const aggregatedItems = Object.values(itemAggMap)
@@ -116,51 +127,16 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
 
   return (
     <div className="cashier-right-panel">
-      {/* ── Panel Header matching reference image ── */}
-      <div className="px-5 py-4 border-b border-slate-100 bg-white shrink-0">
-        <div className="flex items-center justify-between mb-1">
-          <div>
-            <h3 className="text-sm font-extrabold text-[#14274E] flex items-center gap-2 pl-0.5">
-              <span>Table {tableNum} Bill</span>
-              {activeBillRequest && (
-                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 animate-pulse">
-                  Bill Requested
-                </span>
-              )}
-            </h3>
-            <p className="text-[11px] text-slate-400 font-medium">
-              Table #{tableNum} • {tableOrders.length > 0 ? `${tableOrders.length} active order${tableOrders.length > 1 ? 's' : ''}` : 'No active orders'} • {selectedTable?.GUEST_CAPACITY || 4} Guests
-            </p>
-          </div>
-
+      <div className="cashier-order-sidebar-body">
+        <nav className="cashier-tabs-nav" aria-label="Order status">
           <button
-            onClick={onOpenTableSelector}
-            className="p-1.5 text-slate-400 hover:text-[#14274E] rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
-            title="Switch Table"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* ── Segmented Pill Tabs matching reference image ── */}
-        <div className="cashier-tabs-nav mt-3">
-          <button
-            onClick={() => onTabChange('bill')}
-            className={[
-              'cashier-tab-btn',
-              activeTab === 'bill' ? 'is-active' : '',
-            ].join(' ')}
-          >
-            Current Bill
-          </button>
-          <button
-            onClick={() => onTabChange('punch')}
+            onClick={() => onTabChange('new')}
             className={[
               'cashier-tab-btn relative',
-              activeTab === 'punch' ? 'is-active' : '',
+              activeTab === 'new' ? 'is-active' : '',
             ].join(' ')}
           >
-            Punch Order
+            New Orders
             {punchCart.length > 0 && (
               <span className="ml-1 px-1.5 py-0.2 rounded-full text-[9px] bg-amber-400 text-amber-950 font-black">
                 {punchCart.reduce((s, c) => s + c.quantity, 0)}
@@ -168,20 +144,37 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
             )}
           </button>
           <button
-            onClick={() => onTabChange('orders')}
+            onClick={() => onTabChange('pending')}
             className={[
               'cashier-tab-btn',
-              activeTab === 'orders' ? 'is-active' : '',
+              activeTab === 'pending' ? 'is-active' : '',
             ].join(' ')}
           >
-            Table Orders ({tableOrders.length})
+            Pending Orders
           </button>
-        </div>
-      </div>
+          <button
+            onClick={() => onTabChange('cancelled')}
+            className={[
+              'cashier-tab-btn',
+              activeTab === 'cancelled' ? 'is-active' : '',
+            ].join(' ')}
+          >
+            Cancelled Orders
+          </button>
+          <button
+            onClick={() => onTabChange('active')}
+            className={[
+              'cashier-tab-btn',
+              activeTab === 'active' ? 'is-active' : '',
+            ].join(' ')}
+          >
+            Active Orders
+          </button>
+        </nav>
 
-      {/* ── Tab 1: Current Bill ── */}
-      {activeTab === 'bill' && (
-        <div className="flex-1 flex flex-col overflow-hidden">
+      {/* ── Tab 1: Active Orders and Bill ── */}
+      {activeTab === 'active' && (
+        <div className="cashier-order-status-panel">
           {/* Customer Bill Request Alert Banner */}
           {activeBillRequest && (
             <div className="mx-4 mt-3 p-3 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-between shrink-0">
@@ -227,7 +220,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                   Punch an order using the "Punch Order" tab or dishes grid.
                 </span>
                 <button
-                  onClick={() => onTabChange('punch')}
+                  onClick={() => onTabChange('new')}
                   className="mt-2 text-xs font-bold text-[#14274E] underline cursor-pointer"
                 >
                   Start punching order →
@@ -241,12 +234,12 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                 >
                   <div className="flex-1 pr-2">
                     <p className="font-bold text-[#14274E] line-clamp-1">{item.name}</p>
-                    <p className="text-[10px] text-slate-400">₱{item.price.toFixed(2)} each</p>
+                    <p className="text-[10px] text-slate-400">₱{item.price.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each</p>
                   </div>
                   <div className="flex items-center gap-4 text-right">
                     <span className="font-bold text-slate-600 w-6 text-center">x{item.quantity}</span>
                     <span className="font-black text-[#14274E] w-14">
-                      ₱{item.total.toFixed(2)}
+                      ₱{item.total.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
@@ -264,7 +257,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                   Apply Discount
                 </span>
                 <span className="text-slate-400">
-                  {discountType !== 'none' ? `-${(discountAmount).toFixed(2)}` : '0.00'}
+                  {discountType !== 'none' ? `-₱${discountAmount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '₱0.00'}
                 </span>
               </div>
               <div className="grid grid-cols-4 gap-1.5">
@@ -333,21 +326,21 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
             <div className="space-y-1.5 pt-2 border-t border-slate-200/80 text-xs">
               <div className="flex justify-between text-slate-500">
                 <span>Subtotal</span>
-                <span>₱{baseSubtotal.toFixed(2)}</span>
+                <span>₱{baseSubtotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               {discountAmount > 0 && (
                 <div className="flex justify-between text-emerald-600 font-bold">
                   <span>Discount</span>
-                  <span>-₱{discountAmount.toFixed(2)}</span>
+                  <span>-₱{discountAmount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               )}
               <div className="flex justify-between text-slate-500">
                 <span>Tax (5% VAT)</span>
-                <span>₱{billTax.toFixed(2)}</span>
+                <span>₱{billTax.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-base font-black text-[#14274E] pt-1.5 border-t border-slate-200">
                 <span>Grand Total</span>
-                <span>₱{grandTotal.toFixed(2)}</span>
+                <span>₱{grandTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
 
@@ -379,9 +372,9 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
         </div>
       )}
 
-      {/* ── Tab 2: Punch Order ── */}
-      {activeTab === 'punch' && (
-        <div className="flex-1 flex flex-col overflow-hidden">
+      {/* ── Tab 2: New Orders ── */}
+      {activeTab === 'new' && (
+        <div className="cashier-order-status-panel">
           {/* Dining Type Selector */}
           <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
             <span className="text-xs font-bold text-slate-600">Dining Type:</span>
@@ -431,14 +424,14 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                     <img
                       src={ci.item.imageUrl}
                       alt={ci.item.name}
-                      className="w-10 h-10 rounded-lg object-cover shrink-0"
+                      className="w-14 h-14 rounded-xl object-cover shrink-0"
                     />
                     <div className="flex-1 min-w-0">
-                      <h5 className="text-xs font-bold text-[#14274E] truncate">
+                      <h5 className="text-sm font-bold text-[#14274E] truncate">
                         {ci.item.name}
                       </h5>
-                      <span className="text-[11px] font-black text-[#14274E]">
-                        ₱{(ci.item.price * ci.quantity).toFixed(2)}
+                      <span className="text-sm font-black text-[#14274E]">
+                        ₱{(ci.item.price * ci.quantity).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
 
@@ -446,7 +439,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                     <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg p-0.5">
                       <button
                         onClick={() => onDecreasePunchQty(ci.item.id)}
-                        className="w-5 h-5 rounded flex items-center justify-center bg-white text-slate-600 hover:bg-slate-200 text-xs font-bold cursor-pointer"
+                        className="w-7 h-7 rounded-lg flex items-center justify-center bg-white text-slate-600 hover:bg-slate-200 text-sm font-bold cursor-pointer"
                       >
                         <Minus className="w-2.5 h-2.5" />
                       </button>
@@ -455,7 +448,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                       </span>
                       <button
                         onClick={() => onIncreasePunchQty(ci.item.id)}
-                        className="w-5 h-5 rounded flex items-center justify-center bg-[#14274E] text-white hover:bg-[#203c73] text-xs font-bold cursor-pointer"
+                        className="w-7 h-7 rounded-lg flex items-center justify-center bg-[#14274E] text-white hover:bg-[#203c73] text-sm font-bold cursor-pointer"
                       >
                         <Plus className="w-2.5 h-2.5" />
                       </button>
@@ -465,40 +458,38 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                       onClick={() => onRemovePunchItem(ci.item.id)}
                       className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-5 h-5" />
                     </button>
-                  </div>
-
-                  {/* Cooking notes input */}
-                  <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">
-                    <MessageSquare className="w-3 h-3 text-slate-400 shrink-0" />
-                    <input
-                      type="text"
-                      placeholder="Special cooking notes (e.g. less spicy, no onion)"
-                      value={ci.notes || ''}
-                      onChange={(e) => onUpdatePunchNotes(ci.item.id, e.target.value)}
-                      className="w-full bg-transparent border-none outline-none text-[11px] text-slate-700 placeholder:text-slate-400"
-                    />
                   </div>
                 </div>
               ))
             )}
           </div>
 
-          {/* Punch Cart Summary & Action Buttons */}
+          {/* Server Note and Punch Cart Summary & Action Buttons */}
           <div className="p-4 border-t border-slate-100 bg-slate-50/70 shrink-0 space-y-2.5">
+            <label className="block text-xs font-bold text-slate-600">
+              Server note
+              <textarea
+                value={serverNote}
+                onChange={(event) => onServerNoteChange(event.target.value)}
+                placeholder="Add a note for the kitchen"
+                rows={2}
+                className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-[#14274E] placeholder-slate-400 focus:outline-none focus:border-[#14274E]"
+              />
+            </label>
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between text-slate-500">
                 <span>Subtotal ({punchCart.reduce((s, c) => s + c.quantity, 0)} items)</span>
-                <span>₱{punchSubtotal.toFixed(2)}</span>
+                <span>₱{punchSubtotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-slate-500">
                 <span>Tax (5%)</span>
-                <span>₱{punchTax.toFixed(2)}</span>
+                <span>₱{punchTax.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-base font-black text-[#14274E] pt-1.5 border-t border-slate-200">
                 <span>Order Total</span>
-                <span>₱{punchTotal.toFixed(2)}</span>
+                <span>₱{punchTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
 
@@ -529,19 +520,31 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
         </div>
       )}
 
-      {/* ── Tab 3: Table Orders Progression ── */}
-      {activeTab === 'orders' && (
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {tableOrders.length === 0 ? (
+      {/* ── Tab 3: Pending Orders ── */}
+      {activeTab === 'pending' && (
+        <div className="cashier-order-status-panel">
+          <div className="cashier-order-list flex-1 overflow-y-auto p-4 space-y-3">
+          {pendingOrders.length === 0 ? (
             <div className="py-16 text-center text-slate-400 text-xs flex flex-col items-center gap-2">
               <Clock className="w-8 h-8 text-slate-300" />
-              <span className="font-semibold text-slate-600">No active batches</span>
+              <span className="font-semibold text-slate-600">No pending orders</span>
               <span className="text-[11px] text-slate-400">
                 Orders submitted for Table {tableNum} will show their live kitchen status here.
               </span>
             </div>
           ) : (
-            tableOrders.map((ord) => (
+            pendingOrders.map((ord) => {
+            const isExpanded = expandedOrders[ord.orderId] ?? false
+            const groupedItems = Object.values(
+              (ord.items ?? []).reduce<Record<string, { name: string; count: number; items: typeof ord.items }>>((groups, item) => {
+                const group = groups[item.itemId] ?? { name: item.name || `Item #${item.itemId}`, count: 0, items: [] }
+                group.count += 1
+                group.items = [...(group.items ?? []), item]
+                groups[item.itemId] = group
+                return groups
+              }, {}),
+            )
+            return (
               <div
                 key={ord.orderId}
                 className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-xs space-y-2"
@@ -569,27 +572,144 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                 </div>
 
                 <div className="divide-y divide-slate-100 text-xs">
-                  {ord.items?.map((it) => (
-                    <div key={it.orderItemId} className="py-1 flex justify-between">
-                      <span className="text-slate-700 font-medium">
-                        {it.name} <span className="text-slate-400">x{it.quantity}</span>
-                      </span>
-                      <span className="font-semibold text-slate-900">
-                        ₱{((it.price || 0) * (it.quantity || 1)).toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
+                  {groupedItems.map((group) => {
+                    const groupKey = `${ord.orderId}-${group.items?.[0]?.itemId}`
+                    return (
+                      <div key={groupKey} className="py-1">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedOrders((prev) => ({ ...prev, [ord.orderId]: !isExpanded }))}
+                          className="w-full flex items-center justify-between text-left py-1 cursor-pointer"
+                        >
+                          <span className="flex items-center gap-1.5 text-slate-700 font-medium">
+                            {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                            {group.name} <span className="text-slate-400">x{group.count}</span>
+                          </span>
+                          <span className="text-[10px] text-slate-400">View items</span>
+                        </button>
+                        {isExpanded && (
+                          <div className="ml-5 space-y-1 pb-1">
+                            {group.items?.map((item) => (
+                              <div key={item.orderItemId} className="flex items-center justify-between text-[11px] text-slate-500">
+                                <span>Item #{item.orderItemId}</span>
+                                <span className={item.status === 'CANCELLED' ? 'font-bold text-rose-600' : 'font-semibold text-slate-500'}>
+                                  {item.status}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
 
-                <div className="pt-1 border-t border-slate-100 flex justify-between text-xs font-bold text-[#14274E]">
-                  <span>Batch Total:</span>
-                  <span>₱{ord.totalBill.toFixed(2)}</span>
+                <div className="pt-1 border-t border-slate-100 text-[11px] font-bold text-slate-500">
+                  {ord.items?.length ?? 0} individual item{(ord.items?.length ?? 0) !== 1 ? 's' : ''}
                 </div>
               </div>
-            ))
+            )})
           )}
+          </div>
         </div>
       )}
+
+      {/* ── Tab 4: Cancelled Orders ── */}
+      {activeTab === 'cancelled' && (
+        <div className="cashier-order-status-panel">
+          <div className="cashier-order-list flex-1 overflow-y-auto p-4 space-y-3">
+            {cancelledOrders.length === 0 ? (
+              <div className="py-16 text-center text-slate-400 text-xs flex flex-col items-center gap-2">
+                <Receipt className="w-8 h-8 text-slate-300" />
+                <span className="font-semibold text-slate-600">No cancelled orders</span>
+                <span className="text-[11px] text-slate-400">
+                  Orders cancelled by the kitchen will appear here.
+                </span>
+              </div>
+            ) : (
+              cancelledOrders.map((ord) => {
+                const groupedItems = Object.values(
+                  (ord.items ?? []).reduce<Record<string, { name: string; count: number; items: typeof ord.items }>>((groups, item) => {
+                    const group = groups[item.itemId] ?? {
+                      name: item.name || `Item #${item.itemId}`,
+                      count: 0,
+                      items: [],
+                    }
+                    group.count += 1
+                    group.items = [...(group.items ?? []), item]
+                    groups[item.itemId] = group
+                    return groups
+                  }, {}),
+                )
+
+                return (
+                <div
+                  key={ord.orderId}
+                  className="p-3.5 rounded-2xl bg-rose-50/40 border border-rose-200 shadow-xs space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[#14274E]">
+                      Order #{ord.orderId}
+                    </span>
+                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">
+                      CANCELLED
+                    </span>
+                  </div>
+
+                  {ord.kitchenNote && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      <span className="font-black">Kitchen note:</span> {ord.kitchenNote}
+                    </div>
+                  )}
+
+                  {ord.serverNote && (
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                      <span className="font-black">Server note:</span> {ord.serverNote}
+                    </div>
+                  )}
+
+                  <div className="divide-y divide-rose-100 text-xs">
+                    {groupedItems.map((group) => {
+                      const isFlagged = group.items?.some((item) => item.isFlagged) ?? false
+                      return (
+                        <div
+                          key={`${ord.orderId}-${group.items?.[0]?.itemId}`}
+                          className="flex items-center justify-between py-1"
+                        >
+                          <span className="font-medium text-slate-700">
+                            {group.name} <span className="text-slate-400">x{group.count}</span>
+                          </span>
+                          {isFlagged && (
+                            <span className="text-[10px] font-black text-amber-600">
+                              FLAGGED
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => onReorder(ord)}
+                      className="py-2 rounded-xl bg-[#14274E] text-[#E9C46A] text-xs font-black cursor-pointer hover:bg-[#203c73]"
+                    >
+                      Re-Order
+                    </button>
+                    <button
+                      onClick={() => onDeleteCancelledOrder(ord)}
+                      className="py-2 rounded-xl border border-rose-200 bg-white text-rose-600 text-xs font-bold cursor-pointer hover:bg-rose-50"
+                    >
+                      Delete Order
+                    </button>
+                  </div>
+                </div>
+              )})
+            )}
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   )
 }
