@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Menu } from 'lucide-react'
 import { AppSidebar } from '@/components/layout/AppSidebar'
+import { MenuProvider } from '@/hooks/useMenu'
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -22,8 +23,9 @@ export default function AppLayout() {
   })()
 
   return (
-    <div className="website staff-shell">
-      <div className="website-container">
+    <MenuProvider>
+      <div className="website staff-shell">
+        <div className="website-container">
         <AppSidebar open={sidebarOpen} onClose={handleSidebarClose} />
 
         <div className="staff-workspace flex flex-1 flex-col overflow-hidden">
@@ -51,7 +53,8 @@ export default function AppLayout() {
             <Outlet />
           </main>
         </div>
+        </div>
       </div>
-    </div>
+    </MenuProvider>
   )
 }

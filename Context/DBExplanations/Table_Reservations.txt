@@ -1,0 +1,18 @@
+RESERVATION_ID
+- This is a unique identifier for the reservation data
+
+TABLE_ID
+- The table this reservation is related to
+
+APPOINTED_NAME
+- The name this reservation is registered to
+
+GUEST_COUNT
+- The count of expected guests for this table
+
+RESERVATION_NOTE
+- A note from the reservee 
+
+TIME_LIMIT
+- A timer limit to cancel the reservation if the guests do not arrive on time
+

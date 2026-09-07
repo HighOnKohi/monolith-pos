@@ -8,7 +8,6 @@ import {
   deleteOrder,
 } from '@/services/orderService'
 import { useMenu } from '@/hooks/useMenu'
-import { useRealtimeMenu, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 import type { BillRequest } from '@/types/bill'
 import type { Order } from '@/types/order'
 import type { MenuItem } from '@/types/menu'
@@ -63,15 +62,7 @@ export default function CashierPage() {
   }, [])
 
   // ── 3. Menu Data Hook ──
-  const { items: menuItems, categories } = useMenu()
-  const [liveItems, setLiveItems] = useState<MenuItem[]>([])
-  useEffect(() => {
-    setLiveItems(menuItems)
-  }, [menuItems])
-
-  useRealtimeMenu((itemId, isSoldOut) => {
-    setLiveItems((prev) => applyMenuUpdate(prev, itemId, isSoldOut))
-  })
+  const { items: liveItems, categories } = useMenu()
 
   // ── 4. Punch Cart State (for cashier order entry) ──
   const [punchCart, setPunchCart] = useState<CartItem[]>([])

@@ -16,7 +16,6 @@ import { LiveOrderStatusPopup } from '@/components/customer/LiveOrderStatusPopup
 import PageLoader from '@/components/common/PageLoader'
 
 import { useMenu } from '@/hooks/useMenu'
-import { useRealtimeMenu, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 import { useSharedCart } from '@/hooks/useSharedCart'
 import { useOrders } from '@/hooks/useOrders'
 import { useBillRequest } from '@/hooks/useBillRequest'
@@ -140,11 +139,7 @@ export default function CustomerPage() {
   const { billRequest, isRequesting: isRequestingBill, requestBill } = useBillRequest(effectiveAnchorId, memberTableIds)
 
   // We maintain a local copy of menu items to apply realtime updates without triggering a full re-fetch
-  const [liveItems, setLiveItems] = useState<MenuItem[]>([])
-  useEffect(() => { setLiveItems(items) }, [items])
-  useRealtimeMenu((itemId, isSoldOut) => {
-    setLiveItems((prev) => applyMenuUpdate(prev, itemId, isSoldOut))
-  })
+  const liveItems = items
 
   // Derived filtered items with Best Sellers tab support and top sorting
   const filteredItems = useMemo(() => {

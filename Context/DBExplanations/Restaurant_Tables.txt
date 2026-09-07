@@ -24,3 +24,9 @@ RESERVED_SINCE
 
 BILL_OUT_REQUESTED
 - this is a Boolean that designates whether the customer has requested to bill out via the customer interface and not the cashier
+
+IS_MERGE_MEMBER
+- this is if the table is a merge member of another table. take note that a table can be a merge member or a merge captain based on the merge implementation
+
+IS_MARGE_CAPTAIN
+- this is if the table is a merge captain with merge members under it

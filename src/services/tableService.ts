@@ -19,7 +19,9 @@ export interface TableData {
   CURRENT_GUEST_COUNT: number
   BILL_OUT_REQUESTED: boolean
   MERGE_GROUP_ID: number | null
-  RESERVED_SINCE: string | null           // ISO timestamp, reused as reservation datetime
+  IS_MERGE_MEMBER: boolean
+  IS_MERGE_CAPTAIN: boolean
+  RESERVED_SINCE: string | null
   RESERVATION_NAME: string | null
   RESERVATION_PAX: number | null
   RESERVATION_NOTES: string | null
@@ -52,6 +54,16 @@ export interface MergePreview {
 
 const ACTIVE_ORDER_STATUSES = ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED']
 const OCCUPIED_STATUSES: TableStatus[] = ['OCCUPIED', 'HAS_REQUEST']
+
+let cachedTables: TableData[] | null = null
+
+export function getCachedTables(): TableData[] | null {
+  return cachedTables
+}
+
+export function cacheTables(tables: TableData[]): void {
+  cachedTables = tables
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fetch
@@ -141,9 +153,18 @@ export async function createTable(tableNum: number, capacity: number): Promise<T
     .maybeSingle()
   if (existing) throw new Error(`Table ${tableNum} already exists.`)
 
+  const { data: lastTable } = await supabase
+    .from('Restaurant_Tables')
+    .select('TABLE_ID')
+    .order('TABLE_ID', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const nextTableId = Number(lastTable?.TABLE_ID ?? 0) + 1
+
   const { data, error } = await supabase
     .from('Restaurant_Tables')
     .insert({
+      TABLE_ID: nextTableId,
       TABLE_NUM: tableNum,
       STATUS: 'AVAILABLE',
       GUEST_CAPACITY: capacity,
@@ -192,7 +213,16 @@ export async function batchCreateTables(
     return { created: [], skipped }
   }
 
-  const rows = toCreate.map((num) => ({
+  const { data: lastTable } = await supabase
+    .from('Restaurant_Tables')
+    .select('TABLE_ID')
+    .order('TABLE_ID', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const nextTableId = Number(lastTable?.TABLE_ID ?? 0) + 1
+
+  const rows = toCreate.map((num, index) => ({
+    TABLE_ID: nextTableId + index,
     TABLE_NUM: num,
     STATUS: 'AVAILABLE',
     GUEST_CAPACITY: capacity,
@@ -425,14 +455,14 @@ export async function setTableAvailability(
 export interface ReservationData {
   name: string
   pax: number
-  reservedSince: string   // ISO timestamp (date + time combined)
+  timeLimit: string
   notes?: string
 }
 
-export async function reserveTable(tableId: number, reservation: ReservationData): Promise<TableData> {
+export async function reserveTable(tableId: number, reservation: ReservationData): Promise<TableData[]> {
   const { data: current, error: fetchErr } = await supabase
     .from('Restaurant_Tables')
-    .select('GUEST_CAPACITY, TABLE_NUM, STATUS')
+    .select('TABLE_ID, GUEST_CAPACITY, TABLE_NUM, STATUS, MERGE_GROUP_ID, RESERVED_SINCE')
     .eq('TABLE_ID', tableId)
     .maybeSingle()
 
@@ -453,25 +483,54 @@ export async function reserveTable(tableId: number, reservation: ReservationData
   }
   if (!reservation.name.trim()) throw new Error('Guest name is required.')
 
-  const { data, error } = await supabase
+  const anchorId = (current as { MERGE_GROUP_ID: number | null }).MERGE_GROUP_ID ?? tableId
+  const { data: members, error: membersErr } = await supabase
     .from('Restaurant_Tables')
-    .update({
-      STATUS: 'RESERVED',
-      RESERVED_SINCE: reservation.reservedSince,
-      RESERVATION_NAME: reservation.name.trim(),
-      RESERVATION_PAX: reservation.pax,
-      RESERVATION_NOTES: reservation.notes?.trim() || null,
+    .select('TABLE_ID')
+    .eq('MERGE_GROUP_ID', anchorId)
+  if (membersErr) throw membersErr
+
+  const targetIds = [anchorId, ...(members ?? []).map((member) => Number(member.TABLE_ID))]
+  const { data: reservationRow, error: reservationError } = await supabase
+    .from('Table_Reservations')
+    .insert({
+      TABLE_ID: tableId,
+      APPOINTED_NAME: reservation.name.trim(),
+      GUEST_COUNT: reservation.pax,
+      RESERVATION_NOTE: reservation.notes?.trim() || null,
+      TIME_LIMIT: reservation.timeLimit,
     })
-    .eq('TABLE_ID', tableId)
     .select()
     .single()
+  if (reservationError || !reservationRow) throw reservationError ?? new Error('Failed to save reservation.')
 
-  if (error || !data) throw error ?? new Error('Failed to reserve table.')
-  return data as TableData
+  const { error } = await supabase
+    .from('Restaurant_Tables')
+    .update({ STATUS: 'RESERVED', RESERVED_SINCE: new Date().toISOString() })
+    .in('TABLE_ID', targetIds)
+
+  if (error) throw error
+  return fetchTablesByIds(targetIds)
 }
 
-export async function cancelReservation(tableId: number): Promise<TableData> {
-  const { data, error } = await supabase
+export async function cancelReservation(tableId: number): Promise<TableData[]> {
+  const { data: current, error: fetchErr } = await supabase
+    .from('Restaurant_Tables')
+    .select('MERGE_GROUP_ID')
+    .eq('TABLE_ID', tableId)
+    .maybeSingle()
+  if (fetchErr) throw fetchErr
+  if (!current) throw new Error('Table not found.')
+
+  const anchorId = current.MERGE_GROUP_ID ?? tableId
+  const { data: members, error: membersErr } = await supabase
+    .from('Restaurant_Tables')
+    .select('TABLE_ID')
+    .eq('MERGE_GROUP_ID', anchorId)
+  if (membersErr) throw membersErr
+
+  const targetIds = [anchorId, ...(members ?? []).map((member) => Number(member.TABLE_ID))]
+  const { error } = await supabase
     .from('Restaurant_Tables')
     .update({
       STATUS: 'AVAILABLE',
@@ -480,12 +539,10 @@ export async function cancelReservation(tableId: number): Promise<TableData> {
       RESERVATION_PAX: null,
       RESERVATION_NOTES: null,
     })
-    .eq('TABLE_ID', tableId)
-    .select()
-    .single()
+    .in('TABLE_ID', targetIds)
 
-  if (error || !data) throw error ?? new Error('Failed to cancel reservation.')
-  return data as TableData
+  if (error) throw error
+  return fetchTablesByIds(targetIds)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -780,6 +837,51 @@ export async function unmergeTables(primaryTableId: number): Promise<TableData[]
 
   // Return fresh data for all affected rows
   return fetchTablesByIds([primaryTableId, ...secondaryIds])
+}
+
+export async function saveTableMerge(captainId: number, memberIds: number[]): Promise<TableData[]> {
+  const selectedIds = [captainId, ...memberIds]
+  const allTables = await fetchAllTables()
+  const touchedGroupIds = new Set<number>([captainId])
+
+  for (const table of allTables) {
+    if (selectedIds.includes(table.TABLE_ID) && table.MERGE_GROUP_ID !== null) {
+      touchedGroupIds.add(table.MERGE_GROUP_ID)
+    }
+  }
+
+  const affectedIds = allTables
+    .filter((table) =>
+      selectedIds.includes(table.TABLE_ID) ||
+      touchedGroupIds.has(table.TABLE_ID) ||
+      (table.MERGE_GROUP_ID !== null && touchedGroupIds.has(table.MERGE_GROUP_ID)),
+    )
+    .map((table) => table.TABLE_ID)
+
+  const { error: clearError } = await supabase
+    .from('Restaurant_Tables')
+    .update({ MERGE_GROUP_ID: null, IS_MERGE_MEMBER: false, IS_MERGE_CAPTAIN: false })
+    .in('TABLE_ID', affectedIds)
+
+  if (clearError) throw clearError
+
+  if (memberIds.length > 0) {
+    const { error: captainError } = await supabase
+      .from('Restaurant_Tables')
+      .update({ MERGE_GROUP_ID: null, IS_MERGE_MEMBER: false, IS_MERGE_CAPTAIN: true })
+      .eq('TABLE_ID', captainId)
+
+    if (captainError) throw captainError
+
+    const { error: memberError } = await supabase
+      .from('Restaurant_Tables')
+      .update({ MERGE_GROUP_ID: captainId, IS_MERGE_MEMBER: true, IS_MERGE_CAPTAIN: false })
+      .in('TABLE_ID', memberIds)
+
+    if (memberError) throw memberError
+  }
+
+  return fetchTablesByIds(affectedIds)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
