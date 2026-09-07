@@ -5,16 +5,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
-  Users,
-  Utensils,
-  CreditCard,
-  History,
-  FileText,
-  ChefHat,
-  Truck,
-  RotateCcw,
   Tag,
-  Receipt,
 } from 'lucide-react'
 import {
   fetchOrderDetails,

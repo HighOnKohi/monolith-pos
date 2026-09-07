@@ -1,3 +1,20 @@
+/* Account Manager Page Styles */
 .account-manager-page-container {
-  /* Account Manager page styles */
+  height: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem 3rem;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  .account-manager-page-container {
+    padding: 1rem 0.75rem 4rem;
+  }
+}
+
+/* Hide scrollbar on action menus */
+.account-manager-page-container select {
+  background-image: none;
 }

@@ -74,7 +74,7 @@ export const OrderLogsSummaryCards: React.FC<OrderLogsSummaryCardsProps> = ({
       bgClass: 'bg-indigo-50/40',
     },
     {
-      title: 'Customers Served',
+      title: 'Tables Served',
       value: loading ? '—' : `${summary.customersServed.toLocaleString()}`,
       subtitle: 'Total diners recorded',
       icon: Users,

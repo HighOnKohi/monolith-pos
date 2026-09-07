@@ -111,11 +111,10 @@ export default function AnalyticsPage() {
       {/* Toast Notification */}
       {toastMsg && (
         <div
-          className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl shadow-lg text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-3 ${
-            toastMsg.type === 'success'
+          className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl shadow-lg text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-3 ${toastMsg.type === 'success'
               ? 'bg-[#14274E] text-[#E9C46A] border border-[#E9C46A]/30'
               : 'bg-rose-600 text-white'
-          }`}
+            }`}
         >
           <span>{toastMsg.text}</span>
         </div>
@@ -234,7 +233,7 @@ export default function AnalyticsPage() {
             />
 
             <KpiCard
-              title="Customers Served"
+              title="Tables Served"
               value={summary.customersServed !== null ? summary.customersServed.toLocaleString() : '—'}
               icon={Users}
               isUnavailable={summary.customersServed === null}

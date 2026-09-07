@@ -64,7 +64,7 @@ export function exportOrderLogsPdf(params: OrderLogsPdfParams): void {
     { label: 'Total Revenue', value: `PHP ${summary.totalRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` },
     { label: 'Average Order Value', value: `PHP ${summary.averageOrderValue.toFixed(2)}` },
     { label: 'Avg. Serving Time', value: summary.averageServingTimeMinutes !== null ? `${summary.averageServingTimeMinutes}m` : 'N/A' },
-    { label: 'Customers Served', value: `${summary.customersServed} diners` },
+    { label: 'Tables Served', value: `${summary.customersServed} diners` },
     { label: 'Payment Breakdown', value: `${summary.paidOrders} Paid / ${summary.unpaidOrders} Unpaid` },
   ]
 

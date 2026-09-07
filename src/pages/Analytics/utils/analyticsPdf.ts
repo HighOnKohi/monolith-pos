@@ -49,7 +49,7 @@ export function exportAnalyticsPdf(summary: AnalyticsSummary): void {
   const kpis = [
     { label: 'Total Revenue', value: `PHP ${summary.revenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` },
     { label: 'Completed Orders', value: `${summary.completedOrders}` },
-    { label: 'Customers Served', value: summary.customersServed !== null ? `${summary.customersServed}` : 'Unavailable*' },
+    { label: 'Tables Served', value: summary.customersServed !== null ? `${summary.customersServed}` : 'Unavailable*' },
     { label: 'Average Order Value', value: `PHP ${summary.averageOrderValue.toFixed(2)}` },
     { label: 'Average Spend / Customer', value: summary.averageSpendPerCustomer !== null ? `PHP ${summary.averageSpendPerCustomer.toFixed(2)}` : 'Unavailable*' },
     { label: 'Average Serving Time', value: summary.averageServingTimeMinutes !== null ? `${summary.averageServingTimeMinutes}m` : 'Unavailable*' },

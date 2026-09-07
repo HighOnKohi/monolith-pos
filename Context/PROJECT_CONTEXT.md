@@ -496,7 +496,26 @@ Click "Complete Payment / Settle Bill →"
     - **PDF Export** (`orderLogsPdf.ts`): Multi-page branded PDF report using `jspdf` and `jspdf-autotable` with corporate header, summary KPI grid, and paginated order table.
     - **Native Print**: Dedicated CSS `@media print` rules hiding navigation shell, filter bar, and pagination for clean thermal/office paper printing.
   - **Database Migration 010**: `Context/migrations/010_order_logs_and_events.sql` introducing `Order_Events` table, `PAYMENT_METHOD` on `Restaurant_Orders`, and indexes. Fallback synthetic timeline milestones ensure full audit logs even on historic database records.
-- **Service Layer**: `src/services/orderLogsService.ts` encapsulates all filtering, pagination, summary calculations, item detail fetching, and timeline event logging.
+---
+
+### 7. Account Manager & Staff Access Control System
+- **Route**: `/accounts` (configured in `src/routes/index.tsx` and `src/config/navigation.ts`).
+- **Purpose**: Centralized administration interface for managing restaurant staff user accounts, role-based access control (RBAC), and permissions.
+- **Key Capabilities**:
+  - **Summary Metrics**: Real-time KPI cards displaying Total Accounts (% active), Active Staff, Administrators, and Inactive/Disabled counts.
+  - **Search & Filter Bar**: Debounced search by staff name, email, phone, or role, with quick role and status filter selectors.
+  - **Staff Accounts Table**: Responsive desktop table with avatar initials, role badge, status indicator, last active timestamp, and mobile-friendly card layout for handheld POS devices.
+  - **Sliding Staff Drawer (`StaffDrawer`)**:
+    - **View Mode**: Full profile card, contact details, assigned role description, and checklist of 7 granular permissions (active in emerald, inactive in muted grey).
+    - **Create Mode**: Comprehensive account setup with full name, email, phone, role selector (auto-populating default role permissions), granular permission overrides, internal notes, and option to dispatch a password setup invite.
+    - **Edit Mode**: Profile and access adjustments with immediate validation.
+  - **Security & Administrator Protection Guards**:
+    - Prevents the currently logged-in administrator from removing their own admin privileges.
+    - Prevents deactivating or demoting the final active administrator in the system.
+    - Confirmation modals for deactivation and role modifications explicitly explaining that historical orders, payments, and audit logs remain intact.
+    - Password resets trigger Supabase's native `supabase.auth.resetPasswordForEmail()` without exposing plaintext secrets or service-role keys.
+- **Database Migration 011**: `Context/migrations/011_staff_accounts_and_roles.sql` defining `Staff_Accounts` table with status and role check constraints, performance indexes, and initial seed staff accounts.
+- **Service Layer**: `src/services/staffAccountService.ts` encapsulates all account queries, mutations, role safety checks, and seamless fallback storage to ensure zero downtime.
 
 ---
 
