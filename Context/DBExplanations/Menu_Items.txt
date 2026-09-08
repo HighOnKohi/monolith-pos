@@ -21,3 +21,6 @@ ITEM_STATUS
 
 MENU_ITEM_DIETARY
 - This can be assigned either "VEGETARIAN" or "NON-VEGETARIAN" depending if the item is a vegetarian or not
+
+ORDER_LIMIT
+- A counter to determine how many times this item can be ordered before its automatically labelled out of stock 

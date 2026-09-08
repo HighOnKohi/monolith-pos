@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react'
-import { Search, Plus, ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { Search, Plus, Edit2, Trash2 } from 'lucide-react'
 import { useMenu } from '@/hooks/useMenu'
 import {
   createMenuItem,
@@ -25,6 +25,8 @@ export default function MenuManagerPage() {
   const [isEditModalOpen, setEditModalOpen]   = useState(false)
   const [search, setSearch]             = useState('')
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
+  const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
+  const [availabilitySaving, setAvailabilitySaving] = useState<string | null>(null)
 
   // Confirm modal state
   const [confirmState, setConfirmState] = useState<{
@@ -36,12 +38,6 @@ export default function MenuManagerPage() {
     setTimeout(() => setToastMessage(null), 3500)
   }
 
-  const catScrollRef = useRef<HTMLDivElement>(null)
-
-  // ── Category strip helpers ─────────────────────────────────────────────────
-  function scrollCats(dir: 'left' | 'right') {
-    catScrollRef.current?.scrollBy({ left: dir === 'left' ? -160 : 160, behavior: 'smooth' })
-  }
 
   // ── Filtered items ─────────────────────────────────────────────────────────
   const filtered = items.filter((item) => {
@@ -55,12 +51,28 @@ export default function MenuManagerPage() {
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
   function handleEdit(item: MenuItem) {
+    setSelectedItem(item)
     setEditingItem(item)
     setEditModalOpen(true)
   }
 
+  async function handleAvailabilityChange(item: MenuItem, isAvailable: boolean) {
+    setAvailabilitySaving(item.id)
+    try {
+      await updateMenuItem(item.id, { isAvailable })
+      setSelectedItem((current) => current?.id === item.id ? { ...current, isAvailable, isSoldOut: !isAvailable } : current)
+      reload()
+      showToast(`${item.name} is now ${isAvailable ? 'available' : 'not available'}.`, 'success')
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to update availability.', 'error')
+    } finally {
+      setAvailabilitySaving(null)
+    }
+  }
+
   function handleClose() {
     setEditingItem(null)
+    setSelectedItem(null)
   }
 
   async function submitEdit(form: NewMenuItemForm) {
@@ -136,91 +148,81 @@ export default function MenuManagerPage() {
     showToast(`Added "${form.name}".`, 'success')
   }
 
-  // ── Pagination ─────────────────────────────────────────────────────────────
-  const PAGE_SIZE = 12
-  const [page, setPage] = useState(1)
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-
-  const activeLabel = categories.find((c: Category) => c.id === activeCat)?.name ?? 'All'
+  const paginated = filtered
 
   return (
+    <>
     <div className="menu-manager-page-container staff-page">
 
       {/* ── LEFT: Menu browser ───────────────────────────── */}
       <div className="inner-menu-manager-container">
 
-        <div className="menu-item-searchbar-container">
+        <div className="inner-menu-manager-header">
+          <div className="menu-item-searchbar-container">
           <div className="menu-search flex items-center gap-2 rounded-xl bg-white border border-[#9BA4B4]/30 px-3 py-2">
             <Search className="menu-searchbar-icon" />
             <input
               type="text"
               value={search}
-              onChange={e => { setSearch(e.target.value); setPage(1) }}
+              onChange={e => setSearch(e.target.value)}
               placeholder="Search menu items, categories, SKU..."
               className="menu-searchbar-input flex-1 bg-transparent outline-none"
             />
+          </div>
+          </div>
+          <div className="menu-manager-header-actions">
+            <button type="button" className="menu-manager-add-category" onClick={handleAddCategory}><Plus className="menu-manager-plus-icon" /> Add Category</button>
+            <button type="button" className="menu-manager-add-item" onClick={handleAddDish}><Plus className="menu-item-add-icon" /> Add Item</button>
           </div>
         </div>
 
         <section className="menu-item-category-buttons-section">
           <div className="menu-item-category-buttons-header">
-            <button type="button" onClick={handleAddCategory}>
-              <Plus className="menu-manager-plus-icon" /> Add Category
-            </button>
-          </div>
           <div className="menu-item-category-buttons-row">
-            <button type="button" onClick={() => scrollCats('left')} className="menu-item-category-arrow menu-item-category-arrow-left">
-              <ChevronLeft className="menu-item-category-arrow-icon" />
-            </button>
-            <div ref={catScrollRef} className="menu-item-category-buttons-container">
+            <div className="menu-item-category-buttons-container">
               {categories.map((cat: Category, index) => {
                 const CategoryIcon = categoryIconMap[cat.icon as keyof typeof categoryIconMap]
                   ?? categoryIcons[index % categoryIcons.length].component
                 return (
-                  <button
-                    type="button"
+                  <div
                     key={cat.id}
-                    onClick={() => { setActiveCat(cat.id); setPage(1) }}
                     className={['menu-item-category-button shrink-0', activeCat === cat.id ? 'is-active' : ''].join(' ')}
                   >
-                    <div className="menu-item-category-body">
-                      <CategoryIcon className="menu-item-category-icon" />
-                      <span className="menu-item-category-title">{cat.name}</span>
-                    </div>
-                    <div className="menu-item-category-footer" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="menu-item-category-default"
+                      onClick={() => setActiveCat(cat.id)}
+                    >
+                      <div className="menu-item-category-body">
+                        <CategoryIcon className="menu-item-category-icon" />
+                        <span className="menu-item-category-title">{cat.name}</span>
+                      </div>
                       <span className="menu-item-category-count">{cat.count} Items</span>
-                      {cat.id !== 'all' && activeCat === cat.id && (
-                        <div className="menu-item-category-actions">
-                          <button type="button" className="menu-item-category-edit-btn" title="Edit category"
-                            onClick={() => { setEditingCategory(cat); setCategoryModalOpen(true) }}>
-                            <Edit2 className="menu-item-category-action-icon" />
-                          </button>
-                          <button type="button" className="menu-item-category-delete-btn" title="Delete category"
-                            onClick={() => handleDeleteCategory(cat)}>
-                            <Trash2 className="menu-item-category-action-icon" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </button>
+                    </button>
+                    {cat.id !== 'all' && activeCat === cat.id && (
+                      <div className="menu-item-category-hover-panel">
+                        <button type="button" title="Edit category" onClick={() => { setEditingCategory(cat); setCategoryModalOpen(true) }}>
+                          <Edit2 className="menu-item-category-action-icon" />
+                          <span>Edit</span>
+                        </button>
+                        <button type="button" title="Delete category" onClick={() => handleDeleteCategory(cat)}>
+                          <Trash2 className="menu-item-category-action-icon" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )
               })}
             </div>
-            <button type="button" onClick={() => scrollCats('right')} className="menu-item-category-arrow menu-item-category-arrow-right">
-              <ChevronRight className="menu-item-category-arrow-icon" />
-            </button>
+          </div>
           </div>
         </section>
 
         {/* Item grid */}
         <section className="menu-item-grid">
-          <div className="menu-item-card-header">
-            <button type="button" onClick={handleAddDish}>
-              <Plus className="menu-item-add-icon" /> Add Item
-            </button>
-          </div>
-          <div className="menu-item-card-grid">
+          <div className="menu-items-container">
+            <div className="menu-item-card-grid">
             {loadState === 'loading' && (
             <div className="flex h-full items-center justify-center text-sm text-[#9BA4B4]">
               Loading menu...
@@ -238,16 +240,15 @@ export default function MenuManagerPage() {
                   key={item.id}
                   className={[
                     'menu-item-card-container relative flex flex-col rounded-xl border bg-white overflow-hidden transition-all cursor-pointer',
-                    editingItem?.id === item.id
+                    selectedItem?.id === item.id
                       ? 'border-[#14274E] ring-2 ring-[#14274E]/30 shadow-md'
                       : 'border-[#9BA4B4]/20 hover:border-[#14274E]/30',
                   ].join(' ')}
-                  onClick={() => handleEdit(item)}
+                  onClick={() => setSelectedItem(item)}
                 >
-                  {/* Selected / Editing badge */}
-                  {editingItem?.id === item.id && (
-                    <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded-full bg-[#14274E] px-2 py-0.5 text-[10px] font-bold text-white shadow">
-                      ✓ Editing
+                  {selectedItem?.id === item.id && (
+                    <div className="absolute top-2 left-2 z-10 rounded-md bg-[#14274E] px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                      Selected
                     </div>
                   )}
 
@@ -280,45 +281,10 @@ export default function MenuManagerPage() {
                           'h-1.5 w-1.5 rounded-full',
                           item.dietaryType === 'veg' ? 'bg-yellow-500' : 'bg-[#C94A4A]',
                         ].join(' ')} />
-                        {item.dietaryType === 'veg' ? 'Veg' : 'Non Veg'}
+                        {item.dietaryType === 'veg' ? 'Vegetarian' : 'Non-vegetarian'}
                       </span>
                     </div>
 
-                    {/* Card actions */}
-                    <div className="menu-item-footer flex gap-1.5 mt-1" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => handleEdit(item)}
-                        className="edit-menu-item-button flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-semibold"
-                        style={{ background: '#14274E', color: '#ffffff' }}
-                      >
-                        <Edit2 style={{ color: '#E9C46A', width: '0.9rem', height: '0.9rem', strokeWidth: 3 }} />
-                        Edit
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setConfirmState({
-                            title: `Delete "${item.name}"?`,
-                            message: `Are you sure you want to remove "${item.name}" from the menu? This cannot be undone.`,
-                            onConfirm: async () => {
-                              setConfirmState(null)
-                              try {
-                                await deleteMenuItem(item.id)
-                                if (editingItem?.id === item.id) handleClose()
-                                reload()
-                                showToast(`Deleted "${item.name}".`, 'info')
-                              } catch (err: unknown) {
-                                const msg = err instanceof Error ? err.message : 'Failed to delete dish.'
-                                showToast(msg, 'error')
-                              }
-                            },
-                          })
-                        }}
-                        className="delete-menu-item-button flex h-7 w-7 items-center justify-center rounded-lg border border-[#C94A4A]/30 text-[#C94A4A] hover:bg-red-50 transition-colors"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
                   </div>
                 </div>
               ))}
@@ -331,45 +297,66 @@ export default function MenuManagerPage() {
               )}
             </div>
           )}
-        </div>
-
-        {/* Pagination footer */}
-        <div className="shrink-0 flex items-center justify-between pt-1 border-t border-[#9BA4B4]/20">
-          <p className="text-xs text-[#9BA4B4]">
-            Showing {paginated.length} of {filtered.length} items in{' '}
-            <span className="font-semibold text-[#394867]">{activeLabel}</span>
-          </p>
-          <div className="flex items-center gap-1">
-            <button
-              disabled={page <= 1}
-              onClick={() => setPage(p => p - 1)}
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9] disabled:opacity-40 transition-colors"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-              <button
-                key={p}
-                onClick={() => setPage(p)}
-                className={[
-                  'flex h-7 w-7 items-center justify-center rounded-lg text-xs font-semibold transition-colors',
-                  p === page ? 'bg-[#14274E] text-white' : 'border border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9]',
-                ].join(' ')}
-              >
-                {p}
-              </button>
-            ))}
-            <button
-              disabled={page >= totalPages}
-              onClick={() => setPage(p => p + 1)}
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#9BA4B4]/30 text-[#394867] hover:bg-[#F1F6F9] disabled:opacity-40 transition-colors"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
           </div>
-        </div>
+
+          </div>
       </section>
-    </div>
+      </div>
+
+      <aside className="menu-manager-sidebar">
+        {!selectedItem ? (
+          <div className="menu-manager-sidebar-empty">
+            <p>Select a menu item to view its details.</p>
+          </div>
+        ) : (
+          <div className="menu-manager-sidebar-content">
+            <div className="menu-manager-sidebar-heading">
+              <h2>Item Details</h2>
+            </div>
+            <img className="menu-manager-sidebar-image" src={selectedItem.imageUrl} alt={selectedItem.name} />
+            <h3>{selectedItem.name}</h3>
+            <p className="menu-manager-sidebar-category">{categories.find(category => category.id === selectedItem.categoryId)?.name ?? 'Uncategorized'}</p>
+            <p className="menu-manager-sidebar-price">₱{selectedItem.price.toFixed(2)}</p>
+            <dl className="menu-manager-sidebar-details">
+              <div><dt>Description</dt><dd>{selectedItem.description || 'No description available.'}</dd></div>
+              <div><dt>Dietary</dt><dd>{selectedItem.dietaryType === 'veg' ? 'Vegetarian' : 'Non-vegetarian'}</dd></div>
+              <div><dt>Availability</dt><dd>{selectedItem.isAvailable ? 'Available' : 'Not Available'}</dd></div>
+            </dl>
+            <label className="menu-sidebar-availability-toggle">
+              <span>Availability</span>
+              <span className="menu-sidebar-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={selectedItem.isAvailable}
+                  disabled={availabilitySaving === selectedItem.id}
+                  onChange={(event) => void handleAvailabilityChange(selectedItem, event.target.checked)}
+                />
+                <span>{selectedItem.isAvailable ? 'Available' : 'Not Available'}</span>
+              </span>
+            </label>
+            <footer className="menu-manager-sidebar-footer">
+              <div className="menu-manager-sidebar-actions">
+                <button type="button" onClick={() => handleEdit(selectedItem)}><Edit2 /> Edit</button>
+              <button type="button" className="is-danger" onClick={() => setConfirmState({
+                title: `Delete "${selectedItem.name}"?`,
+                message: `Are you sure you want to remove "${selectedItem.name}" from the menu? This cannot be undone.`,
+                onConfirm: async () => {
+                  setConfirmState(null)
+                  try {
+                    await deleteMenuItem(selectedItem.id)
+                    handleClose()
+                    reload()
+                    showToast(`Deleted "${selectedItem.name}".`, 'info')
+                  } catch (err: unknown) {
+                    showToast(err instanceof Error ? err.message : 'Failed to delete dish.', 'error')
+                  }
+                },
+                })}><Trash2 /> Delete</button>
+              </div>
+            </footer>
+          </div>
+        )}
+      </aside>
 
     <NewMenuItemModal
       isOpen={isEditModalOpen}
@@ -412,6 +399,7 @@ export default function MenuManagerPage() {
         <span>{toastMessage.text}</span>
       </div>
     )}
-  </div>
-)
+    </div>
+  </>
+  )
 }

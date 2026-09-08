@@ -30,6 +30,7 @@ create table public."Menu_Items" (
   "ITEM_IMAGE_URL" text null,
   "ITEM_STATUS" text null default 'AVAILABLE'::text,
   "MENU_ITEM_DIETARY" text null,
+  "ORDER_LIMIT" bigint null default '0'::bigint,
   constraint MENU_ITEMS_pkey primary key ("ITEM_ID"),
   constraint Menu_Items_CATEGORY_ID_fkey foreign KEY ("CATEGORY_ID") references "Menu_Categories" ("CATEGORY_ID"),
   constraint menu_items_status_check check (
