@@ -37,7 +37,7 @@ export interface ItemSalesStat {
   dineInCount: number // units sold via Dine-In
   takeoutCount: number // units sold via Takeout
   customerAppCount: number // units ordered via Customer app
-  cashierCount: number // units ordered via Cashier station
+  cashierCount: number // units ordered via Cashier station 
   isAvailable?: boolean
 }
 
