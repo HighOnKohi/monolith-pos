@@ -14,9 +14,9 @@
 import type { ReceiptSnapshot } from './types'
 
 const IFRAME_ID = 'monolith-receipt-print-frame'
-const BUSINESS_NAME = 'Bill Shaw Restaurant'
-const BUSINESS_TAGLINE = 'Siena College Of Taytay'
-const RECEIPT_LABEL = 'Official Dining Receipt'
+export const BUSINESS_NAME = 'Bill Shaw Restaurant'
+export const BUSINESS_TAGLINE = 'Siena College Of Taytay'
+export const RECEIPT_LABEL = 'Official Dining Receipt'
 const FOOTER_LINE1 = 'THANK YOU FOR DINING'
 const FOOTER_LINE2 = 'WITH US!'
 const FOOTER_LINE3 = 'Please come again'

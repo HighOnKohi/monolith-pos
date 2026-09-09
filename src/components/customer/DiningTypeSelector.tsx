@@ -1,33 +1,45 @@
+import type { ComponentType, SVGProps } from 'react'
 import type { DiningType } from '@/types/cart'
+import { Utensils, ShoppingBag } from 'lucide-react'
 
 interface DiningTypeSelectorProps {
   value: DiningType
   onChange: (type: DiningType) => void
+  disabled?: boolean
 }
 
-const options: { label: string; value: DiningType }[] = [
-  { label: 'Dine In', value: 'dine-in' },
-  { label: 'Take Away', value: 'take-away' },
+const options: { label: string; value: DiningType; icon: ComponentType<SVGProps<SVGSVGElement>> }[] = [
+  { label: 'Dine In', value: 'dine-in', icon: Utensils },
+  { label: 'Take Out', value: 'take-away', icon: ShoppingBag },
 ]
 
-export function DiningTypeSelector({ value, onChange }: DiningTypeSelectorProps) {
+export function DiningTypeSelector({ value, onChange, disabled = false }: DiningTypeSelectorProps) {
   return (
-    <div className="flex p-1 bg-[#F1F6F9] rounded-2xl text-sm font-bold text-[#394867] border border-[#9BA4B4]/20 gap-1">
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          onClick={() => onChange(opt.value)}
-          aria-pressed={value === opt.value}
-          className={[
-            'flex-1 py-2.5 px-4 rounded-xl transition-all duration-150 min-h-[44px]',
-            value === opt.value
-              ? 'bg-[#14274E] text-white shadow-sm'
-              : 'hover:text-[#14274E] active:scale-95',
-          ].join(' ')}
-        >
-          {opt.label}
-        </button>
-      ))}
+    <div className="flex p-1 bg-[#F1F6F9] rounded-xl text-xs sm:text-sm font-extrabold text-[#394867] border border-[#9BA4B4]/20 gap-1 shadow-inner">
+      {options.map((opt) => {
+        const Icon = opt.icon
+        const isSelected = value === opt.value
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(opt.value)}
+            aria-pressed={isSelected}
+            className={[
+              'flex-1 py-1.5 sm:py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-all duration-150',
+              disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+              isSelected
+                ? 'bg-[#14274E] text-white shadow-xs font-black'
+                : 'text-[#394867] hover:text-[#14274E] hover:bg-white/60 active:scale-95',
+            ].join(' ')}
+          >
+            <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-[#E9C46A]' : 'text-[#9BA4B4]'}`} />
+            <span>{opt.label}</span>
+          </button>
+        )
+      })}
     </div>
   )
 }
+

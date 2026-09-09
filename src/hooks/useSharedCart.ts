@@ -29,11 +29,12 @@ function getSessionId(): string {
 
 interface SharedCartState {
   items: CartItem[]
+  diningType?: DiningType
   lockedBy: string | null  // session ID of the device currently placing an order
   lockedAt: number | null  // timestamp of lock (ms) for stale-lock detection
 }
 
-const EMPTY_CART: SharedCartState = { items: [], lockedBy: null, lockedAt: null }
+const EMPTY_CART: SharedCartState = { items: [], diningType: 'dine-in', lockedBy: null, lockedAt: null }
 const LOCK_TIMEOUT_MS = 15_000 // 15 seconds — auto-clears stale lock
 
 function getStoredCart(tableId: number | null): SharedCartState {
@@ -42,7 +43,12 @@ function getStoredCart(tableId: number | null): SharedCartState {
     const raw = localStorage.getItem(`monolith_shared_cart_table_${tableId}`)
     if (raw) {
       const parsed = JSON.parse(raw) as SharedCartState
-      return { items: parsed.items || [], lockedBy: null, lockedAt: null }
+      return {
+        items: parsed.items || [],
+        diningType: parsed.diningType || 'dine-in',
+        lockedBy: null,
+        lockedAt: null,
+      }
     }
   } catch {
     // Ignore storage errors
@@ -94,7 +100,24 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
   const [cartState, setCartState] = useState<SharedCartState>(() => getStoredCart(tableId))
-  const [diningType, setDiningType] = useState<DiningType>('dine-in')
+
+  const diningType = cartState.diningType || 'dine-in'
+
+  const setDiningType = useCallback(
+    (newType: DiningType) => {
+      setCartState((prev) => {
+        const next: SharedCartState = { ...prev, diningType: newType }
+        persistStoredCart(tableId, next)
+        channelRef.current?.send({
+          type: 'broadcast',
+          event: 'cart_update',
+          payload: next,
+        })
+        return next
+      })
+    },
+    [tableId],
+  )
 
   // Keep a ref to the latest cartState for peer responses
   const cartStateRef = useRef<SharedCartState>(cartState)

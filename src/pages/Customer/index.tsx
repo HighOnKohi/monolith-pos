@@ -21,6 +21,7 @@ import { useOrders } from '@/hooks/useOrders'
 import { useBillRequest } from '@/hooks/useBillRequest'
 import { useTableGroup } from '@/services/tableGroupService'
 import { getCachedTableAssistance, clearCachedTableAssistance } from '@/services/assistanceService'
+import { compressTableOrders } from '@/services/orderService'
 import { supabase } from '@/lib/supabase'
 import type { MenuItem } from '@/types/menu'
 import type { PaymentMethod } from '@/types/bill'
@@ -114,6 +115,8 @@ export default function CustomerPage() {
   const { items, categories, loadState } = useMenu()
   const {
     items: cartItems,
+    diningType,
+    setDiningType,
     addItem,
     updateNotes,
     removeItem,
@@ -178,6 +181,12 @@ export default function CustomerPage() {
     [orders],
   )
 
+  // Bill out is available when there are active table orders and all are SERVED (matching Orders tab)
+  const canBillOut = useMemo(
+    () => compressTableOrders(orders)?.canBillOut ?? false,
+    [orders],
+  )
+
   // Tab change with unread badge clearing
   const handleTabChange = (tab: TabType) => {
     setActiveTab(tab)
@@ -198,7 +207,7 @@ export default function CustomerPage() {
       const serverNote = groupInfo?.isMerged && parsedTableId !== effectiveAnchorId
         ? `Customer entered via Table ${parsedTableId}`
         : undefined
-      const success = await placeOrder(cartItems, 'dine-in', total, serverNote)
+      const success = await placeOrder(cartItems, diningType, total, serverNote)
       if (success) {
         clearCart()
         handleTabChange('orders')
@@ -337,6 +346,7 @@ export default function CustomerPage() {
           onRequestSent={(req) => setActiveAssistance(req)}
           onRequestCleared={() => setActiveAssistance(null)}
           onOpenBillOutModal={() => setIsBillOutOpen(true)}
+          canBillOut={canBillOut}
         />
       )}
 
@@ -344,6 +354,8 @@ export default function CustomerPage() {
       <CartSummary
         itemCount={itemCount}
         total={total}
+        diningType={diningType}
+        onDiningTypeChange={setDiningType}
         onPlaceOrder={handlePlaceOrder}
         onClear={clearCart}
         isSubmitting={isSubmittingOrder}
