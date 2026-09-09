@@ -19,6 +19,7 @@ const MenuManagerPage = lazy(() => import('@/pages/MenuManager'))
 const AnalyticsPage = lazy(() => import('@/pages/Analytics'))
 const AccountManagerPage = lazy(() => import('@/pages/AccountManager'))
 const OrderLogsPage = lazy(() => import('@/pages/OrderLogs'))
+const EventsPage = lazy(() => import('@/pages/Events'))
 
 function wrap(Component: React.ComponentType) {
   return (
@@ -108,6 +109,7 @@ export const router = createBrowserRouter([
           { path: 'tables', element: wrap(TableManagerPage) },
           { path: 'menu', element: wrap(MenuManagerPage) },
           { path: 'analytics', element: wrap(AnalyticsPage) },
+          { path: 'events', element: wrap(EventsPage) },
           { path: 'accounts', element: wrap(AccountManagerPage) },
           { path: 'order-logs', element: wrap(OrderLogsPage) },
         ],

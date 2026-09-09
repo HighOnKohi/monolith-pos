@@ -1,0 +1,30 @@
+/* ─── Events Page Styles ─────────────────────────────────────────────── */
+
+.events-page-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 3rem;
+  background-color: var(--color-background, #F1F6F9);
+  box-sizing: border-box;
+}
+
+@media (max-width: 640px) {
+  .events-page-container {
+    padding: 1rem 0.75rem 4rem;
+  }
+}
+
+/* Print Stylesheet */
+@media print {
+  .events-page-container {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background-color: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+}

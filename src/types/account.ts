@@ -8,6 +8,7 @@ export type StaffPermission =
   | 'manage_accounts'
   | 'manage_menu'
   | 'manage_tables'
+  | 'manage_events'
   | 'access_kitchen'
   | 'access_cashier'
   | 'access_analytics'
@@ -82,6 +83,7 @@ export const ROLE_DEFINITIONS: Record<StaffRole, RoleMeta> = {
       'manage_accounts',
       'manage_menu',
       'manage_tables',
+      'manage_events',
       'access_kitchen',
       'access_cashier',
       'access_analytics',
@@ -98,6 +100,7 @@ export const ROLE_DEFINITIONS: Record<StaffRole, RoleMeta> = {
     defaultPermissions: [
       'manage_menu',
       'manage_tables',
+      'manage_events',
       'access_kitchen',
       'access_cashier',
       'access_analytics',
@@ -177,6 +180,12 @@ export const PERMISSION_DEFINITIONS: Record<StaffPermission, PermissionMeta> = {
     key: 'access_analytics',
     label: 'Business Analytics & Reports',
     description: 'Inspect revenue KPIs, order volume trends, and kitchen preparation speed metrics.',
+    category: 'Management',
+  },
+  manage_events: {
+    key: 'manage_events',
+    label: 'Events Management',
+    description: 'Create, edit, cancel, and delete scheduled restaurant events and reservations.',
     category: 'Management',
   },
   view_order_logs: {

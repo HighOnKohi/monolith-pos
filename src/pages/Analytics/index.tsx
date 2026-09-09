@@ -18,6 +18,7 @@ import {
   ChefHat,
   Truck,
   RotateCcw,
+  Sparkles,
 } from 'lucide-react'
 
 import {
@@ -36,6 +37,8 @@ import { TopItemsChart } from './components/TopItemsChart'
 import { CategoryBreakdown } from './components/CategoryBreakdown'
 import { OrderStatusBreakdown } from './components/OrderStatusBreakdown'
 import { ClearDataModal } from './components/ClearDataModal'
+import { CustomerInsightsModal, type CustomerInsightTab } from './components/CustomerInsightsModal'
+import { MetricDetailModal, type KpiMetricType } from './components/MetricDetailModal'
 
 export default function AnalyticsPage() {
   const [dateRange, setDateRange] = useState<DateRange>(() =>
@@ -47,6 +50,8 @@ export default function AnalyticsPage() {
   const [isPending, startTransition] = useTransition()
   const [clearModalOpen, setClearModalOpen] = useState(false)
   const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
+  const [activeKpiMetric, setActiveKpiMetric] = useState<KpiMetricType | null>(null)
+  const [activeCustomerInsightTab, setActiveCustomerInsightTab] = useState<CustomerInsightTab | null>(null)
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMsg({ text, type })
@@ -222,6 +227,7 @@ export default function AnalyticsPage() {
               icon={DollarSign}
               changePercent={summary.revenueChangePercent}
               accentColor="#14274E"
+              onClick={() => setActiveKpiMetric('revenue')}
             />
 
             <KpiCard
@@ -230,6 +236,7 @@ export default function AnalyticsPage() {
               icon={ShoppingBag}
               changePercent={summary.ordersChangePercent}
               accentColor="#2A9D8F"
+              onClick={() => setActiveKpiMetric('orders')}
             />
 
             <KpiCard
@@ -249,6 +256,7 @@ export default function AnalyticsPage() {
                   : 'Count not recorded'
               }
               accentColor="#E76F51"
+              onClick={() => setActiveKpiMetric('tables')}
             />
 
             <KpiCard
@@ -257,6 +265,7 @@ export default function AnalyticsPage() {
               icon={TrendingUp}
               subtitle={`${summary.completedOrders} orders calculated`}
               accentColor="#E9C46A"
+              onClick={() => setActiveKpiMetric('aov')}
             />
 
             <KpiCard
@@ -279,6 +288,7 @@ export default function AnalyticsPage() {
                   : 'Data unavailable'
               }
               accentColor="#394867"
+              onClick={() => setActiveKpiMetric('spend')}
             />
 
             <KpiCard
@@ -297,6 +307,7 @@ export default function AnalyticsPage() {
                   : 'Timestamps not recorded'
               }
               accentColor="#6366F1"
+              onClick={() => setActiveKpiMetric('serving_time')}
             />
 
             <KpiCard
@@ -309,6 +320,7 @@ export default function AnalyticsPage() {
                   : 'No sales'
               }
               accentColor="#F59E0B"
+              onClick={() => setActiveKpiMetric('top_item')}
             />
 
             <KpiCard
@@ -317,6 +329,7 @@ export default function AnalyticsPage() {
               icon={Package}
               subtitle={`${summary.categoryStats.length} active categories`}
               accentColor="#10B981"
+              onClick={() => setActiveKpiMetric('items_sold')}
             />
           </div>
 
@@ -329,7 +342,17 @@ export default function AnalyticsPage() {
                   Customer Insights
                 </h2>
               </div>
-              <span className="text-[11px] font-bold text-slate-400">Diner Traffic & Spend</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">Diner Traffic &amp; Spend</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveCustomerInsightTab('ratio')}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#14274E] hover:text-[#1f3b73] bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Action Playbook →</span>
+                </button>
+              </div>
             </div>
 
             {/* Graceful Fallback Notice only when customer data is truly absent */}
@@ -347,37 +370,82 @@ export default function AnalyticsPage() {
               </div>
             ) : null}
 
-            {/* Metric widgets */}
+            {/* Interactive Metric widgets */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/70">
-                <span className="text-[11px] font-bold text-slate-500 uppercase">Customer-to-Order Ratio</span>
-                <p className="text-lg font-extrabold text-[#14274E] mt-1">
-                  {summary.customerToOrderRatio !== null ? `${summary.customerToOrderRatio} diners / order` : 'Unavailable'}
-                </p>
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  {summary.customersServed !== null ? `${summary.customersServed} diners across ${summary.completedOrders} orders` : 'Requires order diner counts'}
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setActiveCustomerInsightTab('ratio')}
+                className="p-3.5 bg-slate-50 hover:bg-white rounded-xl border border-slate-200/70 hover:border-indigo-300 hover:shadow-md transition-all text-left cursor-pointer group flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase">Customer-to-Order Ratio</span>
+                    <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded opacity-90 group-hover:opacity-100 flex items-center gap-0.5">
+                      Strategy Guide →
+                    </span>
+                  </div>
+                  <p className="text-lg font-extrabold text-[#14274E] mt-1.5">
+                    {summary.customerToOrderRatio !== null ? `${summary.customerToOrderRatio} diners / order` : 'Unavailable'}
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {summary.customersServed !== null ? `${summary.customersServed} diners across ${summary.completedOrders} orders` : 'Requires order diner counts'}
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-slate-200/60 text-[10px] font-semibold text-slate-600 flex items-center justify-between">
+                  <span className="truncate text-indigo-700">💡 2-top vs 4-top seating optimization</span>
+                  <span className="text-[9px] text-slate-400 font-bold group-hover:text-indigo-600 transition-colors">View Playbook</span>
+                </div>
+              </button>
 
-              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/70">
-                <span className="text-[11px] font-bold text-slate-500 uppercase">Average Spend per Customer</span>
-                <p className="text-lg font-extrabold text-[#14274E] mt-1">
-                  {summary.averageSpendPerCustomer !== null ? `₱${summary.averageSpendPerCustomer.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : 'Unavailable'}
-                </p>
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  {summary.averageSpendPerCustomer !== null ? 'Total Revenue / Customers Served' : 'Revenue / Customers served'}
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setActiveCustomerInsightTab('spend')}
+                className="p-3.5 bg-slate-50 hover:bg-white rounded-xl border border-slate-200/70 hover:border-emerald-300 hover:shadow-md transition-all text-left cursor-pointer group flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase">Average Spend per Customer</span>
+                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded opacity-90 group-hover:opacity-100 flex items-center gap-0.5">
+                      Upselling Guide →
+                    </span>
+                  </div>
+                  <p className="text-lg font-extrabold text-[#14274E] mt-1.5">
+                    {summary.averageSpendPerCustomer !== null ? `₱${summary.averageSpendPerCustomer.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : 'Unavailable'}
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {summary.averageSpendPerCustomer !== null ? 'Total Revenue / Customers Served' : 'Revenue / Customers served'}
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-slate-200/60 text-[10px] font-semibold text-slate-600 flex items-center justify-between">
+                  <span className="truncate text-emerald-700">💡 Drink pairings &amp; +₱150 combo perks</span>
+                  <span className="text-[9px] text-slate-400 font-bold group-hover:text-emerald-600 transition-colors">View Playbook</span>
+                </div>
+              </button>
 
-              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/70">
-                <span className="text-[11px] font-bold text-slate-500 uppercase">Peak Ordering & Seating</span>
-                <p className="text-lg font-extrabold text-[#14274E] mt-1">
-                  {summary.peakHour || 'No orders'}
-                </p>
-                <p className="text-[10px] text-slate-500 mt-0.5">
-                  Peak day: {summary.peakDay || 'N/A'} {summary.peakCustomerPeriod ? `· Busiest: ${summary.peakCustomerPeriod.period} (${summary.peakCustomerPeriod.count} diners)` : ''}
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setActiveCustomerInsightTab('peak')}
+                className="p-3.5 bg-slate-50 hover:bg-white rounded-xl border border-slate-200/70 hover:border-amber-300 hover:shadow-md transition-all text-left cursor-pointer group flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase">Peak Ordering & Seating</span>
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded opacity-90 group-hover:opacity-100 flex items-center gap-0.5">
+                      Shift Guide →
+                    </span>
+                  </div>
+                  <p className="text-lg font-extrabold text-[#14274E] mt-1.5">
+                    {summary.peakHour || 'No orders'}
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Peak day: {summary.peakDay || 'N/A'} {summary.peakCustomerPeriod ? `· Busiest: ${summary.peakCustomerPeriod.period} (${summary.peakCustomerPeriod.count} diners)` : ''}
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-slate-200/60 text-[10px] font-semibold text-slate-600 flex items-center justify-between">
+                  <span className="truncate text-amber-800">💡 11 AM kitchen prep &amp; merienda promos</span>
+                  <span className="text-[9px] text-slate-400 font-bold group-hover:text-amber-700 transition-colors">View Playbook</span>
+                </div>
+              </button>
             </div>
           </div>
 
@@ -724,6 +792,31 @@ export default function AnalyticsPage() {
         onClose={() => setClearModalOpen(false)}
         onSuccess={handleClearSuccess}
       />
+
+      {/* KPI Metric Detail Modal */}
+      {summary && (
+        <MetricDetailModal
+          isOpen={activeKpiMetric !== null}
+          onClose={() => setActiveKpiMetric(null)}
+          metricKey={activeKpiMetric}
+          summary={summary}
+          onSelectMetric={(key) => setActiveKpiMetric(key)}
+          onOpenCustomerInsights={(tab) => {
+            setActiveKpiMetric(null)
+            setActiveCustomerInsightTab(tab)
+          }}
+        />
+      )}
+
+      {/* Customer Insights Action Playbook Modal */}
+      {summary && (
+        <CustomerInsightsModal
+          isOpen={activeCustomerInsightTab !== null}
+          onClose={() => setActiveCustomerInsightTab(null)}
+          initialTab={activeCustomerInsightTab || 'ratio'}
+          summary={summary}
+        />
+      )}
     </div>
   )
 }
