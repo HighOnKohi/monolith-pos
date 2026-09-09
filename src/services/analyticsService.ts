@@ -24,14 +24,24 @@ export interface TimeSeriesPoint {
   customerCount: number | null
 }
 
-export interface TopItemStat {
+export interface ItemSalesStat {
   itemId: number
   itemName: string
   categoryName: string
+  unitPrice: number
   quantity: number
   revenue: number
-  percentageOfSales: number
+  percentageOfSales: number // % of all items sold
+  percentageOfRevenue: number // % of total revenue
+  orderCount: number // distinct orders containing this item
+  dineInCount: number // units sold via Dine-In
+  takeoutCount: number // units sold via Takeout
+  customerAppCount: number // units ordered via Customer app
+  cashierCount: number // units ordered via Cashier station
+  isAvailable?: boolean
 }
+
+export type TopItemStat = ItemSalesStat
 
 export interface CategoryStat {
   categoryId: number
@@ -99,7 +109,9 @@ export interface AnalyticsSummary {
 
   // Aggregated series & breakdowns
   timeSeries: TimeSeriesPoint[]
-  topItems: TopItemStat[]
+  topItems: ItemSalesStat[]
+  leastItems: ItemSalesStat[]
+  allItems: ItemSalesStat[]
   categoryStats: CategoryStat[]
   statusBreakdown: StatusStat[]
   orderTypeBreakdown: BreakdownStat[] // DINE-IN vs TAKEOUT
@@ -261,6 +273,25 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     orderItemsData = (itemsData ?? []) as Array<Record<string, unknown>>
   }
 
+  // 3b. Fetch full menu catalog to track zero-sales and underperforming items
+  const { data: catalogItemsData, error: catalogError } = await supabase
+    .from('Menu_Items')
+    .select(`
+      ITEM_ID,
+      ITEM_NAME,
+      ITEM_PRICE,
+      CATEGORY_ID,
+      IS_AVAILABLE,
+      Menu_Categories (
+        CATEGORY_ID,
+        CATEGORY_NAME
+      )
+    `)
+
+  if (catalogError) {
+    console.warn('[analyticsService] Warning fetching menu items catalog:', catalogError)
+  }
+
   // 4. Calculate Core KPIs using TOTAL_BILL and SUBTOTAL_BILL from Restaurant_Orders
   const totalRevenue = completedOrdersList.reduce((sum, o) => sum + (Number(o['TOTAL_BILL']) || 0), 0)
   const subtotalRevenue = completedOrdersList.reduce(
@@ -414,35 +445,132 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     }
   }
 
-  // 5. Aggregate Top Selling Items
-  const itemMap = new Map<number, { name: string; category: string; qty: number; revenue: number }>()
-
-  for (const oi of orderItemsData) {
-    const menuItem = oi['Menu_Items'] as Record<string, unknown> | null
-    if (!menuItem) continue
-    const itemId = Number(menuItem['ITEM_ID'])
-    const itemName = String(menuItem['ITEM_NAME'] || 'Unknown Item')
-    const itemPrice = Number(menuItem['ITEM_PRICE'] || 0)
-    const categoryObj = menuItem['Menu_Categories'] as Record<string, unknown> | null
-    const categoryName = categoryObj ? String(categoryObj['CATEGORY_NAME']) : 'Uncategorized'
-
-    const existing = itemMap.get(itemId) ?? { name: itemName, category: categoryName, qty: 0, revenue: 0 }
-    existing.qty += 1
-    existing.revenue += itemPrice
-    itemMap.set(itemId, existing)
+  // 5. Aggregate Menu Item Sales Performance (Top, Least, and Full Catalog)
+  const orderMetaMap = new Map<number, { isDineIn: boolean; isCustomerApp: boolean }>()
+  for (const o of completedOrdersList) {
+    const oId = Number(o['ORDER_ID'])
+    const rawType = String(o['ORDER_TYPE'] || 'DINE-IN').toUpperCase()
+    const isDineIn = !rawType.includes('TAKEOUT')
+    const rawChan = String(o['REQUESTED_FROM'] || 'Cashier').toLowerCase()
+    const isCustomerApp = rawChan.includes('customer')
+    orderMetaMap.set(oId, { isDineIn, isCustomerApp })
   }
 
-  const topItems: TopItemStat[] = Array.from(itemMap.entries())
-    .map(([id, val]) => ({
-      itemId: id,
-      itemName: val.name,
-      categoryName: val.category,
-      quantity: val.qty,
-      revenue: val.revenue,
-      percentageOfSales: itemsSoldCount > 0 ? Math.round((val.qty / itemsSoldCount) * 1000) / 10 : 0,
-    }))
+  interface ItemAgg {
+    id: number
+    name: string
+    category: string
+    unitPrice: number
+    isAvailable: boolean
+    qty: number
+    revenue: number
+    orderIds: Set<number>
+    dineInCount: number
+    takeoutCount: number
+    customerAppCount: number
+    cashierCount: number
+  }
+
+  const itemAggMap = new Map<number, ItemAgg>()
+
+  // 5a. Seed with catalog items so zero-sales / underperforming items are tracked
+  if (catalogItemsData && catalogItemsData.length > 0) {
+    for (const raw of catalogItemsData as Array<Record<string, unknown>>) {
+      const id = Number(raw['ITEM_ID'])
+      const name = String(raw['ITEM_NAME'] || 'Unknown Item')
+      const price = Number(raw['ITEM_PRICE'] || 0)
+      const isAvail = raw['IS_AVAILABLE'] !== false
+      const catObj = raw['Menu_Categories'] as Record<string, unknown> | null
+      const catName = catObj ? String(catObj['CATEGORY_NAME']) : 'Uncategorized'
+
+      itemAggMap.set(id, {
+        id,
+        name,
+        category: catName,
+        unitPrice: price,
+        isAvailable: isAvail,
+        qty: 0,
+        revenue: 0,
+        orderIds: new Set<number>(),
+        dineInCount: 0,
+        takeoutCount: 0,
+        customerAppCount: 0,
+        cashierCount: 0,
+      })
+    }
+  }
+
+  // 5b. Accumulate sold items and link to order metadata
+  for (const oi of orderItemsData) {
+    const menuItem = oi['Menu_Items'] as Record<string, unknown> | null
+    const itemId = Number(oi['ITEM_ID'] || (menuItem ? menuItem['ITEM_ID'] : 0))
+    if (!itemId) continue
+
+    const orderId = Number(oi['ORDER_ID'] || 0)
+    const orderMeta = orderMetaMap.get(orderId) ?? { isDineIn: true, isCustomerApp: false }
+
+    let existing = itemAggMap.get(itemId)
+    if (!existing) {
+      const itemName = menuItem ? String(menuItem['ITEM_NAME'] || 'Unknown Item') : 'Unknown Item'
+      const itemPrice = menuItem ? Number(menuItem['ITEM_PRICE'] || 0) : 0
+      const categoryObj = menuItem ? (menuItem['Menu_Categories'] as Record<string, unknown> | null) : null
+      const categoryName = categoryObj ? String(categoryObj['CATEGORY_NAME']) : 'Uncategorized'
+
+      existing = {
+        id: itemId,
+        name: itemName,
+        category: categoryName,
+        unitPrice: itemPrice,
+        isAvailable: true,
+        qty: 0,
+        revenue: 0,
+        orderIds: new Set<number>(),
+        dineInCount: 0,
+        takeoutCount: 0,
+        customerAppCount: 0,
+        cashierCount: 0,
+      }
+      itemAggMap.set(itemId, existing)
+    }
+
+    existing.qty += 1
+    existing.revenue += existing.unitPrice || (menuItem ? Number(menuItem['ITEM_PRICE'] || 0) : 0)
+    if (orderId) existing.orderIds.add(orderId)
+    if (orderMeta.isDineIn) existing.dineInCount += 1
+    else existing.takeoutCount += 1
+    if (orderMeta.isCustomerApp) existing.customerAppCount += 1
+    else existing.cashierCount += 1
+  }
+
+  const allRankedItems: ItemSalesStat[] = Array.from(itemAggMap.values()).map((val) => ({
+    itemId: val.id,
+    itemName: val.name,
+    categoryName: val.category,
+    unitPrice: val.unitPrice,
+    quantity: val.qty,
+    revenue: val.revenue,
+    percentageOfSales: itemsSoldCount > 0 ? Math.round((val.qty / itemsSoldCount) * 1000) / 10 : 0,
+    percentageOfRevenue: totalRevenue > 0 ? Math.round((val.revenue / totalRevenue) * 1000) / 10 : 0,
+    orderCount: val.orderIds.size,
+    dineInCount: val.dineInCount,
+    takeoutCount: val.takeoutCount,
+    customerAppCount: val.customerAppCount,
+    cashierCount: val.cashierCount,
+    isAvailable: val.isAvailable,
+  }))
+
+  // Top Items: items with sales > 0 sorted descending by quantity, then revenue
+  const topItems: ItemSalesStat[] = allRankedItems
+    .filter((item) => item.quantity > 0)
     .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
-    .slice(0, 10)
+
+  // Least Items: items sorted ascending by quantity, then revenue (0 sales first, then 1, 2, etc.)
+  const leastItems: ItemSalesStat[] = [...allRankedItems]
+    .sort((a, b) => a.quantity - b.quantity || a.revenue - b.revenue)
+
+  // All Items: sorted descending by sales
+  const allItems: ItemSalesStat[] = [...allRankedItems]
+    .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
 
   const topItem = topItems.length > 0 ? topItems[0] : null
 
@@ -678,6 +806,8 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
 
     timeSeries,
     topItems,
+    leastItems,
+    allItems,
     categoryStats,
     statusBreakdown,
     orderTypeBreakdown,

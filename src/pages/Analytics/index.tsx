@@ -590,18 +590,27 @@ export default function AnalyticsPage() {
 
           {/* Section 9 & 10: Top Selling Items & Category Performance */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Top Items */}
+            {/* Menu Item Performance (Most & Least Selling) */}
             <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-xs">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Award className="w-4 h-4 text-[#14274E]" />
                   <h2 className="text-sm font-black text-[#14274E] uppercase tracking-wider">
-                    Top-Selling Menu Items
+                    Menu Item Performance
                   </h2>
                 </div>
-                <span className="text-[11px] font-bold text-slate-400">Top {summary.topItems.length} items</span>
+                <span className="text-[11px] font-bold text-slate-400">
+                  {summary.allItems?.length ?? summary.topItems.length} items tracked
+                </span>
               </div>
-              <TopItemsChart items={summary.topItems} />
+              <TopItemsChart
+                items={summary.topItems}
+                topItems={summary.topItems}
+                leastItems={summary.leastItems}
+                allItems={summary.allItems}
+                totalRevenue={summary.revenue}
+                totalItemsSold={summary.itemsSold}
+              />
             </div>
 
             {/* Category Performance */}
