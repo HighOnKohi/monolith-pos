@@ -33,6 +33,10 @@ function mapCategory(row: Record<string, unknown>, count: number): Category {
   }
 }
 
+let cachedBestSellerIds: Set<string> | null = null
+let lastBestSellerFetchTime = 0
+const BEST_SELLER_CACHE_TTL = 15 * 60 * 1000 // 15 minutes
+
 export async function fetchMenuItems(): Promise<MenuItem[]> {
   const { data, error } = await supabase
     .from('Menu_Items')
@@ -44,43 +48,54 @@ export async function fetchMenuItems(): Promise<MenuItem[]> {
 
   // Determine best sellers per category using Order_Items sales volume
   try {
-    const { data: orderItemsData } = await supabase
-      .from('Order_Items')
-      .select('ITEM_ID, QUANTITY')
+    const isCacheValid = cachedBestSellerIds && (Date.now() - lastBestSellerFetchTime < BEST_SELLER_CACHE_TTL)
+    let bestSellerIds = cachedBestSellerIds
 
-    // Sum sales volume by item ID
-    const salesMap = (orderItemsData ?? []).reduce<Record<string, number>>((acc, row) => {
-      const id = String(row['ITEM_ID'])
-      const qty = Number(row['QUANTITY'] ?? 1)
-      acc[id] = (acc[id] ?? 0) + (isNaN(qty) ? 1 : qty)
-      return acc
-    }, {})
+    if (!isCacheValid) {
+      const { data: orderItemsData } = await supabase
+        .from('Order_Items')
+        .select('ITEM_ID, QUANTITY')
+        .order('ORDER_ITEM_ID', { ascending: false })
+        .limit(500)
 
-    // Group items by category
-    const categoryGroups = rawItems.reduce<Record<string, MenuItem[]>>((acc, item) => {
-      if (!acc[item.categoryId]) acc[item.categoryId] = []
-      acc[item.categoryId].push(item)
-      return acc
-    }, {})
+      // Sum sales volume by item ID
+      const salesMap = (orderItemsData ?? []).reduce<Record<string, number>>((acc, row) => {
+        const id = String(row['ITEM_ID'])
+        const qty = Number(row['QUANTITY'] ?? 1)
+        acc[id] = (acc[id] ?? 0) + (isNaN(qty) ? 1 : qty)
+        return acc
+      }, {})
 
-    // Pick top-selling item(s) for each category
-    const bestSellerIds = new Set<string>()
-    for (const [, catItems] of Object.entries(categoryGroups)) {
-      if (catItems.length === 0) continue
+      // Group items by category
+      const categoryGroups = rawItems.reduce<Record<string, MenuItem[]>>((acc, item) => {
+        if (!acc[item.categoryId]) acc[item.categoryId] = []
+        acc[item.categoryId].push(item)
+        return acc
+      }, {})
 
-      // Sort category items by sales descending; if tied, keep original order
-      const sorted = [...catItems].sort((a, b) => {
-        const salesA = salesMap[a.id] ?? 0
-        const salesB = salesMap[b.id] ?? 0
-        return salesB - salesA
-      })
+      // Pick top-selling item(s) for each category
+      const newBestSellerIds = new Set<string>()
+      for (const [, catItems] of Object.entries(categoryGroups)) {
+        if (catItems.length === 0) continue
 
-      // Top item in this category is the best seller
-      bestSellerIds.add(sorted[0].id)
+        // Sort category items by sales descending; if tied, keep original order
+        const sorted = [...catItems].sort((a, b) => {
+          const salesA = salesMap[a.id] ?? 0
+          const salesB = salesMap[b.id] ?? 0
+          return salesB - salesA
+        })
+
+        // Top item in this category is the best seller
+        newBestSellerIds.add(sorted[0].id)
+      }
+
+      cachedBestSellerIds = newBestSellerIds
+      lastBestSellerFetchTime = Date.now()
+      bestSellerIds = newBestSellerIds
     }
 
     return rawItems.map((item) => {
-      const isBest = bestSellerIds.has(item.id)
+      const isBest = bestSellerIds?.has(item.id) ?? false
       return {
         ...item,
         isBestSeller: isBest,

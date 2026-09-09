@@ -62,11 +62,6 @@ export default function KitchenPage() {
   useEffect(() => {
     loadOrders(false)
 
-    // Constantly fetch updates in background every 2500ms
-    const interval = setInterval(() => {
-      loadOrders(true)
-    }, 2500)
-
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         loadOrders(true)
@@ -95,7 +90,6 @@ export default function KitchenPage() {
       .subscribe()
 
     return () => {
-      clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       supabase.removeChannel(channel)
     }

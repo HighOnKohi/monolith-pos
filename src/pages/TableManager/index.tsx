@@ -1019,12 +1019,8 @@ export default function TableManagerPage() {
     void loadAll()
   }, [loadAll])
 
-  // ── Background polling (5s, guarded against mutation in-flight) ──
+  // ── Realtime subscriptions & visibility sync ──
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (!isMutatingRef.current && document.visibilityState === 'visible') void loadAll()
-    }, 5000)
-
     const handleVisibility = () => {
       if (document.visibilityState === 'visible' && !isMutatingRef.current) void loadAll()
     }
@@ -1077,6 +1073,25 @@ export default function TableManagerPage() {
       })
       .on(
         'postgres_changes',
+        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        async (payload) => {
+          const newRow = payload.new as Record<string, unknown> | null
+          const oldRow = payload.old as Record<string, unknown> | null
+          const targetTableId = Number(newRow?.['TABLE_ID'] || oldRow?.['TABLE_ID'])
+          if (targetTableId) {
+            const summaries = await fetchOrderSummariesForIds([targetTableId])
+            setOrderSummaries((prev) => {
+              const next = new Map(prev)
+              const s = summaries.get(targetTableId)
+              if (s) next.set(targetTableId, s)
+              else next.delete(targetTableId)
+              return next
+            })
+          }
+        },
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'Bill_Requests' },
         () => {
           void fetchAllBillRequests().then(setBillRequests)
@@ -1099,7 +1114,6 @@ export default function TableManagerPage() {
       .subscribe()
 
     return () => {
-      clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibility)
       void supabase.removeChannel(channel)
     }

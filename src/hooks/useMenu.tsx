@@ -70,7 +70,6 @@ function useMenuState(enabled: boolean): UseMenuResult {
       )
       .subscribe()
 
-    const interval = setInterval(() => loadIfActive(false), 5000)
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') loadIfActive(false)
     }
@@ -78,7 +77,6 @@ function useMenuState(enabled: boolean): UseMenuResult {
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => {
       cancelled = true
-      clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       void supabase.removeChannel(channel)
     }

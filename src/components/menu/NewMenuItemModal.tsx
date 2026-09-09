@@ -1,15 +1,16 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ImagePlus, Replace, Trash2, X } from 'lucide-react'
 import type { Category, DietaryType, MenuItem } from '@/types/menu'
+import { uploadMenuItemImage } from '@/services/storageService'
 
 export interface NewMenuItemForm {
-  imageUrl: string
+  imageUrl?: string
   name: string
   categoryId: string
   dietaryType: DietaryType
   price: number
   isAvailable: boolean
-  description: string
+  description?: string
 }
 
 interface NewMenuItemModalProps {
@@ -36,6 +37,8 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
     imageUrl: '', name: '', categoryId: defaultCategoryId ?? '',
     dietaryType: 'veg' as DietaryType, priceRaw: '', isAvailable: true, description: '',
   })
+  const [imageFile, setImageFile]     = useState<File | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; price?: string }>({})
   const [isSaving, setIsSaving]       = useState(false)
   const [error, setError]             = useState<string | null>(null)
@@ -59,47 +62,48 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
 
   useEffect(() => {
     if (!isOpen) return
+    setError(null)
+    setFieldErrors({})
+    setUploadError(null)
+
     if (editItem) {
       setForm({
         imageUrl:    editItem.imageUrl ?? '',
         name:        editItem.name,
         categoryId:  editItem.categoryId,
         dietaryType: editItem.dietaryType,
-        priceRaw:    editItem.price > 0 ? editItem.price.toLocaleString() : '',
+        priceRaw:    editItem.price > 0 ? editItem.price.toString() : '',
         isAvailable: editItem.isAvailable,
         description: editItem.description ?? '',
       })
+      setImageFile(null)
     } else {
       setForm({
         imageUrl: '', name: '',
         categoryId:  defaultCategoryId ?? firstCategoryId,
         dietaryType: 'veg', priceRaw: '', isAvailable: true, description: '',
       })
+      setImageFile(null)
     }
-    setFieldErrors({})
-    setError(null)
-    setUploadError(null)
-    setCatOpen(false)
-    setCatVisible(false)
   }, [isOpen, editItem, defaultCategoryId, firstCategoryId])
 
   if (!isOpen) return null
 
-  function update(field: keyof typeof form, value: string | boolean) {
+  function update<K extends keyof typeof form>(field: K, value: (typeof form)[K]) {
     setForm((cur) => ({ ...cur, [field]: value }))
     if (field === 'name')  setFieldErrors((e) => ({ ...e, name: undefined }))
     if (field === 'priceRaw') setFieldErrors((e) => ({ ...e, price: undefined }))
   }
 
   function readImage(file: File) {
-    if (!['image/jpeg', 'image/png'].includes(file.type)) {
-      setUploadError('Choose a JPG or PNG image.')
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setUploadError('Choose a JPG, PNG, or WEBP image.')
       return
     }
     setUploadError(null)
-    const reader = new FileReader()
-    reader.onload = () => update('imageUrl', typeof reader.result === 'string' ? reader.result : '')
-    reader.readAsDataURL(file)
+    setImageFile(file)
+    const localPreview = URL.createObjectURL(file)
+    update('imageUrl', localPreview)
   }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -128,8 +132,15 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
     setIsSaving(true)
     setError(null)
     try {
+      let finalImageUrl = form.imageUrl
+
+      if (imageFile) {
+        setIsUploading(true)
+        finalImageUrl = await uploadMenuItemImage(imageFile, form.name || 'dish')
+      }
+
       await onSubmit({
-        imageUrl:    form.imageUrl,
+        imageUrl:    finalImageUrl?.trim() || undefined,
         name:        form.name.trim(),
         categoryId:  form.categoryId,
         dietaryType: form.dietaryType,
@@ -142,6 +153,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
       setError(err instanceof Error ? err.message : 'Something went wrong.')
     } finally {
       setIsSaving(false)
+      setIsUploading(false)
     }
   }
 
@@ -179,13 +191,13 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
                     <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isSaving}>
                       <Replace className="h-4 w-4" />Replace
                     </button>
-                    <button type="button" onClick={() => update('imageUrl', '')} disabled={isSaving}>
+                    <button type="button" onClick={() => { update('imageUrl', ''); setImageFile(null) }} disabled={isSaving}>
                       <Trash2 className="h-4 w-4" />Remove
                     </button>
                   </div>
                 )}
               </div>
-              <input ref={fileInputRef} className="menu-image-file-input" type="file" accept="image/jpeg,image/png" onChange={handleFileChange} disabled={isSaving} />
+              <input ref={fileInputRef} className="menu-image-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={handleFileChange} disabled={isSaving} />
               {uploadError && <small className="menu-modal-error" role="alert">{uploadError}</small>}
             </div>
 
@@ -277,7 +289,11 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         <footer className="menu-modal-footer">
           <button type="button" className="menu-modal-cancel" onClick={onClose} disabled={isSaving}>Cancel</button>
           <button type="submit" className="menu-modal-submit" disabled={isSaving}>
-            {isSaving ? (isEditMode ? 'Saving...' : 'Adding...') : (isEditMode ? 'Save changes' : 'Add dish')}
+            {isUploading
+              ? 'Uploading image...'
+              : isSaving
+                ? (isEditMode ? 'Saving...' : 'Adding...')
+                : (isEditMode ? 'Save changes' : 'Add dish')}
           </button>
         </footer>
       </form>

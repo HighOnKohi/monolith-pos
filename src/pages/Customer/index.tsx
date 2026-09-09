@@ -86,8 +86,7 @@ export default function CustomerPage() {
       )
       .subscribe()
 
-    // Background poll every 8 seconds when visible
-    const interval = setInterval(async () => {
+    const handleVisibilityChange = async () => {
       if (document.visibilityState !== 'visible') return
       try {
         const { data } = await supabase
@@ -103,10 +102,11 @@ export default function CustomerPage() {
       } catch {
         // Ignore network hiccups during background sync
       }
-    }, 8000)
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
-      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       supabase.removeChannel(channel)
     }
   }, [parsedTableId])

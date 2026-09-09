@@ -137,17 +137,11 @@ export function useOrders(
     }
   }, [tableId, targetTableIds, applyFetchedOrders])
 
-  // Initial fetch + Constant background polling (every 5s) + Visibility sync
+  // Initial fetch + Visibility sync
   useEffect(() => {
     if (!tableId || targetTableIds.length === 0) return
 
     refreshOrders()
-
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        refreshOrders()
-      }
-    }, 5000)
 
     // Immediate sync when tab becomes visible again
     const handleVisibilityChange = () => {
@@ -158,7 +152,6 @@ export function useOrders(
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
-      clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [tableId, targetTableIds, refreshOrders])

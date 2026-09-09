@@ -204,13 +204,6 @@ export default function CashierPage() {
   useEffect(() => {
     loadInitialData()
 
-    // Constant background polling every 5000ms when visible
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        loadInitialData()
-      }
-    }, 5000)
-
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         loadInitialData()
@@ -256,7 +249,7 @@ export default function CashierPage() {
 
     // Realtime subscription for Assistance broadcasts
     const assistanceChannel = supabase
-      .channel('cashier-assistance-sync')
+      .channel('table-assistance')
       .on('broadcast', { event: 'assistance_request' }, (payload) => {
         if (payload?.payload) {
           recordAssistanceRequest(payload.payload as AssistanceRequest)
@@ -272,7 +265,6 @@ export default function CashierPage() {
       .subscribe()
 
     return () => {
-      clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       supabase.removeChannel(billChannel)
       supabase.removeChannel(ordersChannel)

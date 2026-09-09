@@ -63,8 +63,7 @@ export async function fetchKitchenOrders(): Promise<KitchenOrder[]> {
           Menu_Items (
             ITEM_ID,
             ITEM_NAME,
-            ITEM_PRICE,
-            ITEM_IMAGE_URL
+            ITEM_PRICE
           )
         )
       `)

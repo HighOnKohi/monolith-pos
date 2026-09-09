@@ -109,13 +109,17 @@ export async function sendAssistanceRequest(
     const channel = supabase.channel('table-assistance')
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        channel.send({
+        void channel.send({
           type: 'broadcast',
           event: 'assistance_request',
           payload: {
             ...request,
             tableIds: targetIds,
           },
+        }).then(() => {
+          setTimeout(() => {
+            void supabase.removeChannel(channel)
+          }, 1500)
         })
       }
     })
@@ -183,13 +187,17 @@ export async function resolveTableAssistance(tableId: number): Promise<number[]>
     const channel = supabase.channel('table-assistance')
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        channel.send({
+        void channel.send({
           type: 'broadcast',
           event: 'assistance_resolved',
           payload: {
             tableId,
             tableIds: targetIds,
           },
+        }).then(() => {
+          setTimeout(() => {
+            void supabase.removeChannel(channel)
+          }, 1500)
         })
       }
     })

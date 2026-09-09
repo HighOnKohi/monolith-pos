@@ -10,8 +10,10 @@ import {
   Utensils,
   CheckCircle2,
   Loader2,
+  Upload,
 } from 'lucide-react'
 import { updateMenuItem } from '@/services/menuService'
+import { uploadMenuItemImage } from '@/services/storageService'
 import type { MenuItem, Category, DietaryType } from '@/types/menu'
 
 interface MenuItemEditSidebarProps {
@@ -40,10 +42,12 @@ export function MenuItemEditSidebar({
 
   // ── UI States ──
   const [isSaving, setIsSaving] = useState(false)
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [validationErrors, setValidationErrors] = useState<{ name?: string; price?: string; category?: string }>({})
 
   const panelRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Populate form values whenever the selected item changes
   useEffect(() => {
@@ -134,6 +138,23 @@ export function MenuItemEditSidebar({
       setErrorMessage(message)
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setIsUploadingImage(true)
+    setErrorMessage(null)
+    try {
+      const publicUrl = await uploadMenuItemImage(file, name || 'dish')
+      setImageUrl(publicUrl)
+    } catch (err: unknown) {
+      console.error('[MenuItemEditSidebar] Image upload failed:', err)
+      setErrorMessage(err instanceof Error ? err.message : 'Image upload failed.')
+    } finally {
+      setIsUploadingImage(false)
+      e.target.value = ''
     }
   }
 
@@ -334,31 +355,70 @@ export function MenuItemEditSidebar({
 
           {/* Image URL with Preview */}
           <div className="menu-edit-field">
-            <label htmlFor="dish-image" className="menu-edit-label">
-              <ImageIcon className="h-3.5 w-3.5 text-[#9BA4B4]" />
-              <span>Image URL</span>
-            </label>
+            <div className="flex items-center justify-between">
+              <label htmlFor="dish-image" className="menu-edit-label mb-0">
+                <ImageIcon className="h-3.5 w-3.5 text-[#9BA4B4]" />
+                <span>Image URL</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isSaving || isUploadingImage}
+                className="flex items-center gap-1 text-xs font-semibold text-[#3F72AF] hover:underline disabled:opacity-50"
+              >
+                {isUploadingImage ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <span>Uploading...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-3 w-3" />
+                    <span>Upload File</span>
+                  </>
+                )}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleFileSelect}
+                className="hidden"
+                disabled={isSaving || isUploadingImage}
+              />
+            </div>
             <input
               id="dish-image"
               type="url"
               value={imageUrl}
               onChange={(e) => setImageUrl(e.target.value)}
               placeholder="https://..."
-              className="menu-edit-input"
-              disabled={isSaving}
+              className="menu-edit-input mt-1.5"
+              disabled={isSaving || isUploadingImage}
             />
 
             {/* Thumbnail preview */}
             <div className="menu-edit-image-preview mt-2">
               {imageUrl ? (
-                <img
-                  src={imageUrl}
-                  alt={name || 'Preview'}
-                  className="h-24 w-full object-cover rounded-lg border border-[#9BA4B4]/20"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLElement).style.display = 'none'
-                  }}
-                />
+                <div className="relative group">
+                  <img
+                    src={imageUrl}
+                    alt={name || 'Preview'}
+                    className="h-24 w-full object-cover rounded-lg border border-[#9BA4B4]/20"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLElement).style.display = 'none'
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setImageUrl('')}
+                    disabled={isSaving}
+                    className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/60 text-white hover:bg-red-600 transition-colors text-xs opacity-0 group-hover:opacity-100"
+                    title="Remove image"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               ) : (
                 <div className="flex h-20 w-full items-center justify-center rounded-lg border border-dashed border-[#9BA4B4]/40 bg-[#F1F6F9] text-xs text-[#9BA4B4]">
                   No image preview available

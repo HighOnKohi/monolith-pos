@@ -252,13 +252,6 @@ export function useTableGroup(tableId: number | null) {
       )
       .subscribe()
 
-    // Background poll every 8 seconds as safety net
-    const pollInterval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        loadGroup()
-      }
-    }, 8000)
-
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         loadGroup()
@@ -268,7 +261,6 @@ export function useTableGroup(tableId: number | null) {
 
     return () => {
       isMountedRef.current = false
-      clearInterval(pollInterval)
       document.removeEventListener('visibilitychange', handleVisibility)
       supabase.removeChannel(channel)
     }
