@@ -51,6 +51,7 @@ export default function CustomerPage() {
   const [isBillOutOpen, setIsBillOutOpen] = useState(false)
   const [isAssistOpen, setIsAssistOpen] = useState(false)
   const [activeAssistance, setActiveAssistance] = useState<AssistanceRequest | null>(null)
+  const [isCartExpanded, setIsCartExpanded] = useState(false)
 
   // Initialize cached assistance state & Realtime assistance resolution subscription
   useEffect(() => {
@@ -141,6 +142,13 @@ export default function CustomerPage() {
   } = useOrders(effectiveAnchorId, memberTableIds)
   const { billRequest, isRequesting: isRequestingBill, requestBill } = useBillRequest(effectiveAnchorId, memberTableIds)
 
+  // Auto-collapse cart drawer if all items were removed
+  useEffect(() => {
+    if (itemCount === 0) {
+      setIsCartExpanded(false)
+    }
+  }, [itemCount])
+
   // We maintain a local copy of menu items to apply realtime updates without triggering a full re-fetch
   const liveItems = items
 
@@ -210,6 +218,7 @@ export default function CustomerPage() {
       const success = await placeOrder(cartItems, diningType, total, serverNote)
       if (success) {
         clearCart()
+        setIsCartExpanded(false)
         handleTabChange('orders')
       }
     } finally {
@@ -261,6 +270,8 @@ export default function CustomerPage() {
               onOpenOrders={() => handleTabChange('orders')}
               activeOrderCount={activeOrderCount}
               hasOrderStatusChange={hasUnreadStatusChange}
+              cartItemCount={itemCount}
+              onOpenCart={() => setIsCartExpanded(true)}
             />
             <SearchBar
               value={searchQuery}
@@ -296,6 +307,8 @@ export default function CustomerPage() {
               onOpenOrders={() => handleTabChange('orders')}
               activeOrderCount={activeOrderCount}
               hasOrderStatusChange={hasUnreadStatusChange}
+              cartItemCount={itemCount}
+              onOpenCart={() => setIsCartExpanded(true)}
             />
           </div>
           <ActiveOrders
@@ -350,16 +363,24 @@ export default function CustomerPage() {
         />
       )}
 
-      {/* Floating Place Order Holder - appears above the nav bar whenever items are selected */}
+      {/* Expandable Cart Summary & Drawer */}
       <CartSummary
+        items={cartItems}
         itemCount={itemCount}
         total={total}
         diningType={diningType}
         onDiningTypeChange={setDiningType}
         onPlaceOrder={handlePlaceOrder}
         onClear={clearCart}
+        onIncreaseQty={increaseQty}
+        onDecreaseQty={decreaseQty}
+        onRemoveItem={removeItem}
+        onUpdateNotes={updateNotes}
         isSubmitting={isSubmittingOrder}
         isLockedByOther={isLockedByOther}
+        isExpanded={isCartExpanded}
+        onToggleExpand={() => setIsCartExpanded((prev) => !prev)}
+        onClose={() => setIsCartExpanded(false)}
       />
 
       {/* Mobile Bottom Navigation - permanent at bottom of page overlapping content */}

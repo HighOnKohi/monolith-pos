@@ -1,6 +1,6 @@
 import logo from '@/assets/images/monolith-logo-nobg.png'
 import { TableBadge } from './TableBadge'
-import { BellRing, ReceiptText } from 'lucide-react'
+import { BellRing, ReceiptText, ShoppingBag } from 'lucide-react'
 
 interface CustomerHeaderProps {
   tableLabel: string
@@ -9,6 +9,8 @@ interface CustomerHeaderProps {
   onOpenOrders?: () => void
   activeOrderCount?: number
   hasOrderStatusChange?: boolean
+  cartItemCount?: number
+  onOpenCart?: () => void
 }
 
 export function CustomerHeader({
@@ -18,6 +20,8 @@ export function CustomerHeader({
   onOpenOrders,
   activeOrderCount = 0,
   hasOrderStatusChange = false,
+  cartItemCount = 0,
+  onOpenCart,
 }: CustomerHeaderProps) {
   return (
     <div className="flex items-center justify-between px-3 sm:px-4 pt-3 sm:pt-4 pb-2.5 sm:pb-3 bg-[#F1F6F9] w-full max-w-full min-w-0 gap-2">
@@ -36,8 +40,21 @@ export function CustomerHeader({
         </div>
       </div>
 
-      {/* Right controls: Orders + Assist + Table badge */}
+      {/* Right controls: Cart + Orders + Assist + Table badge */}
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {onOpenCart && cartItemCount > 0 && (
+          <button
+            onClick={onOpenCart}
+            className="p-1.5 sm:p-2 rounded-full border border-[#14274E]/20 bg-white text-[#14274E] hover:bg-[#F1F6F9] transition-all duration-150 flex items-center justify-center relative active:scale-95 cursor-pointer shrink-0 shadow-2xs"
+            title="View Current Cart"
+            aria-label="View Current Cart"
+          >
+            <ShoppingBag className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#14274E]" />
+            <span className="absolute -top-1 -right-1 bg-[#E9C46A] text-[#14274E] text-[9px] font-black w-4 h-4 flex items-center justify-center rounded-full ring-2 ring-white shadow-xs">
+              {cartItemCount}
+            </span>
+          </button>
+        )}
         {onOpenOrders && (
           <button
             onClick={onOpenOrders}
