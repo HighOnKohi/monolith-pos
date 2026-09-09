@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import {
   X,
   Users,
@@ -10,13 +10,7 @@ import {
   LayoutGrid,
   ChefHat,
   Sparkles,
-  ArrowRight,
   Info,
-  Layers,
-  AlertTriangle,
-  Coffee,
-  Sun,
-  Moon,
 } from 'lucide-react'
 import type { AnalyticsSummary } from '@/services/analyticsService'
 
@@ -571,7 +565,6 @@ function computeDynamicSpendInsights(summary: AnalyticsSummary) {
     summary.averageSpendPerCustomer ??
     (summary.customersServed ? summary.revenue / summary.customersServed : 0)
   const totalDiners = summary.customersServed ?? Math.max(1, Math.round(summary.completedOrders * 1.8))
-  const aov = summary.averageOrderValue
 
   // Compute dynamic upsell targets based on current spending
   const upsellTarget = Math.max(80, Math.round((avgSpend * 0.15) / 10) * 10)
