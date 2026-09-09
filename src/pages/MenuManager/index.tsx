@@ -27,6 +27,7 @@ export default function MenuManagerPage() {
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
   const [availabilitySaving, setAvailabilitySaving] = useState<string | null>(null)
+  const [menuAnimationKey, setMenuAnimationKey] = useState(0)
 
   // Confirm modal state
   const [confirmState, setConfirmState] = useState<{
@@ -144,6 +145,7 @@ export default function MenuManagerPage() {
 
   async function submitDish(form: NewMenuItemForm) {
     await createMenuItem(form)
+    setMenuAnimationKey((key) => key + 1)
     reload()
     showToast(`Added "${form.name}".`, 'success')
   }
@@ -203,11 +205,9 @@ export default function MenuManagerPage() {
                       <div className="menu-item-category-hover-panel">
                         <button type="button" title="Edit category" onClick={() => { setEditingCategory(cat); setCategoryModalOpen(true) }}>
                           <Edit2 className="menu-item-category-action-icon" />
-                          <span>Edit</span>
                         </button>
                         <button type="button" title="Delete category" onClick={() => handleDeleteCategory(cat)}>
                           <Trash2 className="menu-item-category-action-icon" />
-                          <span>Delete</span>
                         </button>
                       </div>
                     )}
@@ -234,24 +234,18 @@ export default function MenuManagerPage() {
             </div>
           )}
           {(loadState === 'loaded' || loadState === 'empty') && (
-            <div className="menu-item-card-grid-content" key={activeCat}>
+            <div className="menu-item-card-grid-content" key={`${activeCat}-${menuAnimationKey}`}>
               {paginated.map((item) => (
                 <div
                   key={item.id}
                   className={[
                     'menu-item-card-container relative flex flex-col rounded-xl border bg-white overflow-hidden transition-all cursor-pointer',
                     selectedItem?.id === item.id
-                      ? 'border-[#14274E] ring-2 ring-[#14274E]/30 shadow-md'
+                      ? 'selected border-[#14274E] ring-2 ring-[#14274E]/30 shadow-md'
                       : 'border-[#9BA4B4]/20 hover:border-[#14274E]/30',
                   ].join(' ')}
                   onClick={() => setSelectedItem(item)}
                 >
-                  {selectedItem?.id === item.id && (
-                    <div className="absolute top-2 left-2 z-10 rounded-md bg-[#14274E] px-2 py-0.5 text-[10px] font-bold text-white shadow">
-                      Selected
-                    </div>
-                  )}
-
                   {/* Sold out status badge */}
                   {item.isSoldOut && (
                     <div className="absolute top-2 right-2 z-10 rounded-md bg-[#C94A4A] px-2 py-0.5 text-[10px] font-bold text-white shadow">
@@ -269,7 +263,7 @@ export default function MenuManagerPage() {
                   </div>
 
                   {/* Info */}
-                  <div className="flex flex-col gap-1 p-2.5">
+                  <div className="flex flex-col gap-1 pt-2">
                     <p className="menu-item-name text-sm font-semibold text-[#14274E] line-clamp-2">{item.name}</p>
                     <div className="flex items-center justify-between">
                       <span className="menu-item-price text-sm font-bold text-[#14274E]">₱{item.price.toFixed(2)}</span>
