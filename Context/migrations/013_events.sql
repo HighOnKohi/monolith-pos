@@ -1,6 +1,6 @@
 -- Migration 013: Restaurant Events
 -- Description: Creates the Restaurant_Events table for managing scheduled events.
--- Status (Scheduled/Ongoing/Completed) is derived at application layer from timestamps.
+-- Status (Scheduled/Ongoing/Completed) is derived at application layer from timestamps
 -- Only IS_CANCELLED is persisted for user-set cancellations
 
 CREATE TABLE IF NOT EXISTS public."Restaurant_Events" (
