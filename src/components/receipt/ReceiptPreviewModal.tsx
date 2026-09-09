@@ -1,7 +1,7 @@
 import React from 'react'
 import { Printer, X, CheckCircle } from 'lucide-react'
 import type { ReceiptSnapshot } from './types'
-import { triggerPrint } from './receiptPrinter'
+import { triggerPrint, BUSINESS_NAME, BUSINESS_TAGLINE, RECEIPT_LABEL } from './receiptPrinter'
 
 interface ReceiptPreviewModalProps {
   receipt: ReceiptSnapshot
@@ -59,9 +59,9 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({ receip
 
             {/* Business Header */}
             <div className="receipt-header">
-              <div className="receipt-biz-name">Monolith Restaurant</div>
-              <div className="receipt-biz-tagline">Point of Sale System</div>
-              <div className="receipt-label-text">Official Dining Receipt</div>
+              <div className="receipt-biz-name">{BUSINESS_NAME}</div>
+              <div className="receipt-biz-tagline">{BUSINESS_TAGLINE}</div>
+              <div className="receipt-label-text">{RECEIPT_LABEL}</div>
             </div>
 
             <div className="receipt-sep-dashed" />
