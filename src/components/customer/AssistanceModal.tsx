@@ -21,6 +21,7 @@ interface AssistanceModalProps {
   onRequestSent: (req: AssistanceRequest) => void
   onRequestCleared: () => void
   onOpenBillOutModal?: () => void
+  canBillOut?: boolean
 }
 
 const ICON_MAP = {
@@ -38,6 +39,7 @@ export function AssistanceModal({
   onRequestSent,
   onRequestCleared,
   onOpenBillOutModal,
+  canBillOut = false,
 }: AssistanceModalProps) {
   const [selectedType, setSelectedType] = useState<AssistanceType>('WATER')
   const [notes, setNotes] = useState('')
@@ -51,10 +53,16 @@ export function AssistanceModal({
     }
 
     // If BILL_OUT, user might prefer the dedicated bill out payment modal
-    if (selectedType === 'BILL_OUT' && onOpenBillOutModal) {
-      onClose()
-      onOpenBillOutModal()
-      return
+    if (selectedType === 'BILL_OUT') {
+      if (!canBillOut) {
+        setErrorMessage('Bill out is available once all dishes are served.')
+        return
+      }
+      if (onOpenBillOutModal) {
+        onClose()
+        onOpenBillOutModal()
+        return
+      }
     }
 
     setIsSubmitting(true)
@@ -148,34 +156,58 @@ export function AssistanceModal({
             {ASSISTANCE_OPTIONS.map((opt) => {
               const Icon = ICON_MAP[opt.icon as keyof typeof ICON_MAP] || MessageSquare
               const isSelected = selectedType === opt.type
+              const isBillOut = opt.type === 'BILL_OUT'
+              const isDisabled = isBillOut && !canBillOut
+
               return (
                 <button
                   key={opt.type}
                   type="button"
-                  onClick={() => setSelectedType(opt.type)}
+                  disabled={isDisabled}
+                  onClick={() => {
+                    if (isDisabled) return
+                    setSelectedType(opt.type)
+                  }}
+                  title={isDisabled ? 'Bill out available once all dishes are served' : undefined}
                   className={[
-                    'p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-start gap-3 interactive-card cursor-pointer',
-                    isSelected
-                      ? 'border-[#14274E] bg-[#14274E]/5 ring-2 ring-[#14274E]/20 shadow-xs'
-                      : 'border-[#9BA4B4]/30 hover:border-[#14274E]/40 bg-white shadow-2xs',
+                    'p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-start gap-3',
+                    isDisabled
+                      ? 'opacity-40 bg-[#F1F6F9]/80 border-[#9BA4B4]/20 cursor-not-allowed select-none'
+                      : isSelected
+                      ? 'border-[#14274E] bg-[#14274E]/5 ring-2 ring-[#14274E]/20 shadow-xs interactive-card cursor-pointer'
+                      : 'border-[#9BA4B4]/30 hover:border-[#14274E]/40 bg-white shadow-2xs interactive-card cursor-pointer',
                   ].join(' ')}
                 >
                   <div
                     className={[
                       'w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors',
-                      isSelected
+                      isDisabled
+                        ? 'bg-[#9BA4B4]/15 text-[#9BA4B4]'
+                        : isSelected
                         ? 'bg-[#14274E] text-[#E9C46A]'
                         : 'bg-[#F1F6F9] text-[#14274E]',
                     ].join(' ')}
                   >
                     <Icon className="w-5 h-5" />
                   </div>
-                  <div>
-                    <span className="text-sm font-extrabold text-[#14274E] block">
-                      {opt.title}
-                    </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span
+                        className={[
+                          'text-sm font-extrabold block truncate',
+                          isDisabled ? 'text-[#9BA4B4]' : 'text-[#14274E]',
+                        ].join(' ')}
+                      >
+                        {opt.title}
+                      </span>
+                      {isDisabled && (
+                        <span className="text-[9px] font-black uppercase tracking-wider bg-[#9BA4B4]/15 text-[#9BA4B4] px-1.5 py-0.5 rounded-md shrink-0">
+                          Unavailable
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[11px] text-[#9BA4B4] leading-tight block mt-0.5 line-clamp-2">
-                      {opt.description}
+                      {isDisabled ? 'Available once all active dishes are served' : opt.description}
                     </span>
                   </div>
                 </button>

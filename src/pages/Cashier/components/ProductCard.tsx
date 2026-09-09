@@ -52,8 +52,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             </span>
           )}
           {item.isSoldOut && (
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white shadow-xs">
-              Out of Stock
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#C94A4A] text-white shadow-xs">
+              SOLD OUT
             </span>
           )}
         </div>

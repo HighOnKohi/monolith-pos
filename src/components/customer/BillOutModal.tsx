@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Banknote, CreditCard, QrCode, Loader2 } from 'lucide-react'
+import { X, Banknote, QrCode, Loader2 } from 'lucide-react'
 import type { PaymentMethod } from '@/types/bill'
 
 interface BillOutModalProps {
@@ -10,7 +10,6 @@ interface BillOutModalProps {
 
 const paymentMethods: { id: PaymentMethod; label: string; icon: typeof Banknote }[] = [
   { id: 'CASH', label: 'Cash', icon: Banknote },
-  { id: 'CREDIT_CARD', label: 'Credit Card', icon: CreditCard },
   { id: 'INSTAPAY_QR', label: 'InstaPay QR', icon: QrCode },
 ]
 

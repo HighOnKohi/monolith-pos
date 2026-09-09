@@ -1,8 +1,12 @@
 import { ArrowRight, Loader2, Lock } from 'lucide-react'
+import type { DiningType } from '@/types/cart'
+import { DiningTypeSelector } from './DiningTypeSelector'
 
 interface CartSummaryProps {
   itemCount: number
   total: number
+  diningType: DiningType
+  onDiningTypeChange: (type: DiningType) => void
   onPlaceOrder: () => void
   onClear?: () => void
   isSubmitting?: boolean
@@ -13,6 +17,8 @@ interface CartSummaryProps {
 export function CartSummary({
   itemCount,
   total,
+  diningType,
+  onDiningTypeChange,
   onPlaceOrder,
   onClear,
   isSubmitting = false,
@@ -34,6 +40,15 @@ export function CartSummary({
             </span>
           </div>
         )}
+
+        {/* Dining Type Selector */}
+        <div className="mb-2.5">
+          <DiningTypeSelector
+            value={diningType}
+            onChange={onDiningTypeChange}
+            disabled={isDisabled}
+          />
+        </div>
 
         <div className="flex items-center justify-between gap-3">
           {/* Order info: Item Count, Clear Action & Pricing */}
