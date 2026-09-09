@@ -9,6 +9,7 @@ import { VERCEL_APP_URL } from '@/components/table-qr/tableQrUtils'
 // ─── Public pages ─────────────────────────────────────────────────────────────
 const LoginPage = lazy(() => import('@/pages/Login'))
 const CustomerPage = lazy(() => import('@/pages/Customer'))
+const AdvanceOrderPage = lazy(() => import('@/pages/AdvanceOrder'))
 const NotFound = lazy(() => import('@/pages/NotFound'))
 
 // ─── Protected pages ──────────────────────────────────────────────────────────
@@ -92,6 +93,14 @@ export const router = createBrowserRouter([
       {
         path: 'customer/:tableId',
         element: <CustomerRouteWrapper />,
+      },
+      {
+        path: 'advance-order',
+        element: wrap(AdvanceOrderPage),
+      },
+      {
+        path: 'advance-order/:token',
+        element: wrap(AdvanceOrderPage),
       },
     ],
   },
