@@ -1,24 +1,30 @@
 import logo from '@/assets/images/monolith-logo-nobg.png'
-import { ShoppingBag, Clock, User, Edit3 } from 'lucide-react'
+import { ShoppingBag, Clock, User, Edit3, RotateCcw } from 'lucide-react'
 
 interface AdvanceOrderHeaderProps {
   customerName?: string
+  diningType?: 'dine-in' | 'take-away'
+  tableNum?: number | null
   onEditName?: () => void
   cartItemCount?: number
   onOpenCart?: () => void
   hasActiveOrder?: boolean
   countdownFormatted?: string
   onOpenOrderTab?: () => void
+  onResetSession?: () => void
 }
 
 export function AdvanceOrderHeader({
   customerName,
+  diningType,
+  tableNum,
   onEditName,
   cartItemCount = 0,
   onOpenCart,
   hasActiveOrder = false,
   countdownFormatted,
   onOpenOrderTab,
+  onResetSession,
 }: AdvanceOrderHeaderProps) {
   return (
     <div className="flex items-center justify-between px-3 sm:px-4 pt-3 sm:pt-4 pb-2.5 sm:pb-3 bg-[#F1F6F9] w-full max-w-full min-w-0 gap-2">
@@ -43,12 +49,21 @@ export function AdvanceOrderHeader({
             <button
               type="button"
               onClick={onEditName}
-              className="group flex items-center gap-1 text-[11px] font-bold text-[#394867] hover:text-[#14274E] transition-colors truncate text-left cursor-pointer"
-              title="Click to edit name"
+              className="group flex items-center gap-1.5 text-[11px] font-bold text-[#394867] hover:text-[#14274E] transition-colors truncate text-left cursor-pointer mt-0.5"
+              title="Click to edit name or table"
             >
-              <User className="w-3 h-3 text-slate-400 group-hover:text-[#14274E]" />
+              <User className="w-3 h-3 text-slate-400 group-hover:text-[#14274E] shrink-0" />
               <span className="truncate">{customerName}</span>
-              {onEditName && <Edit3 className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />}
+              {diningType === 'take-away' ? (
+                <span className="px-1.5 py-0.2 bg-slate-200/80 text-slate-700 text-[10px] font-bold rounded-md shrink-0">
+                  Takeout
+                </span>
+              ) : tableNum ? (
+                <span className="px-1.5 py-0.2 bg-[#14274E]/10 text-[#14274E] text-[10px] font-extrabold rounded-md shrink-0">
+                  Table {tableNum}
+                </span>
+              ) : null}
+              {onEditName && <Edit3 className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />}
             </button>
           ) : (
             <p className="text-[10px] sm:text-xs font-medium text-[#394867] truncate">
@@ -70,6 +85,20 @@ export function AdvanceOrderHeader({
           >
             <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin" style={{ animationDuration: '8s' }} />
             <span className="font-mono text-xs font-black">{countdownFormatted || 'Active'}</span>
+          </button>
+        )}
+
+        {/* Reset Session Debug Button */}
+        {onResetSession && (
+          <button
+            type="button"
+            onClick={onResetSession}
+            className="px-2.5 py-1.5 rounded-xl border border-rose-200/90 bg-rose-50 hover:bg-rose-100/80 text-rose-700 font-extrabold text-[11px] flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-2xs"
+            title="Reset advance order session & clear cache (Debug)"
+          >
+            <RotateCcw className="w-3 h-3 text-rose-600" />
+            <span className="hidden sm:inline">Reset Session</span>
+            <span className="inline sm:hidden">Reset</span>
           </button>
         )}
 

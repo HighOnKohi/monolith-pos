@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import PageLoader from '@/components/common/PageLoader'
 import { SearchBar } from '@/components/customer/SearchBar'
 import type { DietaryFilter } from '@/components/customer/FilterSheet'
@@ -10,6 +10,7 @@ import { CartSummary } from '@/components/customer/CartSummary'
 import { AdvanceOrderHeader } from './components/AdvanceOrderHeader'
 import { CustomerNameGate } from './components/CustomerNameGate'
 import { AdvanceOrderTab } from './components/AdvanceOrderTab'
+import { AdvanceOrderTableModal } from './components/AdvanceOrderTableModal'
 import { AdvanceOrderBottomNav, type AdvanceOrderTabType } from './components/AdvanceOrderBottomNav'
 
 import { useMenu } from '@/hooks/useMenu'
@@ -20,10 +21,13 @@ import {
   getPreOrderSession,
   saveCustomerName,
   savePreOrderCart,
+  savePreOrderTable,
   clearPreOrderCart,
   createAdvanceOrder,
   getActiveAdvanceOrder,
+  cancelAdvanceOrder,
   clearActiveAdvanceOrder,
+  resetAdvanceOrderSession,
   getRemainingSeconds,
   formatCountdown,
   setActiveSessionToken,
@@ -31,6 +35,21 @@ import {
 
 export default function AdvanceOrderPage() {
   const { token: urlToken } = useParams<{ token?: string }>()
+  const navigate = useNavigate()
+
+  // Ensure body and documentElement allow free scrolling on the advance order interface
+  useEffect(() => {
+    document.body.style.overflowY = 'auto'
+    document.body.style.height = 'auto'
+    document.documentElement.style.overflowY = 'auto'
+    document.documentElement.style.height = 'auto'
+    return () => {
+      document.body.style.overflowY = ''
+      document.body.style.height = ''
+      document.documentElement.style.overflowY = ''
+      document.documentElement.style.height = ''
+    }
+  }, [])
 
   // ─── States ─────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<AdvanceOrderTabType>('menu')
@@ -41,6 +60,10 @@ export default function AdvanceOrderPage() {
   const [customerName, setCustomerName] = useState<string>('')
   const [isNameGateOpen, setIsNameGateOpen] = useState(false)
   const [diningType, setDiningType] = useState<DiningType>('dine-in')
+  const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
+  const [selectedTableNum, setSelectedTableNum] = useState<number | null>(null)
+  const [isTableModalOpen, setIsTableModalOpen] = useState(false)
+
   const [cartItems, setCartItems] = useState<CartItem[]>([])
   const [isCartExpanded, setIsCartExpanded] = useState(false)
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false)
@@ -75,7 +98,7 @@ export default function AdvanceOrderPage() {
         setActiveOrder(existingOrder)
         // Default to order tab if an order is active and unexpired
         const remaining = getRemainingSeconds(existingOrder.expiresAt)
-        if (remaining > 0) {
+        if (remaining > 0 || existingOrder.status === 'CANCELLED') {
           setActiveTab('order')
         }
       } else {
@@ -83,9 +106,11 @@ export default function AdvanceOrderPage() {
         const preOrder = getPreOrderSession()
         setCustomerName(preOrder.customerName)
         setDiningType(preOrder.diningType)
+        setSelectedTableId(preOrder.tableId ?? null)
+        setSelectedTableNum(preOrder.tableNum ?? null)
         setCartItems(preOrder.cart)
 
-        // If no customer name is set, open the name gate
+        // If no customer name is set, open the setup gate
         if (!preOrder.customerName) {
           setIsNameGateOpen(true)
         }
@@ -228,10 +253,56 @@ export default function AdvanceOrderPage() {
   }
 
   // ─── Actions & Order Submission ─────────────────────────────────────────────
-  const handleSaveName = (name: string) => {
+  const handleSaveSetup = (
+    name: string,
+    type: DiningType,
+    tableId: number | null,
+    tableNum: number | null,
+  ) => {
     const saved = saveCustomerName(name)
+    const prevId = selectedTableId
     setCustomerName(saved)
+    setDiningType(type)
+    setSelectedTableId(tableId)
+    setSelectedTableNum(tableNum)
+    savePreOrderTable(tableId, tableNum, prevId, saved)
     setIsNameGateOpen(false)
+  }
+
+  const handleSelectTable = (tableId: number, tableNum: number) => {
+    const prevId = selectedTableId
+    setSelectedTableId(tableId)
+    setSelectedTableNum(tableNum)
+    savePreOrderTable(tableId, tableNum, prevId, customerName)
+  }
+
+  const handleResetSession = async () => {
+    if (window.confirm('Reset advance order session and clear all test data?')) {
+      setIsLoadingOrder(true)
+      try {
+        await resetAdvanceOrderSession()
+        setCustomerName('')
+        setDiningType('dine-in')
+        setSelectedTableId(null)
+        setSelectedTableNum(null)
+        setCartItems([])
+        setActiveOrder(null)
+        setActiveTab('menu')
+        navigate('/advance-order', { replace: true })
+        setIsNameGateOpen(true)
+      } catch (err) {
+        console.error('[AdvanceOrderPage] Reset session failed:', err)
+      } finally {
+        setIsLoadingOrder(false)
+      }
+    }
+  }
+
+  const handleDiningTypeChange = (type: DiningType) => {
+    setDiningType(type)
+    if (type === 'dine-in' && !selectedTableNum) {
+      setIsTableModalOpen(true)
+    }
   }
 
   const handlePlaceOrder = async () => {
@@ -242,7 +313,14 @@ export default function AdvanceOrderPage() {
       return
     }
 
-    // 2. Validate cart
+    // 2. Validate table if dining in
+    if (diningType === 'dine-in' && !selectedTableNum) {
+      setIsTableModalOpen(true)
+      setOrderError('Please choose an available table to sit on.')
+      return
+    }
+
+    // 3. Validate cart
     if (cartItems.length === 0) return
 
     setIsSubmittingOrder(true)
@@ -252,6 +330,8 @@ export default function AdvanceOrderPage() {
       const created = await createAdvanceOrder({
         customerName: trimmedName,
         diningType,
+        tableId: diningType === 'dine-in' ? selectedTableId : null,
+        tableNum: diningType === 'dine-in' ? selectedTableNum : null,
         cartItems,
       })
 
@@ -265,6 +345,30 @@ export default function AdvanceOrderPage() {
       setOrderError(msg)
     } finally {
       setIsSubmittingOrder(false)
+    }
+  }
+
+  const handleCancelOrder = async (reason: string) => {
+    if (!activeOrder) return
+    try {
+      const cancelled = await cancelAdvanceOrder(activeOrder.sessionToken, reason)
+      if (cancelled) {
+        setActiveOrder(cancelled)
+      } else {
+        setActiveOrder((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'CANCELLED',
+                cancelledAt: new Date().toISOString(),
+                notes: reason ? `${prev.notes || ''} [Cancelled: ${reason}]`.trim() : prev.notes,
+              }
+            : null,
+        )
+      }
+    } catch (err: unknown) {
+      console.error('[AdvanceOrderPage] Failed to cancel order:', err)
+      throw err
     }
   }
 
@@ -288,12 +392,23 @@ export default function AdvanceOrderPage() {
       id="advance-order-page-root"
       className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#F1F6F9] font-sans pb-safe selection:bg-[#E9C46A]/40"
     >
-      {/* Customer Name Gate Modal */}
+      {/* Customer Setup Gate Modal */}
       <CustomerNameGate
         isOpen={isNameGateOpen}
         initialName={customerName}
-        onSaveName={handleSaveName}
+        initialDiningType={diningType}
+        initialTableId={selectedTableId}
+        initialTableNum={selectedTableNum}
+        onSaveSetup={handleSaveSetup}
         onCancel={customerName ? () => setIsNameGateOpen(false) : undefined}
+      />
+
+      {/* Available Table Selector Modal */}
+      <AdvanceOrderTableModal
+        isOpen={isTableModalOpen}
+        selectedTableId={selectedTableId}
+        onSelectTable={handleSelectTable}
+        onClose={() => setIsTableModalOpen(false)}
       />
 
       {/* Submission Error Banner */}
@@ -312,16 +427,19 @@ export default function AdvanceOrderPage() {
 
       {/* ─── TAB 1: MENU ─────────────────────────────────────────────────────── */}
       {activeTab === 'menu' && (
-        <div className="flex flex-col h-full w-full max-w-full min-w-0 animate-fade-in pb-24">
+        <div className="flex flex-col w-full max-w-full min-w-0 animate-fade-in pb-24">
           <div className="sticky top-0 z-20 bg-[#F1F6F9]/95 backdrop-blur-md pb-1.5 sm:pb-2 transition-all w-full max-w-full min-w-0">
             <AdvanceOrderHeader
               customerName={customerName}
+              diningType={diningType}
+              tableNum={selectedTableNum}
               onEditName={() => setIsNameGateOpen(true)}
               cartItemCount={itemCount}
               onOpenCart={() => setIsCartExpanded(true)}
               hasActiveOrder={Boolean(activeOrder)}
               countdownFormatted={countdownString}
               onOpenOrderTab={() => setActiveTab('order')}
+              onResetSession={handleResetSession}
             />
             <SearchBar
               value={searchQuery}
@@ -349,19 +467,27 @@ export default function AdvanceOrderPage() {
 
       {/* ─── TAB 2: YOUR ORDER ───────────────────────────────────────────────── */}
       {activeTab === 'order' && (
-        <div className="flex flex-col h-full w-full max-w-full min-w-0 animate-fade-in pb-24">
+        <div className="flex flex-col w-full max-w-full min-w-0 animate-fade-in pb-36 sm:pb-40">
           <div className="sticky top-0 z-20 bg-[#F1F6F9]/95 backdrop-blur-md pb-1.5 sm:pb-2 w-full max-w-full min-w-0">
             <AdvanceOrderHeader
               customerName={customerName || activeOrder?.customerName}
+              diningType={activeOrder ? activeOrder.diningType : diningType}
+              tableNum={activeOrder ? activeOrder.tableNum : selectedTableNum}
+              onEditName={() => setIsNameGateOpen(true)}
               cartItemCount={itemCount}
               onOpenCart={() => setIsCartExpanded(true)}
               hasActiveOrder={Boolean(activeOrder)}
               countdownFormatted={countdownString}
+              onResetSession={handleResetSession}
             />
           </div>
 
           {activeOrder ? (
-            <AdvanceOrderTab order={activeOrder} onStartNewOrder={handleStartNewOrder} />
+            <AdvanceOrderTab
+              order={activeOrder}
+              onStartNewOrder={handleStartNewOrder}
+              onCancelOrder={handleCancelOrder}
+            />
           ) : (
             <div className="flex flex-col items-center justify-center py-24 px-6 text-center animate-fade-in">
               <div className="w-16 h-16 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
@@ -407,7 +533,9 @@ export default function AdvanceOrderPage() {
         itemCount={itemCount}
         total={total}
         diningType={diningType}
-        onDiningTypeChange={setDiningType}
+        onDiningTypeChange={handleDiningTypeChange}
+        tableNum={selectedTableNum}
+        onChangeTable={() => setIsTableModalOpen(true)}
         onPlaceOrder={handlePlaceOrder}
         onClear={clearCart}
         onIncreaseQty={increaseQty}

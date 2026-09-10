@@ -76,20 +76,32 @@ body {
 }
 
 /* Staff POS Shell — Fixed viewport with floating centered container */
-body:not(:has(#customer-page-root)) {
+body:not(:has(#customer-page-root)):not(:has(#advance-order-page-root)) {
   height: 100%;
   width: 100%;
   overflow: hidden;
   background-color: var(--page-background);
 }
 
-/* Customer Mobile Ordering Portal — Scrollable document */
-body:has(#customer-page-root) {
+/* Customer Mobile Ordering Portal & Advance Order Interface — Scrollable document */
+body:has(#customer-page-root),
+body:has(#advance-order-page-root) {
   min-height: 100%;
   height: auto;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: auto !important;
   background-color: #F1F6F9;
+}
+
+html:has(#advance-order-page-root),
+html:has(#customer-page-root),
+body:has(#advance-order-page-root) #root,
+body:has(#customer-page-root) #root,
+body:has(#advance-order-page-root) #root-layout,
+body:has(#customer-page-root) #root-layout {
+  height: auto;
+  min-height: 100%;
+  overflow-y: visible;
 }
 
 /* Safe area padding utilities for mobile edge-to-edge screens */

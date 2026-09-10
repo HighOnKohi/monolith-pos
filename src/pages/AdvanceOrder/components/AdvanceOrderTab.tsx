@@ -9,24 +9,38 @@ import {
   UtensilsCrossed,
   Info,
   ShieldAlert,
+  AlertOctagon,
+  XCircle,
+  MapPin,
 } from 'lucide-react'
 import type { AdvanceOrder } from '@/types/advanceOrder'
 import { getRemainingSeconds, formatCountdown } from '@/services/advanceOrderService'
+import { CancelAdvanceOrderModal } from './CancelAdvanceOrderModal'
 
 interface AdvanceOrderTabProps {
   order: AdvanceOrder
   onStartNewOrder: () => void
+  onCancelOrder?: (reason: string) => Promise<void>
 }
 
-export function AdvanceOrderTab({ order, onStartNewOrder }: AdvanceOrderTabProps) {
+export function AdvanceOrderTab({
+  order,
+  onStartNewOrder,
+  onCancelOrder,
+}: AdvanceOrderTabProps) {
   const [remainingSeconds, setRemainingSeconds] = useState(() =>
     getRemainingSeconds(order.expiresAt),
   )
   const [copied, setCopied] = useState(false)
   const [confirmNewOpen, setConfirmNewOpen] = useState(false)
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
+
+  const isCancelled = order.status === 'CANCELLED'
 
   // Live 1-second countdown interval
   useEffect(() => {
+    if (isCancelled) return
+
     // Initial sync
     setRemainingSeconds(getRemainingSeconds(order.expiresAt))
 
@@ -39,9 +53,9 @@ export function AdvanceOrderTab({ order, onStartNewOrder }: AdvanceOrderTabProps
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [order.expiresAt])
+  }, [order.expiresAt, isCancelled])
 
-  const isExpired = remainingSeconds <= 0
+  const isExpired = remainingSeconds <= 0 && !isCancelled
   const countdownFormatted = formatCountdown(remainingSeconds)
 
   // Calculate percentage remaining of 30 minutes (1800 seconds)
@@ -54,10 +68,49 @@ export function AdvanceOrderTab({ order, onStartNewOrder }: AdvanceOrderTabProps
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleConfirmCancel = async (reason: string) => {
+    if (onCancelOrder) {
+      await onCancelOrder(reason)
+    }
+  }
+
   return (
-    <div className="w-full max-w-lg mx-auto px-4 pb-24 pt-2 animate-in fade-in duration-150 space-y-4">
-      {/* Expiration Banner / Active Timer Card */}
-      {isExpired ? (
+    <div className="w-full max-w-lg mx-auto px-4 pb-36 sm:pb-40 pt-2 animate-in fade-in duration-150 space-y-4">
+      {/* ── 1. CANCELLED STATE ── */}
+      {isCancelled ? (
+        <div className="bg-rose-50/90 border-2 border-rose-200 rounded-3xl p-6 text-center shadow-xs space-y-3 animate-in zoom-in-95 duration-150">
+          <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-2xs">
+            <XCircle className="w-8 h-8" />
+          </div>
+          <div>
+            <span className="px-2.5 py-0.5 rounded-full bg-rose-200 text-rose-800 text-[10px] font-black uppercase tracking-wider">
+              Order Cancelled
+            </span>
+            <h2 className="text-xl font-black text-rose-950 mt-1.5 tracking-tight">
+              This Advance Order was cancelled.
+            </h2>
+            <p className="text-xs text-rose-800/90 mt-1 max-w-sm mx-auto leading-relaxed">
+              This order and its confirmation timer have been cancelled. If you would like to place another order, feel free to start a new one anytime.
+            </p>
+            {order.cancelledAt && (
+              <p className="text-[10px] text-rose-600/80 font-mono mt-2">
+                Cancelled on {new Date(order.cancelledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
+          </div>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={onStartNewOrder}
+              className="w-full py-3.5 px-4 bg-[#14274E] hover:bg-[#1f3b73] active:scale-[0.99] text-white font-extrabold text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>Start New Advance Order</span>
+            </button>
+          </div>
+        </div>
+      ) : isExpired ? (
+        /* ── 2. EXPIRED STATE ── */
         <div className="bg-rose-50 border-2 border-rose-200 rounded-3xl p-6 text-center shadow-xs space-y-3 animate-in zoom-in-95 duration-150">
           <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-2xs">
             <ShieldAlert className="w-8 h-8" />
@@ -85,6 +138,7 @@ export function AdvanceOrderTab({ order, onStartNewOrder }: AdvanceOrderTabProps
           </div>
         </div>
       ) : (
+        /* ── 3. ACTIVE TICKING STATE ── */
         <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-xs space-y-4">
           {/* Header row */}
           <div className="flex items-center justify-between">
@@ -170,8 +224,8 @@ export function AdvanceOrderTab({ order, onStartNewOrder }: AdvanceOrderTabProps
           </button>
         </div>
 
-        {/* Customer info & Dining Type tags */}
-        <div className="grid grid-cols-2 gap-2 pt-1">
+        {/* Customer info, Dining Type, and Table tags */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/60">
             <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
               <User className="w-3 h-3 text-slate-400" />
@@ -187,6 +241,20 @@ export function AdvanceOrderTab({ order, onStartNewOrder }: AdvanceOrderTabProps
             </span>
             <p className="text-xs font-black text-slate-800 mt-0.5 capitalize">
               {order.diningType === 'take-away' ? 'Takeout' : 'Dine-In'}
+            </p>
+          </div>
+
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/60 col-span-2 sm:col-span-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+              <MapPin className="w-3 h-3 text-slate-400" />
+              Seating Table
+            </span>
+            <p className="text-xs font-black text-slate-800 mt-0.5">
+              {order.diningType === 'take-away'
+                ? 'N/A (Takeout)'
+                : order.tableNum
+                  ? `Table ${order.tableNum}`
+                  : 'Counter / Open'}
             </p>
           </div>
         </div>
@@ -250,43 +318,66 @@ export function AdvanceOrderTab({ order, onStartNewOrder }: AdvanceOrderTabProps
         </div>
       </div>
 
-      {/* Start New Order Options */}
-      {!isExpired && (
-        <div className="text-center pt-2">
-          {confirmNewOpen ? (
-            <div className="p-4 bg-slate-100 rounded-2xl space-y-2 border border-slate-200 animate-in fade-in duration-150">
-              <p className="text-xs font-bold text-slate-700">
-                Start a new order? Your current order ({order.orderNumber}) will remain saved.
-              </p>
-              <div className="flex items-center justify-center gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setConfirmNewOpen(false)}
-                  className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
-                >
-                  Keep Current Order
-                </button>
-                <button
-                  type="button"
-                  onClick={onStartNewOrder}
-                  className="px-3 py-1.5 text-xs font-extrabold bg-[#14274E] text-white rounded-xl hover:bg-[#1f3b73] transition-colors cursor-pointer shadow-xs"
-                >
-                  Start New Order
-                </button>
-              </div>
-            </div>
-          ) : (
+      {/* Action Buttons: Cancel Order & Start New Order */}
+      {!isExpired && !isCancelled && (
+        <div className="pt-2 space-y-2">
+          {/* Cancel Order Action */}
+          {onCancelOrder && (
             <button
               type="button"
-              onClick={() => setConfirmNewOpen(true)}
-              className="text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors py-2 px-3 rounded-xl hover:bg-slate-100 inline-flex items-center gap-1.5 cursor-pointer"
+              onClick={() => setIsCancelModalOpen(true)}
+              className="w-full py-3 px-4 rounded-2xl border border-rose-200 hover:border-rose-300 bg-rose-50/60 hover:bg-rose-100/70 text-rose-700 font-extrabold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Start Another Advanced Order</span>
+              <AlertOctagon className="w-4 h-4 text-rose-600" />
+              <span>Cancel This Advance Order</span>
             </button>
           )}
+
+          {/* Start New Order Options */}
+          <div className="text-center pt-1">
+            {confirmNewOpen ? (
+              <div className="p-4 bg-slate-100 rounded-2xl space-y-2 border border-slate-200 animate-in fade-in duration-150">
+                <p className="text-xs font-bold text-slate-700">
+                  Start a new order? Your current order ({order.orderNumber}) will remain active.
+                </p>
+                <div className="flex items-center justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmNewOpen(false)}
+                    className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                  >
+                    Keep Current Order
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onStartNewOrder}
+                    className="px-3 py-1.5 text-xs font-extrabold bg-[#14274E] text-white rounded-xl hover:bg-[#1f3b73] transition-colors cursor-pointer shadow-xs"
+                  >
+                    Start New Order
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmNewOpen(true)}
+                className="text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors py-2 px-3 rounded-xl hover:bg-slate-100 inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Start Another Advanced Order</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
+
+      {/* Cancel Order Confirmation Modal */}
+      <CancelAdvanceOrderModal
+        isOpen={isCancelModalOpen}
+        orderNumber={order.orderNumber}
+        onClose={() => setIsCancelModalOpen(false)}
+        onConfirmCancel={handleConfirmCancel}
+      />
     </div>
   )
 }
