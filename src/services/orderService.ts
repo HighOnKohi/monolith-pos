@@ -340,7 +340,7 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
     .from('Restaurant_Orders')
     .select('ORDER_ID')
     .in('TABLE_ID', targetIds)
-    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED'])
+    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED'])
 
   if (fetchErr) {
     console.error('[orderService] Failed to fetch active orders for settlement:', fetchErr)
@@ -349,62 +349,42 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
   if (!activeOrders || activeOrders.length === 0) return
 
   const orderIds = activeOrders.map((o) => Number(o['ORDER_ID']))
-  const nowIso = new Date().toISOString()
 
-  // Attempt to transition ORDER_STATUS to 'COMPLETED' with COMPLETED_AT timestamp
-  const { error: updateErr } = await supabase
-    .from('Restaurant_Orders')
-    .update({
-      ORDER_STATUS: 'COMPLETED',
-      COMPLETED_AT: nowIso,
-    })
-    .in('ORDER_ID', orderIds)
+  // Log settlement event for audit trail
+  for (const id of orderIds) {
+    logOrderEvent(id, {
+      eventType: 'SETTLED',
+      previousStatus: 'COMPLETED',
+      newStatus: 'SETTLED',
+      actor: 'Cashier',
+      reason: 'Table bill settled and payment processed',
+    }).catch(() => {})
+  }
 
-  // Ensure SERVED_AT is populated if not yet set
+  // Delete child Order_Items first to avoid FK constraint issues
+  const { error: childDelErr } = await supabase.from('Order_Items').delete().in('ORDER_ID', orderIds)
+  if (childDelErr) {
+    console.warn('[orderService] Order_Items deletion warning:', childDelErr)
+  }
+
+  // Delete Restaurant_Orders so order now completely disappears
+  const { error: orderDelErr } = await supabase.from('Restaurant_Orders').delete().in('ORDER_ID', orderIds)
+  if (orderDelErr) {
+    console.warn('[orderService] Restaurant_Orders deletion warning:', orderDelErr)
+  }
+
+  // Reset table status to AVAILABLE and clear guest count & bill request
   try {
     await supabase
-      .from('Restaurant_Orders')
-      .update({ SERVED_AT: nowIso })
-      .in('ORDER_ID', orderIds)
-      .is('SERVED_AT', null)
-  } catch (servedErr) {
-    console.warn('[orderService] Could not backfill SERVED_AT on settlement:', servedErr)
-  }
-
-  if (!updateErr) {
-    for (const id of orderIds) {
-      logOrderEvent(id, {
-        eventType: 'SETTLED',
-        previousStatus: 'SERVED',
-        newStatus: 'COMPLETED',
-        actor: 'Cashier',
-        reason: 'Table bill settled and payment processed',
-      }).catch(() => {})
-    }
-  }
-
-  if (updateErr) {
-    console.warn(
-      '[orderService] Failed to set ORDER_STATUS to COMPLETED (schema constraint or replica identity), applying fallback delete:',
-      updateErr
-    )
-    // Fallback: delete child items first so order items are completely settled
-    const { error: childDelErr } = await supabase.from('Order_Items').delete().in('ORDER_ID', orderIds)
-    if (childDelErr) {
-      console.error('[orderService] Failed to delete child Order_Items during settlement fallback:', childDelErr)
-      throw childDelErr
-    }
-
-    // Try deleting Restaurant_Orders as well. If Postgres replica identity disallows deletes without migration 005,
-    // log a warning rather than failing the transaction, because child Order_Items are deleted and fetchOrdersByTable
-    // filters out orders with 0 items.
-    const { error: delErr } = await supabase.from('Restaurant_Orders').delete().in('ORDER_ID', orderIds)
-    if (delErr) {
-      console.warn(
-        '[orderService] Restaurant_Orders delete restricted by publication replica identity (requires migration 005). Child items cleared successfully:',
-        delErr
-      )
-    }
+      .from('Restaurant_Tables')
+      .update({
+        STATUS: 'AVAILABLE',
+        BILL_OUT_REQUESTED: false,
+        CURRENT_GUEST_COUNT: 0,
+        RESERVED_SINCE: null,
+      })
+      .in('TABLE_ID', targetIds)
+  } catch (tableErr) {
+    console.warn('[orderService] Table reset warning:', tableErr)
   }
 }
-

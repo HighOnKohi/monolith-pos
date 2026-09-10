@@ -196,8 +196,84 @@ export async function updateMenuItem(id: string, patch: {
   if (error) throw error
 }
 
+export interface MenuItemGroup {
+  id: string
+  name: string
+  description: string
+  price: number
+  imageUrl: string
+  status: string
+  orderLimit: number
+  categoryId: string
+  itemIds: string[]
+  itemNames: string[]
+}
+
+export async function fetchMenuItemGroups(): Promise<MenuItemGroup[]> {
+  const { data, error } = await supabase
+    .from('Menu_Item_Groups')
+    .select('MENU_GROUP_ID, GROUP_NAME, GROUP_DESCRIPTION, GROUP_PRICE, GROUP_IMAGE_URL, GROUP_STATUS, GROUP_ORDER_LIMIT, CATEGORY_ID, Item_Groups(ITEM_ID, Menu_Items(ITEM_NAME))')
+    .order('MENU_GROUP_ID')
+  if (error) throw error
+  return (data ?? []).map((row) => {
+    const links = (row as Record<string, unknown>)['Item_Groups'] as Array<Record<string, unknown>> ?? []
+    return {
+      id: String((row as Record<string, unknown>)['MENU_GROUP_ID']),
+      name: String((row as Record<string, unknown>)['GROUP_NAME'] ?? ''),
+      description: String((row as Record<string, unknown>)['GROUP_DESCRIPTION'] ?? ''),
+      price: Number((row as Record<string, unknown>)['GROUP_PRICE'] ?? 0),
+      imageUrl: String((row as Record<string, unknown>)['GROUP_IMAGE_URL'] ?? ''),
+      status: String((row as Record<string, unknown>)['GROUP_STATUS'] ?? 'AVAILABLE'),
+      orderLimit: Number((row as Record<string, unknown>)['GROUP_ORDER_LIMIT'] ?? 0),
+      categoryId: String((row as Record<string, unknown>)['CATEGORY_ID'] ?? ''),
+      itemIds: links.map((link) => String(link['ITEM_ID'])),
+      itemNames: links.map((link) => String((link['Menu_Items'] as Record<string, unknown> | undefined)?.['ITEM_NAME'] ?? `Item #${link['ITEM_ID']}`)),
+    }
+  })
+}
+
+export async function createMenuItemGroup(payload: {
+  name: string
+  description: string
+  price: number
+  imageUrl?: string
+  status: string
+  orderLimit: number
+  categoryId: string
+  itemIds: string[]
+}): Promise<void> {
+  const { data, error } = await supabase
+    .from('Menu_Item_Groups')
+    .insert({ GROUP_NAME: payload.name, GROUP_DESCRIPTION: payload.description || null, GROUP_PRICE: payload.price, GROUP_IMAGE_URL: payload.imageUrl ?? null, GROUP_STATUS: payload.status, GROUP_ORDER_LIMIT: payload.orderLimit, CATEGORY_ID: Number(payload.categoryId) })
+    .select('MENU_GROUP_ID')
+    .single()
+  if (error || !data) throw error ?? new Error('Failed to create group item.')
+  const groupId = Number((data as Record<string, unknown>)['MENU_GROUP_ID'])
+  const { error: linkError } = await supabase.from('Item_Groups').insert(payload.itemIds.map((itemId) => ({ MENU_GROUP_ID: groupId, ITEM_ID: Number(itemId) })))
+  if (linkError) throw linkError
+}
+
+export async function updateMenuItemGroup(id: string, payload: {
+  name: string
+  description: string
+  price: number
+  imageUrl?: string
+  status: string
+  orderLimit: number
+  categoryId: string
+  itemIds: string[]
+}): Promise<void> {
+  const { error } = await supabase.from('Menu_Item_Groups').update({ GROUP_NAME: payload.name, GROUP_DESCRIPTION: payload.description || null, GROUP_PRICE: payload.price, GROUP_IMAGE_URL: payload.imageUrl ?? null, GROUP_STATUS: payload.status, GROUP_ORDER_LIMIT: payload.orderLimit, CATEGORY_ID: Number(payload.categoryId) }).eq('MENU_GROUP_ID', Number(id))
+  if (error) throw error
+  const { error: deleteError } = await supabase.from('Item_Groups').delete().eq('MENU_GROUP_ID', Number(id))
+  if (deleteError) throw deleteError
+  const { error: linkError } = await supabase.from('Item_Groups').insert(payload.itemIds.map((itemId) => ({ MENU_GROUP_ID: Number(id), ITEM_ID: Number(itemId) })))
+  if (linkError) throw linkError
+}
+
 export async function deleteMenuItem(id: string): Promise<void> {
-  const { error } = await supabase.from('Menu_Items').delete().eq('ITEM_ID', Number(id))
+  const { error } = await supabase
+    .from('Menu_Items').delete().eq('ITEM_ID', Number(id))
   if (error) throw error
 }
 

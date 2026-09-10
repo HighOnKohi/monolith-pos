@@ -39,10 +39,7 @@ function useMenuState(enabled: boolean): UseMenuResult {
         const temporaryItems = current.filter((item) => item.id.startsWith('temporary-'))
         return [...fetchedItems, ...temporaryItems]
       })
-      setCategories((current) => {
-        const temporaryCategories = current.filter((category) => category.id.startsWith('temporary-'))
-        return [...fetchedCategories, ...temporaryCategories]
-      })
+      setCategories(fetchedCategories)
       if (isInitial) {
         setLoadState(fetchedItems.length === 0 ? 'empty' : 'loaded')
       }

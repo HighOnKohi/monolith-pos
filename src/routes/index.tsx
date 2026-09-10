@@ -23,6 +23,7 @@ const AnalyticsPage = lazy(() => import('@/pages/Analytics'))
 const AccountManagerPage = lazy(() => import('@/pages/AccountManager'))
 const OrderLogsPage = lazy(() => import('@/pages/OrderLogs'))
 const EventsPage = lazy(() => import('@/pages/Events'))
+const TicketingInterface = lazy(() => import('@/pages/TicketingInterface'))
 
 function wrap(Component: React.ComponentType) {
   return (
@@ -119,6 +120,7 @@ export const router = createBrowserRouter([
           { path: 'kitchen', element: <Navigate to="/dispatcher" replace /> },
           { path: 'order-viewer', element: wrap(OrderViewerPage) },
           { path: 'service', element: wrap(CashierPage) },
+          { path: 'ticketing', element: wrap(TicketingInterface) },
           { path: 'cashier', element: wrap(CashierInterfacePage) },
           { path: 'tables', element: wrap(TableManagerPage) },
           { path: 'menu', element: wrap(MenuManagerPage) },

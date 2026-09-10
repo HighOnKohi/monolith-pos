@@ -3,6 +3,7 @@
 /* Page-specific styles */
 @import "./page-styles/dispatcher-interface.css";
 @import "./page-styles/service-interface.css";
+@import "./page-styles/ticketing-interface.css";
 @import "./page-styles/menu-manager.css";
 @import "./page-styles/table-manager.css";
 @import "./page-styles/order-logs.css";

@@ -133,8 +133,14 @@
 
 .dispatcher-orders-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+@media (min-width: 1200px) {
+  .dispatcher-orders-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .dispatcher-order-card {

@@ -22,6 +22,8 @@ Advance_Orders,11,EXPIRES_AT,timestamp with time zone,timestamptz,null,NO,(now()
 Advance_Orders,12,CONFIRMED_AT,timestamp with time zone,timestamptz,null,YES,null,,,null,null
 Advance_Orders,13,COMPLETED_AT,timestamp with time zone,timestamptz,null,YES,null,,,null,null
 Advance_Orders,14,CANCELLED_AT,timestamp with time zone,timestamptz,null,YES,null,,,null,null
+Advance_Orders,15,TABLE_ID,bigint,int8,null,YES,null,,,FK → Restaurant_Tables.TABLE_ID,null
+Advance_Orders,16,TABLE_NUM,integer,int4,null,YES,null,,,null,null
 Bill_Requests,1,REQUEST_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
 Bill_Requests,2,TABLE_ID,bigint,int8,null,NO,null,,,null,null
 Bill_Requests,3,ORDER_ID,bigint,int8,null,YES,null,,,null,null
@@ -45,15 +47,21 @@ Dispatcher_Staff,1,DISPATCHER_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
 Dispatcher_Staff,2,STAFF_ID,bigint,int8,null,NO,null,,,null,null
 Dispatcher_Staff,3,CURRENT_DISPATCHED_MEALS,bigint,int8,null,YES,null,,,null,null
 Dispatcher_Staff,4,TOTAL_DISPATCHED_MEALS,bigint,int8,null,YES,null,,,null,null
+Item_Groups,1,ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Item_Groups,2,MENU_GROUP_ID,bigint,int8,null,NO,null,,,FK → Menu_Item_Groups.MENU_GROUP_ID,null
+Item_Groups,3,ITEM_ID,bigint,int8,null,YES,null,,,FK → Menu_Items.ITEM_ID,null
 Menu_Categories,1,CATEGORY_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
 Menu_Categories,2,CATEGORY_NAME,text,text,null,NO,null,,,null,null
 Menu_Categories,3,CATEGORY_ITEM_COUNT,bigint,int8,null,YES,'0'::bigint,,,null,null
 Menu_Categories,4,CATEGORY_ICON,text,text,null,YES,null,,,null,null
 Menu_Item_Groups,1,MENU_GROUP_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
-Menu_Item_Groups,2,GROUP_ID,bigint,int8,null,NO,null,,,null,null
 Menu_Item_Groups,3,GROUP_NAME,text,text,null,YES,null,,,null,null
 Menu_Item_Groups,4,GROUP_DESCRIPTION,text,text,null,YES,null,,,null,null
 Menu_Item_Groups,5,GROUP_PRICE,double precision,float8,null,YES,null,,,null,null
+Menu_Item_Groups,7,GROUP_IMAGE_URL,text,text,null,YES,null,,,null,null
+Menu_Item_Groups,8,GROUP_STATUS,text,text,null,YES,null,,,null,null
+Menu_Item_Groups,9,GROUP_ORDER_LIMIT,bigint,int8,null,YES,null,,,null,null
+Menu_Item_Groups,10,CATEGORY_ID,bigint,int8,null,YES,null,,,FK → Menu_Categories.CATEGORY_ID,null
 Menu_Items,1,ITEM_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
 Menu_Items,2,CATEGORY_ID,bigint,int8,null,NO,null,,,FK → Menu_Categories.CATEGORY_ID,null
 Menu_Items,3,ITEM_NAME,text,text,null,YES,null,,,null,null
@@ -103,7 +111,7 @@ Restaurant_Orders,1,ORDER_ID,bigint,int8,null,NO,null,PRIMARY KEY,UNIQUE,null,nu
 Restaurant_Orders,2,TABLE_ID,bigint,int8,null,NO,null,,,FK → Restaurant_Tables.TABLE_ID,null
 Restaurant_Orders,5,REQUESTED_FROM,text,text,null,YES,'None'::text,,,null,"CHECK ((""REQUESTED_FROM"" = ANY (ARRAY['Cashier'::text, 'Customer'::text])))"
 Restaurant_Orders,6,ORDER_TYPE,text,text,null,YES,'Dine-in'::text,,,null,"CHECK ((""ORDER_TYPE"" = ANY (ARRAY['DINE-IN'::text, 'TAKEOUT'::text])))"
-Restaurant_Orders,7,ORDER_STATUS,text,text,null,YES,'Pending'::text,,,null,"CHECK ((""ORDER_STATUS"" = ANY (ARRAY['REQUESTED'::text, 'VERIFIED'::text, 'PREPARING'::text, 'READY'::text, 'SERVED'::text, 'CANCELLED'::text, 'COMPLETED'::text])))"
+Restaurant_Orders,7,ORDER_STATUS,text,text,null,YES,'Pending'::text,,,null,"CHECK ((""ORDER_STATUS"" = ANY (ARRAY['REQUESTED'::text, 'VERIFIED'::text, 'PREPARING'::text, 'READY'::text, 'CANCELLED'::text, 'COMPLETED'::text])))"
 Restaurant_Orders,8,SUBTOTAL_BILL,double precision,float8,null,YES,'0'::double precision,,,null,null
 Restaurant_Orders,9,TOTAL_BILL,double precision,float8,null,YES,'0'::double precision,,,null,null
 Restaurant_Orders,10,TIME,timestamp without time zone,timestamp,null,YES,null,,,null,null
@@ -142,11 +150,23 @@ Staff_Accounts,12,LAST_LOGIN,timestamp with time zone,timestamptz,null,YES,null,
 Staff_Codes,1,CODE_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
 Staff_Codes,2,STAFF_NAME,text,text,null,NO,null,,,null,null
 Staff_Codes,3,STAFF_ROLE,text,text,null,YES,null,,,null,null
-Superviser_Codes,1,SUPERVISER_CODE,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
-Superviser_Codes,2,STAFF_ID,timestamp with time zone,timestamptz,null,NO,now(),,,null,null
+Staff_Codes,4,STATUS,text,text,null,NO,'ACTIVE'::text,,,null,"CHECK ((""STATUS"" = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text, 'SUSPENDED'::text])))"
+Superviser_Staff,1,SUPERVISER_CODE,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Superviser_Staff,2,STAFF_ID,timestamp with time zone,timestamptz,null,NO,now(),,,null,null
 Table_Reservations,1,RESERVATION_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
 Table_Reservations,2,TABLE_ID,bigint,int8,null,NO,null,,,FK → Restaurant_Tables.TABLE_ID,null
 Table_Reservations,3,APPOINTED_NAME,text,text,null,YES,null,,,null,null
 Table_Reservations,4,GUEST_COUNT,bigint,int8,null,YES,null,,,null,null
 Table_Reservations,5,RESERVATION_NOTE,text,text,null,YES,null,,,null,null
 Table_Reservations,6,TIME_LIMIT,time without time zone,time,null,YES,null,,,null,null
+Ticket_Order_Items,1,TICKET_ORDER_ITEM_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Ticket_Order_Items,2,TICKET_ORDER_ID,bigint,int8,null,NO,null,,,FK → Ticket_Orders.TICKET_ID,null
+Ticket_Order_Items,3,ITEM_ID,bigint,int8,null,YES,null,,,FK → Menu_Items.ITEM_ID,null
+Ticket_Order_Items,4,DISCOUNT_ID,bigint,int8,null,YES,null,,,null,null
+Ticket_Order_Items,5,TICKET_ORDER_ITEM_STATUS,text,text,null,YES,null,,,null,"CHECK ((""TICKET_ORDER_ITEM_STATUS"" = ANY (ARRAY['REQUESTED'::text, 'PREPARING'::text, 'COMPLETED'::text])))"
+Ticket_Order_Items,8,ITEM_GROUP_ID,bigint,int8,null,YES,null,,,FK → Menu_Item_Groups.MENU_GROUP_ID,null
+Ticket_Orders,1,TICKET_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Ticket_Orders,3,REGISTERED_NAME,text,text,null,YES,null,,,null,null
+Ticket_Orders,4,REGISTERED_CONTACT_INFO,bigint,int8,null,YES,null,,,null,null
+Ticket_Orders,5,REGISTERED_TIME_OF_ARRIVAL,time without time zone,time,null,YES,null,,,null,null
+Ticket_Orders,6,TICKET_STATUS,text,text,null,YES,null,,,null,"CHECK ((""TICKET_STATUS"" = ANY (ARRAY['REQUESTED'::text, 'PREPARING'::text, 'COMPLETED'::text])))"

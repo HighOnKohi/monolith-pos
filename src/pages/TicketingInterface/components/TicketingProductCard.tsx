@@ -1,0 +1,101 @@
+import React from 'react'
+import { Check } from 'lucide-react'
+import type { TicketCartItem } from '@/types/ticket'
+
+interface TicketingProductCardProps {
+  item: TicketCartItem
+  quantityInCart: number
+  onAddToCart: (item: TicketCartItem) => void
+  onDecreaseQty: (itemId: string) => void
+}
+
+export const TicketingProductCard: React.FC<TicketingProductCardProps> = ({
+  item,
+  quantityInCart,
+  onAddToCart,
+  onDecreaseQty,
+}) => {
+  const isSelected = quantityInCart > 0
+
+  return (
+    <div
+      className={[
+        'ticketing-dish-card p-3 relative select-none cursor-pointer',
+        isSelected ? 'is-selected' : '',
+        item.isSoldOut ? 'opacity-50 grayscale' : '',
+      ].join(' ')}
+      onClick={() => {
+        if (!item.isSoldOut) onAddToCart(item)
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        if (quantityInCart > 0) onDecreaseQty(item.id)
+      }}
+      aria-label={`${item.name}, ${quantityInCart} in ticket cart`}
+    >
+      {/* Image Container */}
+      <div className="relative w-full aspect-4/3 rounded-2xl overflow-hidden bg-slate-100 mb-3 shrink-0">
+        <img
+          src={item.imageUrl}
+          draggable={false}
+          alt={item.name}
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
+
+        {/* Top Left Badges */}
+        <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
+          {isSelected && (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-[#14274E] text-white flex items-center gap-1 shadow-xs">
+              <Check className="w-2.5 h-2.5" />
+              Selected ({quantityInCart})
+            </span>
+          )}
+          {item.isSoldOut && (
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#C94A4A] text-white shadow-xs">
+              SOLD OUT
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Item Title */}
+      <h4
+        className="text-sm sm:text-base font-extrabold text-[#14274E] mb-1 line-clamp-1 leading-snug"
+        title={item.name}
+      >
+        {item.name}
+      </h4>
+
+      {/* Included items if group */}
+      {item.isGroup && item.includedItems && item.includedItems.length > 0 ? (
+        <div className="mb-2 text-[11px] text-slate-500 line-clamp-1">
+          <span className="font-semibold text-slate-700">Includes: </span>
+          {item.includedItems.join(' + ')}
+        </div>
+      ) : item.groupDescription ? (
+        <p className="mb-2 text-[11px] text-slate-500 line-clamp-1">
+          {item.groupDescription}
+        </p>
+      ) : null}
+
+      {/* Price & Classification */}
+      <div className="flex items-center justify-between mb-1 mt-auto pt-1 border-t border-slate-100">
+        <span className="text-base sm:text-lg font-black text-[#14274E]">
+          ₱{item.price.toFixed(2)}
+        </span>
+        {item.dietaryType ? (
+          <span className="text-[11px] font-bold flex items-center gap-1 text-slate-600">
+            <span
+              className={[
+                'w-2.5 h-2.5 rounded-full',
+                item.dietaryType === 'veg' ? 'bg-green-500' : 'bg-amber-400',
+              ].join(' ')}
+            />
+            {item.dietaryType === 'veg' ? 'Veg' : 'Non-Veg'}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  )
+}

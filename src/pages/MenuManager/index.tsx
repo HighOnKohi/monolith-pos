@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Search, Plus, Edit2, Trash2 } from 'lucide-react'
 import { useMenu } from '@/hooks/useMenu'
 import {
@@ -8,10 +8,15 @@ import {
   updateMenuItem,
   updateCategory,
   deleteCategory,
+  createMenuItemGroup,
+  fetchMenuItemGroups,
+  updateMenuItemGroup,
+  type MenuItemGroup,
 } from '@/services/menuService'
 import type { MenuItem, Category } from '@/types/menu'
 import { categoryIconMap, categoryIcons, NewMenuCategoryModal } from '@/components/menu/NewMenuCategoryModal'
 import { NewMenuItemModal, type NewMenuItemForm } from '@/components/menu/NewMenuItemModal'
+import { NewMenuGroupModal, type MenuGroupValue, type NewMenuGroupForm } from '@/components/menu/NewMenuGroupModal'
 import { ConfirmModal } from '@/components/menu/ConfirmModal'
 
 export default function MenuManagerPage() {
@@ -22,10 +27,14 @@ export default function MenuManagerPage() {
   const [isCategoryModalOpen, setCategoryModalOpen] = useState(false)
   const [editingCategory, setEditingCategory]       = useState<Category | null>(null)
   const [isItemModalOpen, setItemModalOpen]   = useState(false)
+  const [isGroupModalOpen, setGroupModalOpen] = useState(false)
+  const [editingGroup, setEditingGroup] = useState<MenuGroupValue | null>(null)
   const [isEditModalOpen, setEditModalOpen]   = useState(false)
+  const [groups, setGroups] = useState<MenuItemGroup[]>([])
   const [search, setSearch]             = useState('')
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
+  const [selectedGroup, setSelectedGroup] = useState<MenuItemGroup | null>(null)
   const [availabilitySaving, setAvailabilitySaving] = useState<string | null>(null)
 
   // Confirm modal state
@@ -38,20 +47,52 @@ export default function MenuManagerPage() {
     setTimeout(() => setToastMessage(null), 3500)
   }
 
+  useEffect(() => {
+    void fetchMenuItemGroups().then(setGroups).catch(() => setGroups([]))
+  }, [])
+
+  async function submitGroup(form: NewMenuGroupForm) {
+    if (editingGroup) {
+      await updateMenuItemGroup(editingGroup.id, form)
+      showToast(`Updated "${form.name}".`, 'success')
+    } else {
+      await createMenuItemGroup(form)
+      showToast(`Added "${form.name}".`, 'success')
+    }
+    const updatedGroups = await fetchMenuItemGroups()
+    setGroups(updatedGroups)
+    if (editingGroup) {
+      const refreshed = updatedGroups.find((g) => g.id === editingGroup.id)
+      if (refreshed) {
+        setSelectedGroup(refreshed)
+      }
+    }
+    setEditingGroup(null)
+  }
 
   // ── Filtered items ─────────────────────────────────────────────────────────
   const filtered = items.filter((item) => {
-    // If searching, show all matching items across all categories
-    if (search.trim() !== '') {
-      return item.name.toLowerCase().includes(search.toLowerCase())
-    }
-    // Otherwise only show items from the active category
+    if (search.trim() !== '') return item.name.toLowerCase().includes(search.toLowerCase())
     return activeCat === 'all' || item.categoryId === activeCat
   })
+  const filteredGroups = groups.filter((group) => {
+    if (search.trim() !== '') return group.name.toLowerCase().includes(search.toLowerCase())
+    return activeCat === 'all' || group.categoryId === activeCat
+  })
+  const categoryCounts = [...items, ...groups].reduce<Record<string, number>>((counts, item) => {
+    const categoryId = 'categoryId' in item ? item.categoryId : ''
+    if (categoryId) counts[categoryId] = (counts[categoryId] ?? 0) + 1
+    return counts
+  }, {})
+  const displayCategories = categories.map((category) => ({
+    ...category,
+    count: category.id === 'all' ? items.length + groups.length : categoryCounts[category.id] ?? 0,
+  }))
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
   function handleEdit(item: MenuItem) {
     setSelectedItem(item)
+    setSelectedGroup(null)
     setEditingItem(item)
     setEditModalOpen(true)
   }
@@ -78,6 +119,7 @@ export default function MenuManagerPage() {
   function handleClose() {
     setEditingItem(null)
     setSelectedItem(null)
+    setSelectedGroup(null)
   }
 
   async function submitEdit(form: NewMenuItemForm) {
@@ -173,6 +215,10 @@ export default function MenuManagerPage() {
         setConfirmState(null)
         setCategories((current) => current.filter((category) => category.id !== cat.id))
         if (activeCat === cat.id) setActiveCat('all')
+        if (cat.id.startsWith('temporary-')) {
+          showToast(`Deleted "${cat.name}".`, 'info')
+          return
+        }
         try {
           await deleteCategory(cat.id)
           reload()
@@ -234,6 +280,7 @@ export default function MenuManagerPage() {
           </div>
           <div className="menu-manager-header-actions">
             <button type="button" className="menu-manager-add-category" onClick={handleAddCategory}><Plus className="menu-manager-plus-icon" /> Add Category</button>
+            <button type="button" className="menu-manager-add-group" onClick={() => setGroupModalOpen(true)}><Plus className="menu-item-add-icon" /> Add Group Item</button>
             <button type="button" className="menu-manager-add-item" onClick={handleAddDish}><Plus className="menu-item-add-icon" /> Add Item</button>
           </div>
         </div>
@@ -242,7 +289,7 @@ export default function MenuManagerPage() {
           <div className="menu-item-category-buttons-header">
           <div className="menu-item-category-buttons-row">
             <div className="menu-item-category-buttons-container">
-              {categories.map((cat: Category, index) => {
+              {displayCategories.map((cat: Category, index) => {
                 const CategoryIcon = categoryIconMap[cat.icon as keyof typeof categoryIconMap]
                   ?? categoryIcons[index % categoryIcons.length].component
                 return (
@@ -295,6 +342,21 @@ export default function MenuManagerPage() {
           )}
           {(loadState === 'loaded' || loadState === 'empty') && (
             <div className="menu-item-card-grid-content">
+              {filteredGroups.map((group) => (
+                <div
+                  key={`group-${group.id}`}
+                  className={[
+                    'menu-item-card-container relative flex flex-col rounded-xl border bg-white overflow-hidden transition-all cursor-pointer',
+                    selectedGroup?.id === group.id
+                      ? 'selected border-[#14274E] ring-2 ring-[#14274E]/30 shadow-md'
+                      : 'border-[#9BA4B4]/20 hover:border-[#14274E]/30',
+                  ].join(' ')}
+                  onClick={() => { setSelectedGroup(group); setSelectedItem(null) }}
+                >
+                  <div className="menu-item-image-container h-32 w-full overflow-hidden"><img src={group.imageUrl} alt={group.name} className="menu-item-image h-full w-full object-cover" /></div>
+                  <div className="flex flex-col gap-1 pt-2"><p className="menu-item-name text-sm font-semibold text-[#14274E] line-clamp-2">{group.name}</p><div className="flex items-center justify-between"><span className="menu-item-price text-sm font-bold text-[#14274E]">₱{group.price.toFixed(2)}</span><span className="text-[10px] font-semibold text-[#14274E]">Group</span></div></div>
+                </div>
+              ))}
               {paginated.map((item) => (
                 <div
                   key={item.id}
@@ -304,7 +366,7 @@ export default function MenuManagerPage() {
                       ? 'selected border-[#14274E] ring-2 ring-[#14274E]/30 shadow-md'
                       : 'border-[#9BA4B4]/20 hover:border-[#14274E]/30',
                   ].join(' ')}
-                  onClick={() => setSelectedItem(item)}
+                  onClick={() => { setSelectedItem(item); setSelectedGroup(null) }}
                 >
                   {/* Sold out status badge */}
                   {item.isSoldOut && (
@@ -343,7 +405,7 @@ export default function MenuManagerPage() {
                 </div>
               ))}
 
-              {paginated.length === 0 && (
+              {paginated.length === 0 && filteredGroups.length === 0 && (
                 <div className="col-span-full flex flex-col items-center justify-center py-12 text-center">
                   <p className="text-sm font-semibold text-[#14274E]">No items found</p>
                   <p className="text-xs text-[#9BA4B4]">Try a different category or search term.</p>
@@ -358,7 +420,9 @@ export default function MenuManagerPage() {
       </div>
 
       <aside className="menu-manager-sidebar">
-        {!selectedItem ? (
+        {selectedGroup ? (
+          <div className="menu-manager-sidebar-content"><div className="menu-manager-sidebar-heading"><h2>Group Details</h2></div><img className="menu-manager-sidebar-image" src={selectedGroup.imageUrl} alt={selectedGroup.name} /><h3>{selectedGroup.name}</h3><p className="menu-manager-sidebar-category">{categories.find(category => category.id === selectedGroup.categoryId)?.name ?? 'Uncategorized'}</p><p className="menu-manager-sidebar-price">₱{selectedGroup.price.toFixed(2)}</p><dl className="menu-manager-sidebar-details"><div><dt>Description</dt><dd>{selectedGroup.description || 'No description available.'}</dd></div><div><dt>Items</dt><dd>{selectedGroup.itemNames.join(' + ')}</dd></div><div><dt>Availability</dt><dd>{selectedGroup.status}</dd></div></dl><footer className="menu-manager-sidebar-footer"><div className="menu-manager-sidebar-actions"><button type="button" onClick={() => { setEditingGroup(selectedGroup); setGroupModalOpen(true) }}><Edit2 /> Edit</button></div></footer></div>
+        ) : !selectedItem ? (
           <div className="menu-manager-sidebar-empty">
             <p>Select a menu item to view its details.</p>
           </div>
@@ -428,6 +492,14 @@ export default function MenuManagerPage() {
       editCategory={editingCategory}
       onClose={() => { setCategoryModalOpen(false); setEditingCategory(null) }}
       onSubmit={submitCategory}
+    />
+    <NewMenuGroupModal
+      isOpen={isGroupModalOpen}
+      items={items}
+      categories={categories}
+      editGroup={editingGroup}
+      onClose={() => { setGroupModalOpen(false); setEditingGroup(null) }}
+      onSubmit={submitGroup}
     />
     <NewMenuItemModal
       isOpen={isItemModalOpen}

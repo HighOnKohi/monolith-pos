@@ -136,3 +136,54 @@ export function buildReceiptSnapshot(params: ReceiptBuildParams): ReceiptSnapsho
     grandTotal,
   }
 }
+
+export interface TicketReceiptBuildParams {
+  ticketId: number
+  registeredName?: string | null
+  items: Array<{ name: string; price: number; quantity: number }>
+  baseSubtotal: number
+  discounts: ReceiptDiscount[]
+  totalDiscount: number
+  taxAmount: number
+  grandTotal: number
+  paymentMethod?: string
+}
+
+export function buildTicketReceiptSnapshot(params: TicketReceiptBuildParams): ReceiptSnapshot {
+  const {
+    ticketId,
+    registeredName,
+    items,
+    baseSubtotal,
+    discounts,
+    totalDiscount,
+    taxAmount,
+    grandTotal,
+    paymentMethod = 'Cash',
+  } = params
+
+  const lineItems: ReceiptLineItem[] = items.map((it) => ({
+    itemId: it.name,
+    name: it.name,
+    quantity: it.quantity,
+    unitPrice: it.price / 1.05,
+    lineSubtotal: (it.price * it.quantity) / 1.05,
+  }))
+
+  const now = new Date()
+  return {
+    receiptId: `RCPT-TK-${ticketId}-${Date.now()}`,
+    tableNum: `Ticket #${ticketId}${registeredName ? ` (${registeredName})` : ''}`,
+    tableId: ticketId,
+    transactionDate: formatReceiptDate(now),
+    transactionTime: formatReceiptTime(now),
+    paymentMethod,
+    status: 'PAID',
+    items: lineItems,
+    baseSubtotal,
+    tableDiscounts: discounts,
+    totalDiscount,
+    taxAmount,
+    grandTotal,
+  }
+}

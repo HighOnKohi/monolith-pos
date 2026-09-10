@@ -52,7 +52,7 @@ export interface MergePreview {
   blockReason?: string
 }
 
-const ACTIVE_ORDER_STATUSES = ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED']
+const ACTIVE_ORDER_STATUSES = ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED']
 const OCCUPIED_STATUSES: TableStatus[] = ['OCCUPIED', 'HAS_REQUEST']
 
 let cachedTables: TableData[] | null = null
@@ -118,6 +118,7 @@ export async function fetchTableWithOrders(tableId: number): Promise<TableWithOr
  */
 export async function fetchOrderSummariesForIds(
   tableIds: number[],
+  statuses: string[] = ACTIVE_ORDER_STATUSES,
 ): Promise<Map<number, { totalBill: number; activeOrderCount: number }>> {
   if (tableIds.length === 0) return new Map()
 
@@ -125,7 +126,7 @@ export async function fetchOrderSummariesForIds(
     .from('Restaurant_Orders')
     .select('TABLE_ID, TOTAL_BILL')
     .in('TABLE_ID', tableIds)
-    .in('ORDER_STATUS', ACTIVE_ORDER_STATUSES)
+    .in('ORDER_STATUS', statuses)
 
   const map = new Map<number, { totalBill: number; activeOrderCount: number }>()
   for (const id of tableIds) {

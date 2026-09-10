@@ -20,7 +20,7 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
   const { data: orders, error: ordersError } = await supabase
     .from('Restaurant_Orders')
     .select('ORDER_ID, TABLE_ID, ORDER_STATUS, ORDER_TYPE, TOTAL_BILL, TIME, KITCHEN_NOTE, SERVER_NOTE')
-    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING'])
+    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED'])
     .order('ORDER_ID', { ascending: false })
 
   if (ordersError) {
@@ -34,6 +34,7 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
     .from('Order_Items')
     .select('ORDER_ITEM_ID, ORDER_ID, ITEM_ID, ORDER_ITEM_STATUS, IS_FLAGGED')
     .in('ORDER_ID', orderIds)
+    .order('ORDER_ITEM_ID', { ascending: true })
 
   if (itemsError) {
     console.error('Dispatcher Order_Items error:', itemsError)
@@ -113,7 +114,7 @@ export async function fetchOrderViewerData(): Promise<Array<{
   const { data: ordersData, error: ordersError } = await supabase
     .from('Restaurant_Orders')
     .select('ORDER_ID, TABLE_ID')
-    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING'])
+    .eq('ORDER_STATUS', 'PREPARING')
     .order('ORDER_ID', { ascending: true })
 
   if (ordersError) throw ordersError
@@ -126,7 +127,8 @@ export async function fetchOrderViewerData(): Promise<Array<{
     .from('Order_Items')
     .select('ORDER_ID, ITEM_ID, ORDER_ITEM_STATUS')
     .in('ORDER_ID', orderIds)
-    .in('ORDER_ITEM_STATUS', ['PENDING', 'COOKING', 'DONE'])
+    .in('ORDER_ITEM_STATUS', ['PENDING', 'COOKING'])
+    .order('ORDER_ITEM_ID', { ascending: true })
 
   if (itemsError) throw itemsError
 
@@ -154,14 +156,15 @@ export async function fetchOrderViewerData(): Promise<Array<{
     map.set(name, (map.get(name) || 0) + 1)
   })
 
-  return ordersData.map((o: any) => {
+  return ordersData.flatMap((o: any) => {
     const grp = resolveTableGroupByList(Number(o.TABLE_ID), allTables)
     const itemMap = itemsByOrder.get(o.ORDER_ID) ?? new Map()
-    return {
+    if (itemMap.size === 0) return []
+    return [{
       orderId: Number(o.ORDER_ID),
       tableDisplay: grp.displayLabel,
       items: Array.from(itemMap.entries()).map(([name, quantity]) => ({ name, quantity }))
-    }
+    }]
   })
 }
 
@@ -190,24 +193,58 @@ export async function moveOrderToCooking(orderId: number): Promise<void> {
     actor: 'Dispatcher',
     reason: 'Order moved to cooking',
   })
+
+  broadcastOrderUpdate({ type: 'tables' })
 }
 
-export async function moveOrderToDispatched(orderId: number): Promise<void> {
-  // Set ORDER_STATUS to READY — removes from dispatcher, notifies cashier
-  const { error } = await supabase
+export async function moveOrderToReady(orderId: number): Promise<void> {
+  // Step: "Mark as Done" -> ORDER_STATUS = READY (shows in Dispatcher Done tab)
+  const { error: orderError } = await supabase
     .from('Restaurant_Orders')
     .update({ ORDER_STATUS: 'READY' })
     .eq('ORDER_ID', orderId)
 
-  if (error) throw error
+  if (orderError) throw orderError
 
   logOrderEvent(orderId, {
     eventType: 'STATUS_READY',
     newStatus: 'READY',
     actor: 'Dispatcher',
-    reason: 'All items cooked and ready for serving',
+    reason: 'Items cooked, order marked as done',
   })
+
+  broadcastOrderUpdate({ type: 'tables' })
 }
+
+export async function moveOrderToCompleted(orderId: number): Promise<void> {
+  // Step: "Mark as Complete" -> ORDER_STATUS = COMPLETED, ITEM_STATUS = DONE (shows in Cashier)
+  const { error: itemError } = await supabase
+    .from('Order_Items')
+    .update({ ORDER_ITEM_STATUS: 'DONE' })
+    .eq('ORDER_ID', orderId)
+    .neq('ORDER_ITEM_STATUS', 'CANCELLED')
+
+  if (itemError) console.warn('[moveOrderToCompleted] Order_Items update warning:', itemError)
+
+  const { error: orderError } = await supabase
+    .from('Restaurant_Orders')
+    .update({ ORDER_STATUS: 'COMPLETED' })
+    .eq('ORDER_ID', orderId)
+
+  if (orderError) throw orderError
+
+  logOrderEvent(orderId, {
+    eventType: 'STATUS_COMPLETED',
+    newStatus: 'COMPLETED',
+    actor: 'Dispatcher',
+    reason: 'Order marked as complete and sent to Cashier',
+  })
+
+  broadcastOrderUpdate({ type: 'tables' })
+}
+
+// Alias for backwards compatibility
+export const moveOrderToDispatched = moveOrderToReady
 
 export async function updateItemCookingCount(
   orderId: number,
@@ -229,12 +266,16 @@ export async function updateItemCookingCount(
   for (let i = 0; i < items.length; i++) {
     const newStatus = i < completedCount ? 'DONE' : 'COOKING'
     if (items[i].ORDER_ITEM_STATUS !== newStatus) {
-      await supabase
+      const { error: updateError } = await supabase
         .from('Order_Items')
         .update({ ORDER_ITEM_STATUS: newStatus })
         .eq('ORDER_ITEM_ID', items[i].ORDER_ITEM_ID)
+
+      if (updateError) throw updateError
     }
   }
+
+  broadcastOrderUpdate({ type: 'tables' })
 }
 
 export async function rejectOrderItems(
@@ -306,6 +347,8 @@ export async function rejectOrderItems(
       reason: `${itemRejections.length} item(s) rejected`,
     })
   }
+
+  broadcastOrderUpdate({ type: 'tables' })
 }
 
 export async function toggleItemAvailability(
@@ -327,4 +370,428 @@ export async function saveDispatcherNote(orderId: number, note: string): Promise
     .eq('ORDER_ID', orderId)
 
   if (error) throw error
+}
+
+// ─── Dispatcher & Order Viewer Ticket Operations ──────────────────────────────
+
+export interface DispatcherTicketItem {
+  ticketOrderItemId: number
+  ticketOrderId: number
+  itemId: number | null
+  itemGroupId: number | null
+  name: string
+  status: 'REQUESTED' | 'PREPARING' | 'COMPLETED'
+  isGroup?: boolean
+  groupName?: string
+  includedItems?: Array<{ id: number; name: string }>
+}
+
+export interface DispatcherTicketOrder {
+  ticketId: number
+  registeredName: string | null
+  registeredContactInfo: number | null
+  registeredTimeOfArrival: string | null
+  ticketStatus: 'REQUESTED' | 'PREPARING' | 'COMPLETED'
+  items: DispatcherTicketItem[]
+}
+
+// ─── Realtime Cross-Component Event Bus ───────────────────────────────────────
+
+const REALTIME_CHANNEL_NAME = 'monolith_order_events'
+let broadcastChannelInstance: BroadcastChannel | null = null
+
+function getBroadcastChannel(): BroadcastChannel | null {
+  if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+    if (!broadcastChannelInstance) {
+      broadcastChannelInstance = new BroadcastChannel(REALTIME_CHANNEL_NAME)
+    }
+    return broadcastChannelInstance
+  }
+  return null
+}
+
+export function broadcastOrderUpdate(detail: { type?: 'tables' | 'tickets' | 'all'; source?: string } = {}) {
+  if (typeof window === 'undefined') return
+
+  // 1. Dispatch DOM window event for same-tab listeners
+  window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
+
+  // 2. Broadcast across browser tabs / windows with zero network overhead
+  try {
+    const channel = getBroadcastChannel()
+    channel?.postMessage(detail)
+  } catch (err) {
+    console.warn('[broadcastOrderUpdate] BroadcastChannel error:', err)
+  }
+}
+
+export function subscribeToOrderUpdates(callback: (detail: any) => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+
+  const handleCustomEvent = (e: Event) => {
+    callback((e as CustomEvent).detail ?? {})
+  }
+
+  window.addEventListener('monolith-order-update', handleCustomEvent)
+
+  const channel = getBroadcastChannel()
+  const handleBroadcastMessage = (event: MessageEvent) => {
+    callback(event.data ?? {})
+  }
+
+  channel?.addEventListener('message', handleBroadcastMessage)
+
+  return () => {
+    window.removeEventListener('monolith-order-update', handleCustomEvent)
+    channel?.removeEventListener('message', handleBroadcastMessage)
+  }
+}
+
+export async function fetchDispatcherTicketOrders(): Promise<DispatcherTicketOrder[]> {
+  try {
+    // 1. Fetch all active Ticket_Orders
+    const { data: tickets, error: ticketsError } = await supabase
+      .from('Ticket_Orders')
+      .select('TICKET_ID, REGISTERED_NAME, REGISTERED_CONTACT_INFO, REGISTERED_TIME_OF_ARRIVAL, TICKET_STATUS')
+      .order('TICKET_ID', { ascending: false })
+
+    if (ticketsError) {
+      console.error('[dispatcherService] Ticket_Orders query error:', ticketsError)
+      return []
+    }
+    if (!tickets || tickets.length === 0) return []
+
+    const ticketIds = tickets.map((t: any) => Number(t.TICKET_ID))
+
+    // 2. Fetch Ticket_Order_Items for these tickets
+    const { data: itemsData, error: itemsError } = await supabase
+      .from('Ticket_Order_Items')
+      .select('TICKET_ORDER_ITEM_ID, TICKET_ORDER_ID, ITEM_ID, ITEM_GROUP_ID, TICKET_ORDER_ITEM_STATUS')
+      .in('TICKET_ORDER_ID', ticketIds)
+      .order('TICKET_ORDER_ITEM_ID', { ascending: true })
+
+    if (itemsError) {
+      console.error('[dispatcherService] Ticket_Order_Items query error:', itemsError)
+      return []
+    }
+
+    const rawItems = itemsData ?? []
+
+    // 3. Fetch Menu_Items for individual items
+    const individualItemIds = [...new Set(rawItems.map((i: any) => Number(i.ITEM_ID)).filter(Boolean))]
+    const menuItemMap = new Map<number, string>()
+    if (individualItemIds.length > 0) {
+      const { data: menuData } = await supabase
+        .from('Menu_Items')
+        .select('ITEM_ID, ITEM_NAME')
+        .in('ITEM_ID', individualItemIds)
+
+      ;(menuData ?? []).forEach((m: any) => menuItemMap.set(Number(m.ITEM_ID), String(m.ITEM_NAME)))
+    }
+
+    // 4. Fetch Group Combos & their included items
+    const groupIds = [...new Set(rawItems.map((i: any) => Number(i.ITEM_GROUP_ID)).filter(Boolean))]
+    const groupMap = new Map<number, { groupName: string; childItems: Array<{ id: number; name: string }> }>()
+    if (groupIds.length > 0) {
+      try {
+        const { data: groupData } = await supabase
+          .from('Menu_Item_Groups')
+          .select('MENU_GROUP_ID, GROUP_NAME, Item_Groups(ITEM_ID, Menu_Items(ITEM_ID, ITEM_NAME))')
+          .in('MENU_GROUP_ID', groupIds)
+
+        ;(groupData ?? []).forEach((gRow: any) => {
+          const links = (gRow['Item_Groups'] as Array<any>) ?? []
+          const childItems = links.map((l: any) => ({
+            id: Number(l.ITEM_ID),
+            name: String(l.Menu_Items?.ITEM_NAME ?? `Item #${l.ITEM_ID}`),
+          }))
+          groupMap.set(Number(gRow.MENU_GROUP_ID), {
+            groupName: String(gRow.GROUP_NAME ?? 'Combo'),
+            childItems,
+          })
+        })
+      } catch (grpErr) {
+        console.warn('[dispatcherService] Group query failed:', grpErr)
+      }
+    }
+
+    // 5. Group items by ticket and expand combos into individual items
+    const itemsByTicket = new Map<number, DispatcherTicketItem[]>()
+
+    rawItems.forEach((oi: any) => {
+      const ticketId = Number(oi.TICKET_ORDER_ID)
+      if (!itemsByTicket.has(ticketId)) itemsByTicket.set(ticketId, [])
+      const list = itemsByTicket.get(ticketId)!
+
+      const rawStatus = String(oi.TICKET_ORDER_ITEM_STATUS ?? '').toUpperCase().trim()
+      const normalizedStatus: 'REQUESTED' | 'PREPARING' | 'COMPLETED' =
+        (rawStatus === 'COMPLETED' || rawStatus === 'DONE' || rawStatus === '3' || rawStatus === 'SERVED')
+          ? 'COMPLETED'
+          : (rawStatus === 'PREPARING' || rawStatus === 'COOKING' || rawStatus === '2')
+          ? 'PREPARING'
+          : 'REQUESTED'
+
+      const groupId = oi.ITEM_GROUP_ID ? Number(oi.ITEM_GROUP_ID) : null
+      const itemId = oi.ITEM_ID ? Number(oi.ITEM_ID) : null
+
+      if (groupId && groupMap.has(groupId)) {
+        const grp = groupMap.get(groupId)!
+        list.push({
+          ticketOrderItemId: Number(oi.TICKET_ORDER_ITEM_ID),
+          ticketOrderId: ticketId,
+          itemId: null,
+          itemGroupId: groupId,
+          name: grp.groupName,
+          status: normalizedStatus,
+          isGroup: true,
+          groupName: grp.groupName,
+          includedItems: grp.childItems,
+        })
+      } else if (itemId) {
+        list.push({
+          ticketOrderItemId: Number(oi.TICKET_ORDER_ITEM_ID),
+          ticketOrderId: ticketId,
+          itemId,
+          itemGroupId: null,
+          name: menuItemMap.get(itemId) || `Item #${itemId}`,
+          status: normalizedStatus,
+        })
+      } else {
+        list.push({
+          ticketOrderItemId: Number(oi.TICKET_ORDER_ITEM_ID),
+          ticketOrderId: ticketId,
+          itemId: null,
+          itemGroupId: null,
+          name: `Ticket Item #${oi.TICKET_ORDER_ITEM_ID}`,
+          status: normalizedStatus,
+        })
+      }
+    })
+
+    return tickets.map((tRow: any) => {
+      const rawTicketStatus = String(tRow.TICKET_STATUS ?? 'REQUESTED').toUpperCase().trim()
+      const ticketStatus: 'REQUESTED' | 'PREPARING' | 'COMPLETED' =
+        rawTicketStatus === 'COMPLETED' || rawTicketStatus === 'SERVED' || rawTicketStatus === 'DONE'
+          ? 'COMPLETED'
+          : rawTicketStatus === 'PREPARING' || rawTicketStatus === 'COOKING'
+          ? 'PREPARING'
+          : 'REQUESTED'
+
+      return {
+        ticketId: Number(tRow.TICKET_ID),
+        registeredName: (tRow.REGISTERED_NAME as string | null) ?? null,
+        registeredContactInfo: tRow.REGISTERED_CONTACT_INFO ? Number(tRow.REGISTERED_CONTACT_INFO) : null,
+        registeredTimeOfArrival: (tRow.REGISTERED_TIME_OF_ARRIVAL as string | null) ?? null,
+        ticketStatus,
+        items: itemsByTicket.get(Number(tRow.TICKET_ID)) ?? [],
+      }
+    })
+  } catch (err) {
+    console.error('[dispatcherService] fetchDispatcherTicketOrders fatal error:', err)
+    return []
+  }
+}
+
+export async function startCookingTicket(ticketId: number): Promise<void> {
+  const { error } = await supabase
+    .from('Ticket_Orders')
+    .update({ TICKET_STATUS: 'PREPARING' })
+    .eq('TICKET_ID', ticketId)
+
+  if (error) throw error
+
+  // Update item status in Ticket_Order_Items to PREPARING
+  const { error: itemErr } = await supabase
+    .from('Ticket_Order_Items')
+    .update({ TICKET_ORDER_ITEM_STATUS: 'PREPARING' })
+    .eq('TICKET_ORDER_ID', ticketId)
+
+  if (itemErr) throw itemErr
+
+  broadcastOrderUpdate({ type: 'tickets' })
+}
+
+export async function cookAllRequestedTickets(): Promise<void> {
+  const { error } = await supabase
+    .from('Ticket_Orders')
+    .update({ TICKET_STATUS: 'PREPARING' })
+    .eq('TICKET_STATUS', 'REQUESTED')
+
+  if (error) throw error
+
+  const { error: itemErr } = await supabase
+    .from('Ticket_Order_Items')
+    .update({ TICKET_ORDER_ITEM_STATUS: 'PREPARING' })
+    .eq('TICKET_ORDER_ITEM_STATUS', 'REQUESTED')
+
+  if (itemErr) {
+    console.warn('[cookAllRequestedTickets] Item status update warning:', itemErr)
+  }
+
+  broadcastOrderUpdate({ type: 'tickets' })
+}
+
+export async function startCookingTicketDish(
+  ticketItemIds: number[],
+  ticketIds: number[],
+): Promise<void> {
+  const uniqueItemIds = [...new Set(ticketItemIds)]
+  const uniqueTicketIds = [...new Set(ticketIds)]
+
+  if (uniqueItemIds.length > 0) {
+    const { error: itemErr } = await supabase
+      .from('Ticket_Order_Items')
+      .update({ TICKET_ORDER_ITEM_STATUS: 'PREPARING' })
+      .in('TICKET_ORDER_ITEM_ID', uniqueItemIds)
+
+    if (itemErr) {
+      console.warn('[startCookingTicketDish] Failed to update item status to PREPARING:', itemErr)
+    }
+  }
+
+  if (uniqueTicketIds.length > 0) {
+    await supabase
+      .from('Ticket_Orders')
+      .update({ TICKET_STATUS: 'PREPARING' })
+      .in('TICKET_ID', uniqueTicketIds)
+      .eq('TICKET_STATUS', 'REQUESTED')
+  }
+
+  broadcastOrderUpdate({ type: 'tickets' })
+}
+
+export async function updateTicketDishCookingCount(
+  ticketItemIds: number[],
+  completedCount: number,
+): Promise<void> {
+  const uniqueIds = [...new Set(ticketItemIds)]
+  for (let i = 0; i < uniqueIds.length; i++) {
+    const isDone = i < completedCount
+    const textStatus = isDone ? 'COMPLETED' : 'PREPARING'
+
+    // Only update standalone items (where ITEM_GROUP_ID is null) to avoid affecting other items in combo
+    const { error } = await supabase
+      .from('Ticket_Order_Items')
+      .update({ TICKET_ORDER_ITEM_STATUS: textStatus })
+      .eq('TICKET_ORDER_ITEM_ID', uniqueIds[i])
+      .is('ITEM_GROUP_ID', null)
+
+    if (error) {
+      console.warn('[updateTicketDishCookingCount] Item update error:', error)
+    }
+  }
+
+  broadcastOrderUpdate({ type: 'tickets' })
+}
+
+export async function markTicketDishDone(
+  ticketItemIds: number[],
+  ticketIds: number[],
+): Promise<void> {
+  const uniqueItemIds = [...new Set(ticketItemIds)]
+  const uniqueTicketIds = [...new Set(ticketIds)]
+
+  if (uniqueItemIds.length > 0) {
+    const { error: itemErr } = await supabase
+      .from('Ticket_Order_Items')
+      .update({ TICKET_ORDER_ITEM_STATUS: 'COMPLETED' })
+      .in('TICKET_ORDER_ITEM_ID', uniqueItemIds)
+
+    if (itemErr) {
+      console.warn('[markTicketDishDone] Item update error:', itemErr)
+    }
+  }
+
+  // Check if any tickets have all their items COMPLETED now
+  for (const tid of uniqueTicketIds) {
+    const { data: ticketItems } = await supabase
+      .from('Ticket_Order_Items')
+      .select('TICKET_ORDER_ITEM_STATUS')
+      .eq('TICKET_ORDER_ID', tid)
+
+    if (ticketItems && ticketItems.length > 0) {
+      const allDone = ticketItems.every((it: any) => {
+        const s = String(it.TICKET_ORDER_ITEM_STATUS ?? '').toUpperCase().trim()
+        return s === 'COMPLETED' || s === 'DONE' || s === '3'
+      })
+      if (allDone) {
+        await supabase
+          .from('Ticket_Orders')
+          .update({ TICKET_STATUS: 'COMPLETED' })
+          .eq('TICKET_ID', tid)
+      }
+    }
+  }
+
+  broadcastOrderUpdate({ type: 'tickets' })
+}
+
+export async function updateTicketItemCookingCount(
+  ticketId: number,
+  ticketOrderItemIds: number[],
+  completedCount: number,
+): Promise<void> {
+  const uniqueIds = [...new Set(ticketOrderItemIds)]
+  for (let i = 0; i < uniqueIds.length; i++) {
+    const isDone = i < completedCount
+    const textStatus = isDone ? 'COMPLETED' : 'PREPARING'
+
+    const { error } = await supabase
+      .from('Ticket_Order_Items')
+      .update({ TICKET_ORDER_ITEM_STATUS: textStatus })
+      .eq('TICKET_ORDER_ITEM_ID', uniqueIds[i])
+
+    if (error) {
+      console.warn('[updateTicketItemCookingCount] update error:', error)
+    }
+  }
+
+  broadcastOrderUpdate({ type: 'tickets' })
+}
+
+export async function completeTicketOrder(ticketId: number): Promise<void> {
+  const { error } = await supabase
+    .from('Ticket_Orders')
+    .update({ TICKET_STATUS: 'COMPLETED' })
+    .eq('TICKET_ID', ticketId)
+
+  if (error) throw error
+
+  const { error: itemErr } = await supabase
+    .from('Ticket_Order_Items')
+    .update({ TICKET_ORDER_ITEM_STATUS: 'COMPLETED' })
+    .eq('TICKET_ORDER_ID', ticketId)
+
+  if (itemErr) console.warn('[completeTicketOrder] error:', itemErr)
+
+  broadcastOrderUpdate({ type: 'tickets' })
+}
+
+export async function fetchTicketOrderViewerData(): Promise<Array<{
+  orderId: number
+  tableDisplay: string
+  registeredName?: string | null
+  items: Array<{ name: string; quantity: number }>
+}>> {
+  const tickets = await fetchDispatcherTicketOrders()
+  const activeTickets = tickets.filter((t) => t.ticketStatus !== 'COMPLETED')
+
+  return activeTickets.flatMap((ticket) => {
+    const itemMap = new Map<string, number>()
+    // Only include items that are currently PREPARING
+    ticket.items.forEach((item) => {
+      if (item.status === 'PREPARING') {
+        itemMap.set(item.name, (itemMap.get(item.name) || 0) + 1)
+      }
+    })
+
+    if (itemMap.size === 0) return []
+
+    return [{
+      orderId: ticket.ticketId,
+      tableDisplay: `Ticket #${ticket.ticketId}`,
+      registeredName: ticket.registeredName,
+      items: Array.from(itemMap.entries()).map(([name, quantity]) => ({ name, quantity })),
+    }]
+  })
 }
