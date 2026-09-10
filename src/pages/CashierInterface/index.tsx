@@ -237,17 +237,39 @@ export default function CashierInterface() {
       tableId: selected.group.anchorTableId,
       tableNum: selected.group.anchorTableNum
     })
+    const previousTables = tables
+    const previousSummaries = summaries
+    const previousRequests = billRequests
+    const previousOrders = orders
+    const previousSelectedId = selectedId
+    const memberIds = selected.group.memberTableIds
+    setOrders([])
+    setItemDiscounts(new Map())
+    setBillRequests((prev) => prev.filter((request) => !memberIds.includes(request.tableId)))
+    setTables((prev) => prev.map((table) => memberIds.includes(table.TABLE_ID)
+      ? { ...table, STATUS: 'AVAILABLE', CURRENT_GUEST_COUNT: 0, BILL_OUT_REQUESTED: false }
+      : table))
+    setSummaries((prev) => {
+      const next = new Map(prev)
+      memberIds.forEach((id) => next.set(id, { totalBill: 0, activeOrderCount: 0 }))
+      return next
+    })
+    setSelectedId(null)
+
     try {
-      await settleTableOrders(selected.group.anchorTableId, selected.group.memberTableIds)
+      await settleTableOrders(selected.group.anchorTableId, memberIds)
       if (activeBillRequest) await updateBillRequestStatus(activeBillRequest.requestId, 'PAID')
       await resolveBillOutRequest(selected.group.anchorTableId)
       setReceipt(snapshot)
-      setSelectedId(null)
-      setOrders([])
-      setItemDiscounts(new Map())
       await load()
     } catch (err) {
       console.error('[CashierInterface] Settlement failed:', err)
+      setTables(previousTables)
+      setSummaries(previousSummaries)
+      setBillRequests(previousRequests)
+      setOrders(previousOrders)
+      setItemDiscounts(new Map())
+      setSelectedId(previousSelectedId)
       setError(err instanceof Error ? err.message : 'Unable to complete bill-out. Please try again.')
     } finally {
       setBusy(false)

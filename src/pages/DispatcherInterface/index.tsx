@@ -29,6 +29,7 @@ export default function DispatcherInterface() {
   useEffect(() => { return () => { isMounted.current = false } }, [])
 
   const [orders, setOrders] = useState<DispatcherOrder[]>([])
+  const currentlyRejectedRef = useRef(new Set<number>())
   const [viewerOrders, setViewerOrders] = useState<Array<{
     orderId: number
     tableDisplay: string
@@ -44,7 +45,14 @@ export default function DispatcherInterface() {
     if (!silent) setIsLoading(true)
     try {
       const data = await fetchDispatcherOrders()
-      if (isMounted.current) setOrders(data)
+      if (isMounted.current) {
+        const returnedOrderIds = new Set(data.map((order) => order.orderId))
+        const nextRejected = new Set(currentlyRejectedRef.current)
+        nextRejected.forEach((orderId) => {
+          if (!returnedOrderIds.has(orderId)) nextRejected.delete(orderId)
+        })
+        setOrders(data.filter((order) => !nextRejected.has(order.orderId)))
+      }
     } catch (err) {
       console.error('Failed to load dispatcher orders:', err)
       if (isMounted.current) showToast('Failed to load orders', 'error')
@@ -63,6 +71,8 @@ export default function DispatcherInterface() {
   }, [])
 
   useEffect(() => {
+    // React Strict Mode re-runs effects during development; re-arm async state updates.
+    isMounted.current = true
     loadOrders(false)
 
     const handleVisibilityChange = () => {
@@ -144,37 +154,52 @@ export default function DispatcherInterface() {
     return false
   })
 
-  async function handleMoveToCooking(orderId: number) {
-    try {
-      await moveOrderToCooking(orderId)
-      showToast('Order moved to cooking', 'success')
-      loadOrders(true)
-    } catch (err) {
-      showToast('Failed to move order', 'error')
-    }
+  function handleMoveToCooking(orderId: number) {
+    const previousOrders = orders
+    setOrders((currentOrders) => currentOrders.map((order) => order.orderId === orderId
+      ? {
+          ...order,
+          orderStatus: 'PREPARING',
+          items: order.items.map((item) => item.status === 'PENDING' ? { ...item, status: 'COOKING' } : item),
+        }
+      : order))
+    showToast('Order moved to cooking', 'success')
+
+    void moveOrderToCooking(orderId)
+      .then(() => loadOrders(true))
+      .catch((err) => {
+        console.error('Failed to persist cooking status:', err)
+        setOrders(previousOrders)
+        showToast('Failed to move order', 'error')
+      })
   }
 
-  async function handleMoveToDispatched(orderId: number) {
-    try {
-      await moveOrderToDispatched(orderId)
-      showToast('Order marked as completed', 'success')
-      loadOrders(true)
-    } catch (err) {
-      showToast('Failed to complete order', 'error')
-    }
+  function handleMoveToDispatched(orderId: number) {
+    const previousOrders = orders
+    setOrders((currentOrders) => currentOrders.map((order) => order.orderId === orderId
+      ? { ...order, orderStatus: 'READY' }
+      : order))
+    showToast('Order marked as completed', 'success')
+
+    void moveOrderToDispatched(orderId)
+      .then(() => loadOrders(true))
+      .catch((err) => {
+        console.error('Failed to persist completed status:', err)
+        setOrders(previousOrders)
+        showToast('Failed to complete order', 'error')
+      })
   }
 
-  async function handleRejectItems(orderId: number) {
+  function handleRejectItems(orderId: number) {
     const order = orders.find(o => o.orderId === orderId)
     if (!order) return
 
     const rejections = Array.from(itemRejections.entries()).flatMap(([itemId, reason]) => {
-      // Get all order items for this menu item
       const items = order.items.filter(i => i.itemId === itemId)
       return items.map(item => ({
         orderItemId: item.orderItemId,
         itemId: item.itemId,
-        reason
+        reason,
       }))
     })
 
@@ -183,14 +208,27 @@ export default function DispatcherInterface() {
       return
     }
 
-    try {
-      await rejectOrderItems(orderId, rejections)
-      showToast(`${rejections.length} item(s) rejected`, 'success')
-      setItemRejections(new Map())
-      loadOrders(true)
-    } catch (err) {
-      showToast('Failed to reject items', 'error')
-    }
+    const rejectedIds = new Set(rejections.map((item) => item.orderItemId))
+    const previousOrders = orders
+    const nextRejected = new Set(currentlyRejectedRef.current)
+    nextRejected.add(orderId)
+    currentlyRejectedRef.current = nextRejected
+    setOrders((currentOrders) => currentOrders
+      .map((currentOrder) => currentOrder.orderId === orderId
+        ? { ...currentOrder, items: currentOrder.items.filter((item) => !rejectedIds.has(item.orderItemId)) }
+        : currentOrder)
+      .filter((currentOrder) => currentOrder.items.some((item) => item.status !== 'CANCELLED')))
+    setItemRejections(new Map())
+    showToast(`${rejections.length} item(s) rejected`, 'success')
+
+    void rejectOrderItems(orderId, rejections)
+      .then(() => loadOrders(true))
+      .catch((err) => {
+        console.error('Failed to persist rejected items:', err)
+        currentlyRejectedRef.current.delete(orderId)
+        setOrders(previousOrders)
+        showToast('Rejection could not be saved', 'error')
+      })
   }
 
   function toggleRejection(itemId: string, reason: RejectionReason) {

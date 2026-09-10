@@ -17,6 +17,9 @@ function mapOrder(row: Record<string, unknown>): Order {
       orderId: Number(row['ORDER_ID']),
       itemId: String(oi['ITEM_ID']),
       status: String(oi['ORDER_ITEM_STATUS'] ?? 'PENDING'),
+      rejectionReason: Array.isArray(oi['REJECTION_REASON'])
+        ? String(oi['REJECTION_REASON'][0] ?? '') || null
+        : (oi['REJECTION_REASON'] as string | null) ?? null,
       isFlagged: Boolean(oi['IS_FLAGGED']),
       pwd: Boolean(Array.isArray(oi['Discounts']) ? oi['Discounts'][0]?.['PWD'] : (oi['Discounts'] as Record<string, unknown> | undefined)?.['PWD']),
       senior: Boolean(Array.isArray(oi['Discounts']) ? oi['Discounts'][0]?.['SENIOR'] : (oi['Discounts'] as Record<string, unknown> | undefined)?.['SENIOR']),
@@ -151,6 +154,7 @@ export async function fetchOrdersByTable(
         ORDER_ITEM_ID,
         ITEM_ID,
         ORDER_ITEM_STATUS,
+        REJECTION_REASON,
         IS_FLAGGED,
         Discounts (
           PWD,

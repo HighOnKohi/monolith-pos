@@ -2,6 +2,14 @@ import { useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { MenuItem } from '@/types/menu'
 
+export const MENU_ITEM_STATUS_UPDATED = 'menu-item-status-updated'
+
+export function broadcastMenuItemStatus(itemId: string | number, isSoldOut: boolean) {
+  window.dispatchEvent(new CustomEvent(MENU_ITEM_STATUS_UPDATED, {
+    detail: { itemId: String(itemId), isSoldOut },
+  }))
+}
+
 /**
  * Subscribes to Menu_Items ITEM_STATUS changes via Supabase Realtime.
  * When an item becomes OUT_OF_STOCK or AVAILABLE, calls onUpdate with

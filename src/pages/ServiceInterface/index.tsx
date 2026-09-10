@@ -285,54 +285,59 @@ export default function CashierPage() {
 
   // Bill Request Handlers
   const handleAcknowledgeBillRequest = async (req: BillRequest) => {
+    setBillRequests((prev) =>
+      prev.map((r) => (r.requestId === req.requestId ? { ...r, status: 'PROCESSING' } : r))
+    )
     try {
       await updateBillRequestStatus(req.requestId, 'PROCESSING', req.tableId)
-      setBillRequests((prev) =>
-        prev.map((r) => (r.requestId === req.requestId ? { ...r, status: 'PROCESSING' } : r))
-      )
       showToast(`Bill request for Table ${req.tableId} marked processing.`)
     } catch (err) {
       console.error(err)
+      setBillRequests((prev) =>
+        prev.map((r) => (r.requestId === req.requestId ? req : r))
+      )
       showToast('Error updating bill request.', 'error')
     }
   }
 
   const handleClearAssistance = useCallback(async (tableId: number) => {
+    const previousTables = tables
+    const affectedIds = resolveTableGroupByList(tableId, tables as unknown as TableData[]).memberTableIds
+    setTables((prev) =>
+      prev.map((t) =>
+        affectedIds.includes(t.TABLE_ID)
+          ? { ...t, STATUS: 'OCCUPIED', BILL_OUT_REQUESTED: false }
+          : t,
+      ),
+    )
     try {
-      const affectedIds = await resolveTableAssistance(tableId)
-      setTables((prev) =>
-        prev.map((t) =>
-          affectedIds.includes(t.TABLE_ID)
-            ? { ...t, STATUS: 'OCCUPIED', BILL_OUT_REQUESTED: false }
-            : t,
-        ),
-      )
+      const resolvedIds = await resolveTableAssistance(tableId)
+      setTables((prev) => prev.map((t) => resolvedIds.includes(t.TABLE_ID) ? { ...t, STATUS: 'OCCUPIED', BILL_OUT_REQUESTED: false } : t))
       showToast('Assistance alert cleared.', 'info')
     } catch (err) {
       console.error(err)
+      setTables(previousTables)
       showToast('Failed to clear assistance alert.', 'error')
     }
-  }, [showToast])
+  }, [showToast, tables])
 
   const handleClearBillOut = useCallback(async (tableId: number) => {
+    const previousTables = tables
+    const previousRequests = billRequests
+    const affectedIds = resolveTableGroupByList(tableId, tables as unknown as TableData[]).memberTableIds
+    setTables((prev) => prev.map((t) => affectedIds.includes(t.TABLE_ID) ? { ...t, BILL_OUT_REQUESTED: false } : t))
+    setBillRequests((prev) => prev.filter((r) => !affectedIds.includes(r.tableId)))
     try {
-      const affectedIds = await resolveBillOutRequest(tableId)
-      setTables((prev) =>
-        prev.map((t) =>
-          affectedIds.includes(t.TABLE_ID)
-            ? { ...t, BILL_OUT_REQUESTED: false }
-            : t,
-        ),
-      )
-      setBillRequests((prev) =>
-        prev.filter((r) => !affectedIds.includes(r.tableId)),
-      )
+      const resolvedIds = await resolveBillOutRequest(tableId)
+      setTables((prev) => prev.map((t) => resolvedIds.includes(t.TABLE_ID) ? { ...t, BILL_OUT_REQUESTED: false } : t))
       showToast('Bill out request cleared.', 'info')
     } catch (err) {
       console.error(err)
+      setTables(previousTables)
+      setBillRequests(previousRequests)
       showToast('Failed to clear bill out request.', 'error')
     }
-  }, [showToast])
+  }, [billRequests, showToast, tables])
 
   // Bill Settlement Handler
   const handleCompletePayment = async (discountInfo: DiscountInfo) => {
@@ -351,15 +356,26 @@ export default function CashierPage() {
       tableNum,
     })
 
+    const previousOrders = tableOrders
+    const previousTables = tables
+    const previousRequests = billRequests
+    const previousPunchCart = punchCart
+    const matchedRequests = billRequests.filter((r) =>
+      selectedGroup.memberTableIds.includes(r.tableId),
+    )
+    setTableOrders([])
+    setPunchCart([])
+    setBillRequests((prev) => prev.filter((r) => !selectedGroup.memberTableIds.includes(r.tableId)))
+    setTables((prev) => prev.map((table) => selectedGroup.memberTableIds.includes(table.TABLE_ID)
+      ? { ...table, STATUS: 'AVAILABLE', BILL_OUT_REQUESTED: false, CURRENT_GUEST_COUNT: 0 }
+      : table))
+
     try {
       // ── STEP 2: Execute bill-out DB operations ──
       // 1. Settle all active table orders across all member tables in the group
       await settleTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
 
       // 2. If there are active bill requests for any member table, mark PAID
-      const matchedRequests = billRequests.filter((r) =>
-        selectedGroup.memberTableIds.includes(r.tableId),
-      )
       for (const req of matchedRequests) {
         await updateBillRequestStatus(req.requestId, 'PAID', req.tableId)
       }
@@ -389,6 +405,10 @@ export default function CashierPage() {
       await loadInitialData()
     } catch (err) {
       console.error('Payment completion error:', err)
+      setTableOrders(previousOrders)
+      setTables(previousTables)
+      setBillRequests(previousRequests)
+      setPunchCart(previousPunchCart)
       showToast('Failed to complete payment. Order state preserved.', 'error')
     }
   }
@@ -430,12 +450,15 @@ export default function CashierPage() {
   }
 
   const handleDeleteCancelledOrder = async (order: Order) => {
+    const previousOrders = tableOrders
+    setTableOrders((prev) => prev.filter((item) => item.orderId !== order.orderId))
     try {
       await deleteOrder(order.orderId)
       showToast(`Cancelled Order #${order.orderId} deleted.`, 'success')
-      await loadTableOrders(selectedTableId)
+      await loadTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
     } catch (err) {
       console.error('Failed to delete cancelled order:', err)
+      setTableOrders(previousOrders)
       showToast('Failed to delete cancelled order.', 'error')
     }
   }
@@ -480,21 +503,51 @@ export default function CashierPage() {
   const handleSendOrderToKitchen = async () => {
     if (!selectedTableId || punchCart.length === 0) return
     setIsSubmittingOrder(true)
+    const previousOrders = tableOrders
+    const previousTables = tables
 
     try {
       const subtotal = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
       const total = subtotal * 1.05
+      const optimisticOrderId = -Date.now()
+      const optimisticOrder: Order = {
+        orderId: optimisticOrderId,
+        tableId: selectedGroup.anchorTableId,
+        orderStatus: 'REQUESTED',
+        orderType: diningType === 'take-away' ? 'TAKEOUT' : 'DINE-IN',
+        totalBill: total,
+        serverNote: serverNote.trim() || undefined,
+        createdAt: new Date().toISOString(),
+        items: punchCart.flatMap((ci) => Array.from({ length: ci.quantity }, (_, index) => ({
+          orderItemId: optimisticOrderId - index,
+          orderId: optimisticOrderId,
+          itemId: ci.item.id,
+          status: 'PENDING',
+          name: ci.item.name,
+          price: ci.item.price,
+          imageUrl: ci.item.imageUrl,
+        }))),
+      }
+      setTableOrders((prev) => [optimisticOrder, ...prev])
+      setTables((prev) => prev.map((table) => selectedGroup.memberTableIds.includes(table.TABLE_ID)
+        ? { ...table, STATUS: table.STATUS === 'HAS_REQUEST' ? table.STATUS : 'OCCUPIED' }
+        : table))
+      setPunchCart([])
+      setServerNote('')
+      setActiveRightTab('pending')
 
       await createOrder(selectedGroup.anchorTableId, punchCart, diningType, total, 'Cashier', serverNote)
 
       showToast(`Order sent to Kitchen for ${selectedGroup.displayLabel}!`, 'success')
-      setPunchCart([])
-      setServerNote('')
-      setActiveRightTab('pending')
       await loadTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
       await loadTables()
     } catch (err) {
       console.error('Failed to punch order:', err)
+      setTableOrders(previousOrders)
+      setTables(previousTables)
+      setPunchCart(punchCart)
+      setServerNote(serverNote)
+      setActiveRightTab('new')
       showToast('Failed to submit order. Please try again.', 'error')
     } finally {
       setIsSubmittingOrder(false)

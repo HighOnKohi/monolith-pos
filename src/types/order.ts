@@ -29,6 +29,7 @@ export interface OrderItem {
   itemId: string
   notes?: string
   status: string
+  rejectionReason?: string | null
   isFlagged?: boolean
   pwd?: boolean
   senior?: boolean

@@ -1,4 +1,3 @@
-import type { MenuItem } from './menu'
 import type { CartItem, DiningType } from './cart'
 
 export type AdvanceOrderStatus =

@@ -585,6 +585,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                                       <span>Item #{item.orderItemId}</span>
                                       <span className={item.status === 'CANCELLED' ? 'font-bold text-rose-600' : 'font-semibold text-slate-500'}>
                                         {item.status}
+                                        {item.status === 'CANCELLED' && item.rejectionReason && ` — ${item.rejectionReason}`}
                                       </span>
                                     </div>
                                   ))}
@@ -621,14 +622,18 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
               ) : (
                 cancelledOrders.map((ord) => {
                   const groupedItems = Object.values(
-                    (ord.items ?? []).reduce<Record<string, { name: string; count: number; items: typeof ord.items }>>((groups, item) => {
+                    (ord.items ?? []).reduce<Record<string, { name: string; count: number; items: typeof ord.items; reasons: string[] }>>((groups, item) => {
                       const group = groups[item.itemId] ?? {
                         name: item.name || `Item #${item.itemId}`,
                         count: 0,
                         items: [],
+                        reasons: [],
                       }
                       group.count += 1
                       group.items = [...(group.items ?? []), item]
+                      if (item.rejectionReason && !group.reasons.includes(item.rejectionReason)) {
+                        group.reasons.push(item.rejectionReason)
+                      }
                       groups[item.itemId] = group
                       return groups
                     }, {}),
@@ -668,9 +673,16 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                               key={`${ord.orderId}-${group.items?.[0]?.itemId}`}
                               className="flex items-center justify-between py-1"
                             >
-                              <span className="font-medium text-slate-700">
-                                {group.name} <span className="text-slate-400">x{group.count}</span>
-                              </span>
+                              <div>
+                                <span className="font-medium text-slate-700">
+                                  {group.name} <span className="text-slate-400">x{group.count}</span>
+                                </span>
+                                {group.reasons.length > 0 && (
+                                  <p className="text-[10px] font-semibold text-rose-600">
+                                    Reason: {group.reasons.join(', ')}
+                                  </p>
+                                )}
+                              </div>
                               {isFlagged && (
                                 <span className="text-[10px] font-black text-amber-600">
                                   FLAGGED

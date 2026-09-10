@@ -1,7 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import type {
   AdvanceOrder,
-  AdvanceOrderItem,
   CreateAdvanceOrderPayload,
   PreOrderSession,
   AdvanceOrderStatus,

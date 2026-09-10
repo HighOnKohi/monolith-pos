@@ -243,30 +243,64 @@ export default function EventsPage() {
     setDrawerOpen(true)
   }
 
+  const eventFromForm = (data: EventFormData, previous?: RestaurantEvent): RestaurantEvent => ({
+    eventId: previous?.eventId ?? -Date.now(),
+    title: data.title.trim(),
+    description: data.description.trim() || null,
+    category: data.category,
+    color: data.color || null,
+    startAt: new Date(`${data.startDate}T${data.startTime}`).toISOString(),
+    endAt: new Date(`${data.endDate}T${data.endTime}`).toISOString(),
+    location: data.location.trim() || null,
+    organizer: data.organizer.trim() || null,
+    expectedAttendees: data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : null,
+    contactName: data.contactName.trim() || null,
+    contactPhone: data.contactPhone.trim() || null,
+    contactEmail: data.contactEmail.trim() || null,
+    notes: data.notes.trim() || null,
+    isCancelled: previous?.isCancelled ?? false,
+    createdBy: previous?.createdBy ?? userEmail,
+    createdAt: previous?.createdAt ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    updatedBy: userEmail,
+    deletedAt: null,
+  })
+
   const handleCancelEvent = async (event: RestaurantEvent) => {
+    const previous = event
+    const optimistic = { ...event, isCancelled: true, updatedAt: new Date().toISOString(), updatedBy: userEmail }
+    setEvents((current) => current.map((entry) => entry.eventId === event.eventId ? optimistic : entry))
     try {
       await cancelEvent(event.eventId, userEmail)
       showToast('Event cancelled successfully.')
       setDrawerOpen(false)
       loadEvents()
     } catch {
+      setEvents((current) => current.map((entry) => entry.eventId === event.eventId ? previous : entry))
       showToast('Failed to cancel event.', 'error')
     }
   }
 
   const handleSave = async (data: EventFormData) => {
     setSubmitting(true)
+    const previous = drawerMode === 'edit' ? selectedEvent : null
+    const optimistic = eventFromForm(data, previous ?? undefined)
     try {
       if (drawerMode === 'create') {
+        setEvents((current) => [...current, optimistic])
         await createEvent(data, userEmail)
         showToast('Event created successfully.')
       } else if (drawerMode === 'edit' && selectedEvent) {
+        setEvents((current) => current.map((event) => event.eventId === selectedEvent.eventId ? optimistic : event))
         await updateEvent(selectedEvent.eventId, data, userEmail)
         showToast('Event updated successfully.')
       }
       setDrawerOpen(false)
       loadEvents()
     } catch (err: unknown) {
+      setEvents((current) => drawerMode === 'create'
+        ? current.filter((event) => event.eventId !== optimistic.eventId)
+        : current.map((event) => event.eventId === previous?.eventId ? previous : event))
       showToast(err instanceof Error ? err.message : 'Failed to save event.', 'error')
     } finally {
       setSubmitting(false)
@@ -280,13 +314,16 @@ export default function EventsPage() {
 
   const handleDeleteConfirm = async () => {
     if (!deleteModal.event) return
+    const previous = deleteModal.event
     setDeleteLoading(true)
+    setEvents((current) => current.filter((event) => event.eventId !== previous.eventId))
     try {
-      await deleteEvent(deleteModal.event.eventId, userEmail)
+      await deleteEvent(previous.eventId, userEmail)
       showToast('Event deleted successfully.')
       setDeleteModal({ open: false, event: null })
       loadEvents()
     } catch {
+      setEvents((current) => [...current, previous])
       showToast('Failed to delete event.', 'error')
     } finally {
       setDeleteLoading(false)

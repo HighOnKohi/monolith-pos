@@ -3,7 +3,6 @@ import {
   Clock,
   Check,
   Copy,
-  AlertTriangle,
   RotateCcw,
   Receipt,
   User,

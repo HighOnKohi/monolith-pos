@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { MenuItem, Category } from '@/types/menu'
 import { fetchMenuItems, fetchCategories } from '@/services/menuService'
+import { MENU_ITEM_STATUS_UPDATED, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 
 type LoadState = 'loading' | 'loaded' | 'error' | 'empty'
 
@@ -11,6 +12,8 @@ interface UseMenuResult {
   categories: Category[]
   loadState: LoadState
   error: string | null
+  setItems: Dispatch<SetStateAction<MenuItem[]>>
+  setCategories: Dispatch<SetStateAction<Category[]>>
   reload: () => void
 }
 
@@ -32,8 +35,14 @@ function useMenuState(enabled: boolean): UseMenuResult {
     try {
       const fetchedItems = await fetchMenuItems()
       const fetchedCategories = await fetchCategories(fetchedItems)
-      setItems(fetchedItems)
-      setCategories(fetchedCategories)
+      setItems((current) => {
+        const temporaryItems = current.filter((item) => item.id.startsWith('temporary-'))
+        return [...fetchedItems, ...temporaryItems]
+      })
+      setCategories((current) => {
+        const temporaryCategories = current.filter((category) => category.id.startsWith('temporary-'))
+        return [...fetchedCategories, ...temporaryCategories]
+      })
       if (isInitial) {
         setLoadState(fetchedItems.length === 0 ? 'empty' : 'loaded')
       }
@@ -74,9 +83,18 @@ function useMenuState(enabled: boolean): UseMenuResult {
       if (document.visibilityState === 'visible') loadIfActive(false)
     }
 
+    const handleMenuItemStatusUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ itemId: string; isSoldOut: boolean }>).detail
+      if (detail?.itemId) {
+        setItems((current) => applyMenuUpdate(current, detail.itemId, detail.isSoldOut))
+      }
+    }
+
+    window.addEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuItemStatusUpdate)
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => {
       cancelled = true
+      window.removeEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuItemStatusUpdate)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       void supabase.removeChannel(channel)
     }
@@ -88,6 +106,8 @@ function useMenuState(enabled: boolean): UseMenuResult {
       categories,
       loadState,
       error,
+      setItems,
+      setCategories,
       reload: () => setRevision((value) => value + 1),
     }),
     [items, categories, loadState, error],

@@ -3,6 +3,7 @@ import type { Order, OrderItem, OrderStatus } from '@/types/order'
 import { resolveTableGroupByList } from '@/services/tableGroupService'
 import type { TableData } from '@/services/tableService'
 import { logOrderEvent } from '@/services/orderLogsService'
+import { broadcastMenuItemStatus } from '@/hooks/useRealtimeMenu'
 
 type DispatcherOrderItem = Omit<OrderItem, 'quantity'> & {
   rejectionReason?: 'only_1_left' | 'only_2_left' | 'only_3_left' | 'only_4_left' | 'only_5_left' | 'unavailable' | null
@@ -15,95 +16,92 @@ export interface DispatcherOrder extends Omit<Order, 'items'> {
 }
 
 export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
-  // Fetch all orders in PREPARING status (the active dispatcher state)
-  // Also fetch REQUESTED/VERIFIED so new orders show in PREPARING tab
-  const [ordersRes, tablesRes] = await Promise.all([
-    supabase
-      .from('Restaurant_Orders')
-      .select(`
-        ORDER_ID,
-        TABLE_ID,
-        ORDER_STATUS,
-        ORDER_TYPE,
-        TOTAL_BILL,
-        TIME,
-        KITCHEN_NOTE,
-        SERVER_NOTE
-      `)
-      .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING'])
-      .order('ORDER_ID', { ascending: false }),
-    supabase.from('Restaurant_Tables').select('*'),
-  ])
+  // REQUESTED orders are the source of truth for the PREPARING queue.
+  const { data: orders, error: ordersError } = await supabase
+    .from('Restaurant_Orders')
+    .select('ORDER_ID, TABLE_ID, ORDER_STATUS, ORDER_TYPE, TOTAL_BILL, TIME, KITCHEN_NOTE, SERVER_NOTE')
+    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING'])
+    .order('ORDER_ID', { ascending: false })
 
-  if (ordersRes.error) {
-    console.error('Dispatcher orders fetch error:', ordersRes.error)
-    throw ordersRes.error
+  if (ordersError) {
+    console.error('Dispatcher Restaurant_Orders error:', ordersError)
+    throw ordersError
   }
+  if (!orders || orders.length === 0) return []
 
-  const allTables = (tablesRes.data as TableData[]) ?? []
-  const orders = ordersRes.data ?? []
-  if (orders.length === 0) return []
-
-  const orderIds = orders.map((o: any) => o.ORDER_ID)
-
-  // Fetch all items for these orders
+  const orderIds = orders.map((row: any) => Number(row.ORDER_ID))
   const { data: itemsData, error: itemsError } = await supabase
     .from('Order_Items')
     .select('ORDER_ITEM_ID, ORDER_ID, ITEM_ID, ORDER_ITEM_STATUS, IS_FLAGGED')
     .in('ORDER_ID', orderIds)
 
-  if (itemsError) throw itemsError
+  if (itemsError) {
+    console.error('Dispatcher Order_Items error:', itemsError)
+    throw itemsError
+  }
 
-  // Fetch menu item names
-  const itemIdSet = [...new Set((itemsData ?? []).map((i: any) => i.ITEM_ID).filter(Boolean))]
-  const menuData = itemIdSet.length === 0
-    ? []
-    : ((await supabase
-        .from('Menu_Items')
-        .select('ITEM_ID, ITEM_NAME, ITEM_PRICE')
-        .in('ITEM_ID', itemIdSet)).data ?? [])
-
+  const itemIds = [...new Set((itemsData ?? []).map((row: any) => Number(row.ITEM_ID)).filter(Boolean))]
   const menuMap = new Map<number, { name: string; price: number }>()
-  menuData.forEach((m: any) => menuMap.set(m.ITEM_ID, { name: m.ITEM_NAME, price: m.ITEM_PRICE }))
 
-  // Group items by order
+  if (itemIds.length > 0) {
+    const { data: menuData, error: menuError } = await supabase
+      .from('Menu_Items')
+      .select('ITEM_ID, ITEM_NAME, ITEM_PRICE')
+      .in('ITEM_ID', itemIds)
+
+    if (!menuError) {
+      ;(menuData ?? []).forEach((row: any) => {
+        menuMap.set(Number(row.ITEM_ID), {
+          name: String(row.ITEM_NAME ?? `Item #${row.ITEM_ID}`),
+          price: Number(row.ITEM_PRICE ?? 0),
+        })
+      })
+    } else {
+      console.warn('Dispatcher Menu_Items lookup failed; using item IDs:', menuError)
+    }
+  }
+
   const itemsByOrder = new Map<number, DispatcherOrderItem[]>()
   ;(itemsData ?? []).forEach((row: any) => {
-    const oid = Number(row.ORDER_ID)
-    const menu = menuMap.get(row.ITEM_ID)
+    const orderId = Number(row.ORDER_ID)
+    const menuItem = menuMap.get(Number(row.ITEM_ID))
     const item: DispatcherOrderItem = {
       orderItemId: Number(row.ORDER_ITEM_ID),
-      orderId: oid,
+      orderId,
       itemId: String(row.ITEM_ID),
       status: String(row.ORDER_ITEM_STATUS ?? 'PENDING').toUpperCase(),
       isFlagged: Boolean(row.IS_FLAGGED),
       rejectionReason: null,
-      name: menu?.name ?? `Item #${row.ITEM_ID}`,
-      price: menu?.price,
+      name: menuItem?.name ?? `Item #${row.ITEM_ID}`,
+      price: menuItem?.price,
     }
-    if (!itemsByOrder.has(oid)) itemsByOrder.set(oid, [])
-    itemsByOrder.get(oid)!.push(item)
+    if (!itemsByOrder.has(orderId)) itemsByOrder.set(orderId, [])
+    itemsByOrder.get(orderId)!.push(item)
   })
 
   return orders
     .map((row: any) => {
-      const items = itemsByOrder.get(Number(row.ORDER_ID)) ?? []
-      const grp = resolveTableGroupByList(Number(row.TABLE_ID), allTables)
+      const orderId = Number(row.ORDER_ID)
+      const items = itemsByOrder.get(orderId) ?? []
+      const hasActiveItems = items.some((item) => item.status !== 'CANCELLED')
+      if (!hasActiveItems) return null
+
+      const tableId = Number(row.TABLE_ID)
       return {
-        orderId: Number(row.ORDER_ID),
-        tableId: Number(row.TABLE_ID),
-        tableNum: grp.anchorTableNum,
-        tableDisplay: grp.displayLabel,
-        orderStatus: String(row.ORDER_STATUS ?? '').toUpperCase() as OrderStatus,
-        orderType: row.ORDER_TYPE as Order['orderType'],
-        totalBill: Number(row.TOTAL_BILL ?? 0),
-        createdAt: row.TIME as string | undefined,
-        kitchenNote: (row.KITCHEN_NOTE as string | null) ?? undefined,
-        serverNote: (row.SERVER_NOTE as string | null) ?? undefined,
-        items,
+      orderId,
+      tableId,
+      tableNum: tableId,
+      tableDisplay: `Table ${tableId}`,
+      orderStatus: String(row.ORDER_STATUS ?? '').toUpperCase() as OrderStatus,
+      orderType: row.ORDER_TYPE as Order['orderType'],
+      totalBill: Number(row.TOTAL_BILL ?? 0),
+      createdAt: row.TIME as string | undefined,
+      kitchenNote: (row.KITCHEN_NOTE as string | null) ?? undefined,
+      serverNote: (row.SERVER_NOTE as string | null) ?? undefined,
+      items: itemsByOrder.get(Number(row.ORDER_ID)) ?? [],
       } as DispatcherOrder
     })
-    .filter(o => o.items.length > 0)
+    .filter((order): order is DispatcherOrder => order !== null)
 }
 
 export async function fetchOrderViewerData(): Promise<Array<{
@@ -255,12 +253,27 @@ export async function rejectOrderItems(
 
     if (error) throw error
 
-    // Update menu item availability based on rejection reason
+    // Unavailable items are cancelled in every pending order and removed from the menu.
     if (rejection.reason === 'unavailable') {
-      await supabase
+      const itemId = Number(rejection.itemId)
+      const { error: pendingItemsError } = await supabase
+        .from('Order_Items')
+        .update({
+          ORDER_ITEM_STATUS: 'CANCELLED',
+          REJECTION_REASON: ['unavailable'],
+        })
+        .eq('ITEM_ID', itemId)
+        .eq('ORDER_ITEM_STATUS', 'PENDING')
+
+      if (pendingItemsError) throw pendingItemsError
+
+      const { error: menuError } = await supabase
         .from('Menu_Items')
         .update({ ITEM_STATUS: 'OUT_OF_STOCK' })
-        .eq('ITEM_ID', Number(rejection.itemId))
+        .eq('ITEM_ID', itemId)
+
+      if (menuError) throw menuError
+      broadcastMenuItemStatus(itemId, true)
     }
   }
 

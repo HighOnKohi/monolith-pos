@@ -15,7 +15,7 @@ import { NewMenuItemModal, type NewMenuItemForm } from '@/components/menu/NewMen
 import { ConfirmModal } from '@/components/menu/ConfirmModal'
 
 export default function MenuManagerPage() {
-  const { items, categories, loadState, reload } = useMenu()
+  const { items, categories, loadState, setItems, setCategories, reload } = useMenu()
 
   const [activeCat, setActiveCat]             = useState<string>('all')
   const [editingItem, setEditingItem]         = useState<MenuItem | null>(null)
@@ -27,7 +27,6 @@ export default function MenuManagerPage() {
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
   const [availabilitySaving, setAvailabilitySaving] = useState<string | null>(null)
-  const [menuAnimationKey, setMenuAnimationKey] = useState(0)
 
   // Confirm modal state
   const [confirmState, setConfirmState] = useState<{
@@ -58,13 +57,18 @@ export default function MenuManagerPage() {
   }
 
   async function handleAvailabilityChange(item: MenuItem, isAvailable: boolean) {
+    const previous = item
+    const updated = { ...item, isAvailable, isSoldOut: !isAvailable }
     setAvailabilitySaving(item.id)
+    setItems((current) => current.map((entry) => entry.id === item.id ? updated : entry))
+    setSelectedItem((current) => current?.id === item.id ? updated : current)
     try {
       await updateMenuItem(item.id, { isAvailable })
-      setSelectedItem((current) => current?.id === item.id ? { ...current, isAvailable, isSoldOut: !isAvailable } : current)
       reload()
       showToast(`${item.name} is now ${isAvailable ? 'available' : 'not available'}.`, 'success')
     } catch (err: unknown) {
+      setItems((current) => current.map((entry) => entry.id === item.id ? previous : entry))
+      setSelectedItem((current) => current?.id === item.id ? previous : current)
       showToast(err instanceof Error ? err.message : 'Failed to update availability.', 'error')
     } finally {
       setAvailabilitySaving(null)
@@ -78,17 +82,37 @@ export default function MenuManagerPage() {
 
   async function submitEdit(form: NewMenuItemForm) {
     if (!editingItem) return
-    await updateMenuItem(editingItem.id, {
-      name:        form.name,
-      price:       form.price,
-      categoryId:  form.categoryId,
+    const previous = editingItem
+    const updated: MenuItem = {
+      ...editingItem,
+      name: form.name,
+      price: form.price,
+      categoryId: form.categoryId,
       dietaryType: form.dietaryType,
       isAvailable: form.isAvailable,
-      imageUrl:    form.imageUrl,
+      isSoldOut: !form.isAvailable,
+      imageUrl: form.imageUrl,
       description: form.description,
-    })
-    reload()
-    showToast(`Updated "${form.name}" successfully!`, 'success')
+    }
+    setItems((current) => current.map((item) => item.id === editingItem.id ? updated : item))
+    setSelectedItem((current) => current?.id === editingItem.id ? updated : current)
+    try {
+      await updateMenuItem(editingItem.id, {
+        name:        form.name,
+        price:       form.price,
+        categoryId:  form.categoryId,
+        dietaryType: form.dietaryType,
+        isAvailable: form.isAvailable,
+        imageUrl:    form.imageUrl,
+        description: form.description,
+      })
+      reload()
+      showToast(`Updated "${form.name}" successfully!`, 'success')
+    } catch (err: unknown) {
+      setItems((current) => current.map((item) => item.id === editingItem.id ? previous : item))
+      setSelectedItem((current) => current?.id === editingItem.id ? previous : current)
+      throw err
+    }
   }
 
   // ── Add Category ───────────────────────────────────────────────────────────
@@ -105,13 +129,29 @@ export default function MenuManagerPage() {
 
   async function submitCategory(name: string, icon: string) {
     if (editingCategory) {
-      await updateCategory(editingCategory.id, name, icon)
-      reload()
-      showToast(`Updated "${name}".`, 'success')
+      const previous = editingCategory
+      const updated = { ...editingCategory, name, icon }
+      setCategories((current) => current.map((category) => category.id === editingCategory.id ? updated : category))
+      try {
+        await updateCategory(editingCategory.id, name, icon)
+        reload()
+        showToast(`Updated "${name}".`, 'success')
+      } catch (err: unknown) {
+        setCategories((current) => current.map((category) => category.id === editingCategory.id ? previous : category))
+        throw err
+      }
     } else {
-      await createCategory(name, icon)
-      reload()
-      showToast(`Added "${name}".`, 'success')
+      const temporaryId = `temporary-${Date.now()}`
+      const temporaryCategory: Category = { id: temporaryId, name, icon, count: 0 }
+      setCategories((current) => [...current, temporaryCategory])
+      try {
+        await createCategory(name, icon)
+        reload()
+        showToast(`Added "${name}".`, 'success')
+      } catch (err: unknown) {
+        setCategories((current) => current.filter((category) => category.id !== temporaryId))
+        throw err
+      }
     }
     setEditingCategory(null)
   }
@@ -131,12 +171,14 @@ export default function MenuManagerPage() {
           return
         }
         setConfirmState(null)
+        setCategories((current) => current.filter((category) => category.id !== cat.id))
+        if (activeCat === cat.id) setActiveCat('all')
         try {
           await deleteCategory(cat.id)
-          if (activeCat === cat.id) setActiveCat('all')
           reload()
           showToast(`Deleted "${cat.name}".`, 'info')
         } catch (err: unknown) {
+          setCategories((current) => [...current, cat])
           showToast(err instanceof Error ? err.message : 'Failed to delete category.', 'error')
         }
       },
@@ -144,10 +186,28 @@ export default function MenuManagerPage() {
   }
 
   async function submitDish(form: NewMenuItemForm) {
-    await createMenuItem(form)
-    setMenuAnimationKey((key) => key + 1)
-    reload()
-    showToast(`Added "${form.name}".`, 'success')
+    const temporaryId = `temporary-${Date.now()}`
+    const optimisticItem: MenuItem = {
+      id: temporaryId,
+      code: temporaryId,
+      name: form.name,
+      price: form.price,
+      categoryId: form.categoryId,
+      dietaryType: form.dietaryType,
+      imageUrl: form.imageUrl ?? '',
+      isAvailable: form.isAvailable,
+      isSoldOut: !form.isAvailable,
+      description: form.description,
+    }
+    setItems((current) => [...current, optimisticItem])
+    try {
+      await createMenuItem(form)
+      reload()
+      showToast(`Added "${form.name}".`, 'success')
+    } catch (err: unknown) {
+      setItems((current) => current.filter((item) => item.id !== temporaryId))
+      throw err
+    }
   }
 
   const paginated = filtered
@@ -234,7 +294,7 @@ export default function MenuManagerPage() {
             </div>
           )}
           {(loadState === 'loaded' || loadState === 'empty') && (
-            <div className="menu-item-card-grid-content" key={`${activeCat}-${menuAnimationKey}`}>
+            <div className="menu-item-card-grid-content">
               {paginated.map((item) => (
                 <div
                   key={item.id}
@@ -336,12 +396,15 @@ export default function MenuManagerPage() {
                 message: `Are you sure you want to remove "${selectedItem.name}" from the menu? This cannot be undone.`,
                 onConfirm: async () => {
                   setConfirmState(null)
+                  const previous = selectedItem
+                  setItems((current) => current.filter((item) => item.id !== previous.id))
+                  handleClose()
                   try {
-                    await deleteMenuItem(selectedItem.id)
-                    handleClose()
+                    await deleteMenuItem(previous.id)
                     reload()
-                    showToast(`Deleted "${selectedItem.name}".`, 'info')
+                    showToast(`Deleted "${previous.name}".`, 'info')
                   } catch (err: unknown) {
+                    setItems((current) => [...current, previous])
                     showToast(err instanceof Error ? err.message : 'Failed to delete dish.', 'error')
                   }
                 },
