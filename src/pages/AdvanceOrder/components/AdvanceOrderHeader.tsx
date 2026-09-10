@@ -3,6 +3,8 @@ import { ShoppingBag, Clock, User, Edit3 } from 'lucide-react'
 
 interface AdvanceOrderHeaderProps {
   customerName?: string
+  diningType?: 'dine-in' | 'take-away'
+  tableNum?: number | null
   onEditName?: () => void
   cartItemCount?: number
   onOpenCart?: () => void
@@ -13,6 +15,8 @@ interface AdvanceOrderHeaderProps {
 
 export function AdvanceOrderHeader({
   customerName,
+  diningType,
+  tableNum,
   onEditName,
   cartItemCount = 0,
   onOpenCart,
@@ -43,12 +47,21 @@ export function AdvanceOrderHeader({
             <button
               type="button"
               onClick={onEditName}
-              className="group flex items-center gap-1 text-[11px] font-bold text-[#394867] hover:text-[#14274E] transition-colors truncate text-left cursor-pointer"
-              title="Click to edit name"
+              className="group flex items-center gap-1.5 text-[11px] font-bold text-[#394867] hover:text-[#14274E] transition-colors truncate text-left cursor-pointer mt-0.5"
+              title="Click to edit name or table"
             >
-              <User className="w-3 h-3 text-slate-400 group-hover:text-[#14274E]" />
+              <User className="w-3 h-3 text-slate-400 group-hover:text-[#14274E] shrink-0" />
               <span className="truncate">{customerName}</span>
-              {onEditName && <Edit3 className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />}
+              {diningType === 'take-away' ? (
+                <span className="px-1.5 py-0.2 bg-slate-200/80 text-slate-700 text-[10px] font-bold rounded-md shrink-0">
+                  Takeout
+                </span>
+              ) : tableNum ? (
+                <span className="px-1.5 py-0.2 bg-[#14274E]/10 text-[#14274E] text-[10px] font-extrabold rounded-md shrink-0">
+                  Table {tableNum}
+                </span>
+              ) : null}
+              {onEditName && <Edit3 className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />}
             </button>
           ) : (
             <p className="text-[10px] sm:text-xs font-medium text-[#394867] truncate">

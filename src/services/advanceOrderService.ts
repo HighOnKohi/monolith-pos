@@ -1,7 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import type {
   AdvanceOrder,
-  AdvanceOrderItem,
   CreateAdvanceOrderPayload,
   PreOrderSession,
   AdvanceOrderStatus,
@@ -13,6 +12,8 @@ const STORAGE_KEY_PREORDER_SESSION_ID = 'monolith_advance_order_session_id'
 const STORAGE_KEY_CUSTOMER_NAME = 'monolith_advance_order_customer_name'
 const STORAGE_KEY_CART = 'monolith_advance_order_cart'
 const STORAGE_KEY_DINING_TYPE = 'monolith_advance_order_dining_type'
+const STORAGE_KEY_TABLE_ID = 'monolith_advance_order_table_id'
+const STORAGE_KEY_TABLE_NUM = 'monolith_advance_order_table_num'
 const STORAGE_KEY_ACTIVE_TOKEN = 'monolith_advance_order_active_token'
 const STORAGE_KEY_DB_FALLBACK = 'monolith_advance_orders_db_fallback'
 
@@ -52,6 +53,10 @@ export function getPreOrderSession(): PreOrderSession {
   const sessionId = getOrCreatePreOrderSessionId()
   const customerName = localStorage.getItem(STORAGE_KEY_CUSTOMER_NAME) || ''
   const diningType = (localStorage.getItem(STORAGE_KEY_DINING_TYPE) as DiningType) || 'dine-in'
+  const rawTableId = localStorage.getItem(STORAGE_KEY_TABLE_ID)
+  const rawTableNum = localStorage.getItem(STORAGE_KEY_TABLE_NUM)
+  const tableId = rawTableId ? Number(rawTableId) : null
+  const tableNum = rawTableNum ? Number(rawTableNum) : null
 
   let cart: CartItem[] = []
   try {
@@ -67,6 +72,8 @@ export function getPreOrderSession(): PreOrderSession {
     sessionId,
     customerName,
     diningType,
+    tableId,
+    tableNum,
     cart,
   }
 }
@@ -75,6 +82,19 @@ export function saveCustomerName(name: string): string {
   const trimmed = name.trim().slice(0, 50)
   localStorage.setItem(STORAGE_KEY_CUSTOMER_NAME, trimmed)
   return trimmed
+}
+
+export function savePreOrderTable(tableId: number | null, tableNum: number | null) {
+  if (tableId != null) {
+    localStorage.setItem(STORAGE_KEY_TABLE_ID, String(tableId))
+  } else {
+    localStorage.removeItem(STORAGE_KEY_TABLE_ID)
+  }
+  if (tableNum != null) {
+    localStorage.setItem(STORAGE_KEY_TABLE_NUM, String(tableNum))
+  } else {
+    localStorage.removeItem(STORAGE_KEY_TABLE_NUM)
+  }
 }
 
 export function savePreOrderCart(cart: CartItem[], diningType: DiningType) {
@@ -103,6 +123,8 @@ export function setActiveSessionToken(token: string) {
 export function clearActiveAdvanceOrder() {
   localStorage.removeItem(STORAGE_KEY_ACTIVE_TOKEN)
   localStorage.removeItem(STORAGE_KEY_CART)
+  localStorage.removeItem(STORAGE_KEY_TABLE_ID)
+  localStorage.removeItem(STORAGE_KEY_TABLE_NUM)
 }
 
 // ─── Local Storage Fallback Cache ─────────────────────────────────────────────
@@ -157,6 +179,13 @@ export async function createAdvanceOrder(
   const createdAt = new Date().toISOString()
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
 
+  // Format notes to include table number if dining in
+  let formattedNotes = payload.notes?.trim() || ''
+  if (payload.diningType === 'dine-in' && payload.tableNum) {
+    const tablePrefix = `[Table #${payload.tableNum}]`
+    formattedNotes = formattedNotes ? `${tablePrefix} ${formattedNotes}` : tablePrefix
+  }
+
   let createdOrder: AdvanceOrder | null = null
 
   // 1. Attempt database insert into Supabase
@@ -171,7 +200,7 @@ export async function createAdvanceOrder(
         STATUS: 'PENDING',
         SUBTOTAL: subtotal,
         TOTAL_AMOUNT: totalAmount,
-        NOTES: payload.notes || null,
+        NOTES: formattedNotes || null,
         CREATED_AT: createdAt,
         EXPIRES_AT: expiresAt,
       })
@@ -205,6 +234,8 @@ export async function createAdvanceOrder(
           sessionToken: orderRow.SESSION_TOKEN,
           customerName: orderRow.CUSTOMER_NAME,
           diningType: (orderRow.DINING_TYPE as DiningType) || 'dine-in',
+          tableId: payload.tableId ?? null,
+          tableNum: payload.tableNum ?? null,
           status: (orderRow.STATUS as AdvanceOrderStatus) || 'PENDING',
           subtotal: Number(orderRow.SUBTOTAL) || subtotal,
           totalAmount: Number(orderRow.TOTAL_AMOUNT) || totalAmount,
@@ -242,10 +273,12 @@ export async function createAdvanceOrder(
       sessionToken,
       customerName: cleanName,
       diningType: payload.diningType,
+      tableId: payload.tableId ?? null,
+      tableNum: payload.tableNum ?? null,
       status: 'PENDING',
       subtotal,
       totalAmount,
-      notes: payload.notes,
+      notes: formattedNotes || undefined,
       createdAt,
       expiresAt,
       items: payload.cartItems.map((c, idx) => ({
@@ -302,12 +335,28 @@ export async function getActiveAdvanceOrder(
         createdAt: String(r.CREATED_AT || ''),
       }))
 
+      // Parse table number from NOTES or column if available
+      let parsedTableNum: number | null = null
+      if (orderRow.TABLE_NUM != null) {
+        parsedTableNum = Number(orderRow.TABLE_NUM)
+      } else if (orderRow.NOTES) {
+        const match = String(orderRow.NOTES).match(/\[Table #(\d+)\]/)
+        if (match) {
+          parsedTableNum = Number(match[1])
+        }
+      }
+
+      const parsedTableId: number | null =
+        orderRow.TABLE_ID != null ? Number(orderRow.TABLE_ID) : parsedTableNum
+
       const parsed: AdvanceOrder = {
         advanceOrderId: Number(orderRow.ADVANCE_ORDER_ID),
         orderNumber: String(orderRow.ORDER_NUMBER),
         sessionToken: String(orderRow.SESSION_TOKEN),
         customerName: String(orderRow.CUSTOMER_NAME),
         diningType: (orderRow.DINING_TYPE as DiningType) || 'dine-in',
+        tableId: parsedTableId,
+        tableNum: parsedTableNum,
         status: (orderRow.STATUS as AdvanceOrderStatus) || 'PENDING',
         subtotal: Number(orderRow.SUBTOTAL) || 0,
         totalAmount: Number(orderRow.TOTAL_AMOUNT) || 0,
@@ -332,6 +381,68 @@ export async function getActiveAdvanceOrder(
   const fallbacks = getFallbackOrders()
   const match = fallbacks.find((o) => o.sessionToken === sessionToken)
   return match || null
+}
+
+// ─── Cancel Advance Order ─────────────────────────────────────────────────────
+
+export async function cancelAdvanceOrder(
+  sessionToken: string,
+  reason?: string,
+): Promise<AdvanceOrder | null> {
+  const now = new Date().toISOString()
+
+  // 1. Try Supabase update
+  try {
+    const { data: existing } = await supabase
+      .from('Advance_Orders')
+      .select('NOTES')
+      .eq('SESSION_TOKEN', sessionToken)
+      .maybeSingle()
+
+    let updatedNotes = existing?.NOTES || ''
+    if (reason?.trim()) {
+      const cancelTag = `[Cancelled: ${reason.trim()}]`
+      updatedNotes = updatedNotes ? `${updatedNotes} ${cancelTag}` : cancelTag
+    }
+
+    const { error } = await supabase
+      .from('Advance_Orders')
+      .update({
+        STATUS: 'CANCELLED',
+        CANCELLED_AT: now,
+        NOTES: updatedNotes || null,
+      })
+      .eq('SESSION_TOKEN', sessionToken)
+
+    if (!error) {
+      const active = await getActiveAdvanceOrder(sessionToken)
+      if (active) {
+        active.status = 'CANCELLED'
+        active.cancelledAt = now
+        if (updatedNotes) active.notes = updatedNotes
+        saveFallbackOrder(active)
+        return active
+      }
+    }
+  } catch (err) {
+    console.warn('[advanceOrderService] Supabase cancel failed, updating local storage:', err)
+  }
+
+  // 2. Fallback update local storage
+  const fallbacks = getFallbackOrders()
+  const order = fallbacks.find((o) => o.sessionToken === sessionToken)
+  if (order) {
+    order.status = 'CANCELLED'
+    order.cancelledAt = now
+    if (reason?.trim()) {
+      const cancelTag = `[Cancelled: ${reason.trim()}]`
+      order.notes = order.notes ? `${order.notes} ${cancelTag}` : cancelTag
+    }
+    saveFallbackOrder(order)
+    return order
+  }
+
+  return null
 }
 
 // ─── Countdown & Time Utilities ───────────────────────────────────────────────

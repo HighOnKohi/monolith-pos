@@ -1,4 +1,3 @@
-import type { MenuItem } from './menu'
 import type { CartItem, DiningType } from './cart'
 
 export type AdvanceOrderStatus =
@@ -30,6 +29,8 @@ export interface AdvanceOrder {
   sessionToken: string // secure random token
   customerName: string
   diningType: DiningType
+  tableId?: number | null
+  tableNum?: number | null
   status: AdvanceOrderStatus
   subtotal: number
   totalAmount: number
@@ -45,6 +46,8 @@ export interface AdvanceOrder {
 export interface CreateAdvanceOrderPayload {
   customerName: string
   diningType: DiningType
+  tableId?: number | null
+  tableNum?: number | null
   cartItems: CartItem[]
   notes?: string
 }
@@ -53,5 +56,7 @@ export interface PreOrderSession {
   sessionId: string
   customerName: string
   diningType: DiningType
+  tableId?: number | null
+  tableNum?: number | null
   cart: CartItem[]
 }

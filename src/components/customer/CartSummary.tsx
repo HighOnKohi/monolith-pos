@@ -36,6 +36,8 @@ interface CartSummaryProps {
   isExpanded: boolean
   onToggleExpand: () => void
   onClose: () => void
+  tableNum?: number | null
+  onChangeTable?: () => void
 }
 
 export function CartSummary({
@@ -55,6 +57,8 @@ export function CartSummary({
   isExpanded,
   onToggleExpand,
   onClose,
+  tableNum,
+  onChangeTable,
 }: CartSummaryProps) {
   const [editingNoteItemId, setEditingNoteItemId] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState('')
@@ -303,6 +307,32 @@ export function CartSummary({
                   disabled={isDisabled}
                 />
               </div>
+
+              {/* Seating Table Row for Dine-In */}
+              {diningType === 'dine-in' && onChangeTable && (
+                <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs animate-in fade-in duration-150">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-slate-500 font-bold">Seating:</span>
+                    {tableNum ? (
+                      <span className="font-extrabold text-[#14274E] bg-[#14274E]/10 px-2 py-0.5 rounded-md">
+                        Table {tableNum}
+                      </span>
+                    ) : (
+                      <span className="font-extrabold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
+                        No table selected
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onChangeTable}
+                    disabled={isDisabled}
+                    className="text-xs font-extrabold text-[#14274E] hover:text-[#1f3b73] hover:underline cursor-pointer ml-2 shrink-0"
+                  >
+                    {tableNum ? 'Change' : 'Select Table'}
+                  </button>
+                </div>
+              )}
 
               {/* Cost Summary */}
               <div className="flex items-center justify-between pt-1">
