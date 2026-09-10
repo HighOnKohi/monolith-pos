@@ -1,0 +1,59 @@
+DISPATCHER INTERFACE STATUS MAPPING
+
+The Dispatcher Interface uses a 3-tab system that maps to the existing database statuses:
+
+=== TAB MAPPING ===
+
+1. PREPARING Tab
+   - Shows orders with ORDER_STATUS: REQUESTED or VERIFIED
+   - These are new orders that need to be reviewed
+   - Actions available:
+     * Send to COOKING (changes order to PREPARING status)
+     * Reject items (marks items as CANCELLED with rejection reasons)
+
+2. COOKING Tab
+   - Shows orders with ORDER_STATUS: PREPARING
+   - Order items have ORDER_ITEM_STATUS: COOKING
+   - These are orders actively being prepared in the kitchen
+   - Actions available:
+     * Send to DISPATCHED (changes order to READY status)
+
+3. DISPATCHED Tab
+   - Shows orders with ORDER_STATUS: READY
+   - These are completed orders ready to be served
+   - Orders wait here until the service staff marks them as SERVED
+
+=== DATABASE STATUS VALUES ===
+
+Restaurant_Orders.ORDER_STATUS can be:
+- REQUESTED: Order submitted, waiting for dispatcher to review
+- VERIFIED: Order confirmed by dispatcher (optional intermediate state)
+- PREPARING: Order is being cooked (shown in COOKING tab)
+- READY: Order completed and ready for pickup (shown in DISPATCHED tab)
+- SERVED: Order delivered to customer
+- CANCELLED: Order cancelled
+- COMPLETED: Order fully complete and paid
+
+Order_Items.ORDER_ITEM_STATUS can be:
+- PENDING: Item not started yet
+- COOKING: Item is being prepared
+- DONE: Item finished cooking
+- CANCELLED: Item cancelled/rejected
+
+=== REJECTION SYSTEM ===
+
+When items are rejected in the PREPARING tab:
+- ORDER_ITEM_STATUS is set to CANCELLED
+- REJECTION_REASON is stored as text[] array with one of:
+  * 'only_1_left'
+  * 'only_2_left'
+  * 'only_3_left'
+  * 'only_4_left'
+  * 'only_5_left'
+  * 'unavailable'
+
+If rejection reason is 'unavailable':
+- Menu_Items.ITEM_STATUS is updated to 'OUT_OF_STOCK'
+
+If all items in an order are rejected:
+- ORDER_STATUS is set to CANCELLED

@@ -536,7 +536,7 @@ export default function CashierPage() {
   }, [selectedCategory, categories])
 
   return (
-    <div className="cashier-page-container">
+    <div className="service-page-container service-interface-page-container">
       {/* Toast Alert */}
       {toastMessage && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-2xl shadow-xl border bg-[#14274E] text-white text-xs font-bold animate-slide-down flex items-center gap-2">
@@ -544,9 +544,9 @@ export default function CashierPage() {
         </div>
       )}
 
-      <div className="cashier-layout">
-        <div className="inner-cashier-interface-container">
-          <div className="cashier-header">
+      <div className="service-interface-layout">
+        <div className="inner-service-interface-container">
+          <div className="service-interface-header">
             <CashierHeader
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
@@ -570,7 +570,7 @@ export default function CashierPage() {
             />
           </div>
 
-          <div className="cashier-categories">
+          <div className="service-interface-categories">
             <CategoryCardsRow
               categories={categories}
               selectedCategory={selectedCategory}
@@ -603,17 +603,17 @@ export default function CashierPage() {
             </div>
           </div>
 
-          <div className="cashier-menu-items">
+          <div className="service-interface-menu-items">
             {/* Left Section: Menu Items Grid */}
             <div
               className={[
-                'cashier-menu-items-content min-w-0 flex-col overflow-hidden',
+                'service-interface-menu-items-content min-w-0 flex-col overflow-hidden',
                 mobileActiveView === 'menu' ? 'flex' : 'hidden lg:flex',
               ].join(' ')}
             >
           {/* Header count bar for Category */}
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80 shrink-0 text-xs text-slate-500">
-            <span className="cashier-selected-category-label font-semibold">
+            <span className="service-interface-selected-category-label font-semibold">
               <strong className="text-[#14274E] font-extrabold">{currentCategoryName}</strong>
               <span className="ml-1.5 text-slate-400">({filteredItems.length} dish{filteredItems.length !== 1 ? 'es' : ''})</span>
             </span>

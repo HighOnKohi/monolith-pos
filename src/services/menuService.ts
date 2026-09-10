@@ -54,15 +54,14 @@ export async function fetchMenuItems(): Promise<MenuItem[]> {
     if (!isCacheValid) {
       const { data: orderItemsData } = await supabase
         .from('Order_Items')
-        .select('ITEM_ID, QUANTITY')
+        .select('ITEM_ID')
         .order('ORDER_ITEM_ID', { ascending: false })
         .limit(500)
 
-      // Sum sales volume by item ID
+      // Count rows per item ID (each row = 1 unit)
       const salesMap = (orderItemsData ?? []).reduce<Record<string, number>>((acc, row) => {
         const id = String(row['ITEM_ID'])
-        const qty = Number(row['QUANTITY'] ?? 1)
-        acc[id] = (acc[id] ?? 0) + (isNaN(qty) ? 1 : qty)
+        acc[id] = (acc[id] ?? 0) + 1
         return acc
       }, {})
 

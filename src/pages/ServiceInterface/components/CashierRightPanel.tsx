@@ -129,13 +129,13 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   const punchTotal = punchSubtotal + punchTax
 
   return (
-    <div className="cashier-right-panel">
-      <div className="cashier-order-sidebar-body">
-        <nav className="cashier-tabs-nav" aria-label="Order status">
+    <div className="service-interface-right-panel">
+      <div className="service-interface-order-sidebar-body">
+        <nav className="service-interface-tabs-nav" aria-label="Order status">
           <button
             onClick={() => onTabChange('new')}
             className={[
-              'cashier-tab-btn relative',
+              'service-interface-tab-btn relative',
               activeTab === 'new' ? 'is-active' : '',
             ].join(' ')}
           >
@@ -149,7 +149,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
           <button
             onClick={() => onTabChange('pending')}
             className={[
-              'cashier-tab-btn',
+              'service-interface-tab-btn',
               activeTab === 'pending' ? 'is-active' : '',
             ].join(' ')}
           >
@@ -158,25 +158,16 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
           <button
             onClick={() => onTabChange('cancelled')}
             className={[
-              'cashier-tab-btn',
+              'service-interface-tab-btn',
               activeTab === 'cancelled' ? 'is-active' : '',
             ].join(' ')}
           >
             Cancelled Orders
           </button>
-          <button
-            onClick={() => onTabChange('active')}
-            className={[
-              'cashier-tab-btn',
-              activeTab === 'active' ? 'is-active' : '',
-            ].join(' ')}
-          >
-            Active Orders
-          </button>
         </nav>
 
-        {/* ── Tab 1: Active Orders and Bill ── */}
-        {activeTab === 'active' && (
+        {/* Bill and settlement content remains available through the existing settlement flow. */}
+        {false && (
           <div className="cashier-order-status-panel">
             {/* Active Customer Bill-Out Request Banner */}
             {/* {activeBillRequest && (
@@ -374,7 +365,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
 
         {/* ── Tab 2: New Orders ── */}
         {activeTab === 'new' && (
-          <div className="cashier-order-status-panel">
+          <div className="service-interface-order-status-panel">
             {/* Dining Type Selector */}
             <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
               <span className="text-xs font-bold text-slate-600">Dining Type:</span>
@@ -617,8 +608,8 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
 
         {/* ── Tab 4: Cancelled Orders ── */}
         {activeTab === 'cancelled' && (
-          <div className="cashier-order-status-panel">
-            <div className="cashier-order-list flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="service-interface-order-status-panel">
+            <div className="service-interface-order-list flex-1 overflow-y-auto p-4 space-y-3">
               {cancelledOrders.length === 0 ? (
                 <div className="py-16 text-center text-slate-400 text-xs flex flex-col items-center gap-2">
                   <Receipt className="w-8 h-8 text-slate-300" />

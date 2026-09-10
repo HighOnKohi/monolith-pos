@@ -1,7 +1,7 @@
 import {
   UtensilsCrossed,
   Receipt,
-  QrCode,
+  ChefHat,
   LayoutGrid,
   BookOpen,
   BarChart2,
@@ -20,9 +20,16 @@ export interface NavItem {
   icon: LucideIcon
 }
 
+export interface NavGroup {
+  title: string
+  icon: LucideIcon
+  children: NavItem[]
+}
+
 export interface NavSection {
   section: string
   items: NavItem[]
+  groups?: NavGroup[]
 }
 
 // ─── Navigation Config ────────────────────────────────────────────────────────
@@ -34,24 +41,23 @@ export interface NavSection {
 export const navigation: NavSection[] = [
   {
     section: 'Front Ops',
-    items: [
+    items: [],
+    groups: [
       {
-        title: 'Kitchen Interface',
-        description: 'View live orders & start cooking queue.',
-        path: '/kitchen',
-        icon: UtensilsCrossed,
+        title: 'Kitchen Interfaces',
+        icon: ChefHat,
+        children: [
+          { title: 'Order Viewer', description: 'View live orders.', path: '/order-viewer', icon: ClipboardList },
+          { title: 'Dispatcher Interface', description: 'Manage the cooking queue.', path: '/dispatcher', icon: UtensilsCrossed },
+        ],
       },
       {
-        title: 'Cashier Interface',
-        description: 'Check out tables, manage bills & print receipts.',
-        path: '/cashier',
+        title: 'Counter Interfaces',
         icon: Receipt,
-      },
-      {
-        title: 'Customer Interface',
-        description: 'Preview the diner QR ordering experience.',
-        path: '/customer',
-        icon: QrCode,
+        children: [
+          { title: 'Service Interface', description: 'Manage service orders and bills.', path: '/service', icon: LayoutGrid },
+          { title: 'Cashier Interface', description: 'Cashier tools.', path: '/cashier', icon: Receipt },
+        ],
       },
     ],
   },

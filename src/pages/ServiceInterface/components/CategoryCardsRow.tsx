@@ -18,10 +18,10 @@ export const CategoryCardsRow: React.FC<CategoryCardsRowProps> = ({
   onSelectCategory,
 }) => {
   const getCategoryIcon = (id: string, iconName?: string, index = 0) => {
-    if (id === 'all') return <Grid className="cashier-category-icon" />
+    if (id === 'all') return <Grid className="service-interface-category-icon" />
     const savedIcon = iconName ? categoryIconMap[iconName] : undefined
     const Icon = savedIcon ?? categoryIcons[index % categoryIcons.length].component ?? UtensilsCrossed
-    return <Icon className="cashier-category-icon" />
+    return <Icon className="service-interface-category-icon" />
   }
 
   return (
@@ -34,7 +34,7 @@ export const CategoryCardsRow: React.FC<CategoryCardsRowProps> = ({
               key={cat.id}
               onClick={() => onSelectCategory(cat.id)}
               className={[
-                'cashier-category-card shrink-0',
+                'service-interface-category-card shrink-0',
                 isActive ? 'is-active' : '',
               ].join(' ')}
             >

@@ -1,0 +1,103 @@
+DISPATCHER INTERFACE - RECENT UPDATES
+
+=== OVERVIEW ===
+The Dispatcher Interface has been updated with grouped item display, cooking progress tracking, 
+and an order viewer for kitchen staff.
+
+=== KEY CHANGES ===
+
+1. GROUPED ITEM DISPLAY
+   - Items are now grouped by menu item (not shown individually)
+   - Each group shows: Item name + Total quantity (e.g., "Adobo ×3")
+   - Works across all tabs (PREPARING, COOKING, DISPATCHED)
+
+2. COOKING PROGRESS COUNTER (COOKING Tab Only)
+   - Shows "X cooking" counter for each item group
+   - Plus/Minus buttons to mark items as done
+   - Clicking "+" decrements cooking count (marks 1 item as DONE)
+   - Clicking "-" increments cooking count (marks 1 item back to COOKING)
+   - Counter shows only items still in COOKING status
+
+3. MARK AS COMPLETED BUTTON
+   - Replaces "Mark as Dispatched" in COOKING tab
+   - Button is DISABLED until all items have 0 cooking count
+   - Only enabled when all items are marked DONE
+   - When clicked:
+     * Updates order status to READY
+     * Makes order visible to cashier for billing
+
+4. ORDER VIEWER
+   - Toggle button: "View All Orders" / "Hide"
+   - Shows all active orders (REQUESTED, VERIFIED, PREPARING)
+   - Sorted by oldest first (created timestamp)
+   - Displays table name and grouped items with quantities
+   - Read-only view for kitchen staff reference
+   - No action buttons, just information display
+
+5. WORKFLOW CHANGES
+   - "Send to Cooking" button:
+     * Moves order to PREPARING status
+     * Sets all order items to COOKING status
+     * Does NOT notify cashier yet
+   
+   - "Mark as Completed" button:
+     * Only available when all items cooked (cooking count = 0)
+     * Moves order to READY status
+     * Marks all items as DONE
+     * NOW notifies cashier that order is ready for billing
+
+=== DATABASE OPERATIONS ===
+
+New Function: updateItemCookingCount(orderId, itemId, completedCount)
+- Takes the number of completed items
+- Updates ORDER_ITEM_STATUS:
+  * First X items → DONE
+  * Remaining items → COOKING
+- Example: If 3 items ordered and completedCount = 2:
+  * 2 items marked DONE
+  * 1 item stays COOKING
+
+Updated Function: moveOrderToCooking(orderId)
+- Sets ORDER_STATUS to PREPARING
+- Sets all ORDER_ITEM_STATUS to COOKING
+- Does NOT trigger cashier notification
+
+Updated Function: moveOrderToDispatched(orderId)
+- Sets ORDER_STATUS to READY
+- Marks ALL items as DONE
+- Triggers cashier notification (order ready for billing)
+
+=== USER INTERFACE ===
+
+PREPARING Tab:
+- Shows grouped items with quantities
+- Each group has rejection buttons (Only 1-5, Unavailable)
+- Selecting rejection applies to ALL items in that group
+- "Send to Cooking" moves order to COOKING tab
+
+COOKING Tab:
+- Shows grouped items with quantities
+- Each group has cooking counter with +/- buttons
+- Shows "X cooking" status
+- "Mark as Completed" button (disabled until all items done)
+
+DISPATCHED Tab:
+- Shows completed orders ready for serving
+- Read-only display with grouped quantities
+- No action buttons (cashier handles from here)
+
+Order Viewer (Toggle):
+- Shows all active orders across all stages
+- Grouped by table, sorted oldest first
+- Displays item names and quantities
+- Helps kitchen staff see full workload
+- No interactive elements
+
+=== TECHNICAL NOTES ===
+
+- Items are grouped using groupOrderItems() helper function
+- Groups by ITEM_ID, counts by ORDER_ITEM_STATUS
+- Cooking counter updates individual ORDER_ITEM records
+- isOrderFullyCooked() checks if all items have cookingCount = 0
+- Rejection still stores REJECTION_REASON as text[] array
+- All quantity displays use ×N format for clarity

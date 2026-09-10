@@ -686,6 +686,7 @@ function computeDynamicPeakInsights(summary: AnalyticsSummary) {
     timeOfDayLabel,
     prepCutoffTime,
     surgeWindow,
+    offPeakWindow,
     diagnosisText,
     actions: [
       {

@@ -14,8 +14,8 @@ export type OrderStatus =
 export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   REQUESTED: 'Order Placed',
   VERIFIED: 'Confirmed',
-  PREPARING: 'Preparing',
-  READY: 'Ready',
+  PREPARING: 'Cooking',
+  READY: 'Ready for Pickup',
   SERVED: 'Food Served',
   CANCELLED: 'Cancelled',
   COMPLETED: 'Completed',

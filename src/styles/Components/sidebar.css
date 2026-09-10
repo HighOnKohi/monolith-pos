@@ -1,8 +1,9 @@
 .app-sidebar {
-  width: 18rem;
+  width: 20rem;
   overflow-x: hidden;
   background: #ffffff;
   border-color: #edf0f5;
+  scrollbar-gutter: stable both-edges;
 }
 
 .app-sidebar.sidebar-collapsed {
@@ -77,6 +78,26 @@
   flex-direction: column;
   gap: 0.125rem;
 }
+
+.Nav-group-button {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.Nav-group-button .Nav-button-title-main { flex: 1; }
+.Nav-group-chevron { width: 1rem; height: 1rem; transition: transform 150ms ease; }
+.Nav-group-chevron.is-collapsed { transform: rotate(-90deg); }
+.Nav-group-children { padding-left: 0.8rem; }
+.Nav-group-children.is-collapsed { padding-left: 0; }
+.Nav-group-children-wrapper { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 0.3s ease, opacity 0.3s ease; overflow: hidden; opacity: 1; }
+.Nav-group-children-wrapper.is-collapsed { grid-template-rows: 0fr; opacity: 0; }
+.Nav-group-children-inner { min-height: 0; }
+.Nav-group-children .Nav-button { min-height: 2.8rem; margin-bottom: 4px; border-radius: 1rem; }
+.Nav-group-children .Nav-button-title-main { font-size: 0.9rem; }
+.app-sidebar.sidebar-collapsed .Nav-group-children { padding-left: 0; }
+.app-sidebar.sidebar-collapsed .Nav-group-button { margin-bottom: 12px; }
 
 .Nav-button {
   display: flex;

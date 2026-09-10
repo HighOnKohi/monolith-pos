@@ -20,7 +20,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   return (
     <div
       className={[
-        'cashier-dish-card p-3 relative select-none cursor-pointer',
+        'service-interface-dish-card p-3 relative select-none cursor-pointer',
         isSelected ? 'is-selected ring-2 ring-[#14274E]/15' : '',
         item.isSoldOut ? 'opacity-50 grayscale' : '',
       ].join(' ')}
@@ -34,7 +34,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       aria-label={`${item.name}, ${quantityInCart} in order`}
     >
       {/* Food Image Container with Badge */}
-      <div className="relative w-full aspect-4/3 rounded-2xl overflow-hidden bg-slate-100 mb-3 shrink-0 cashier-dish-image-container">
+      <div className="relative w-full aspect-4/3 rounded-2xl overflow-hidden bg-slate-100 mb-3 shrink-0 service-interface-dish-image-container">
         <img
           src={item.imageUrl}
           draggable={false}

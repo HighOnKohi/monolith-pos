@@ -1,0 +1,152 @@
+table_name,ordinal_position,column_name,data_type,udt_name,character_maximum_length,is_nullable,column_default,primary_key,unique_constraint,foreign_key,check_constraints
+Advance_Order_Items,1,ADVANCE_ITEM_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Advance_Order_Items,2,ADVANCE_ORDER_ID,bigint,int8,null,NO,null,,,FK → Advance_Orders.ADVANCE_ORDER_ID,null
+Advance_Order_Items,3,ITEM_ID,bigint,int8,null,NO,null,,,FK → Menu_Items.ITEM_ID,null
+Advance_Order_Items,4,ITEM_NAME,text,text,null,NO,null,,,null,null
+Advance_Order_Items,5,QUANTITY,integer,int4,null,NO,1,,,null,"CHECK ((""QUANTITY"" > 0))"
+Advance_Order_Items,6,UNIT_PRICE,numeric,numeric,null,NO,null,,,null,null
+Advance_Order_Items,7,TOTAL_PRICE,numeric,numeric,null,NO,null,,,null,null
+Advance_Order_Items,8,NOTES,text,text,null,YES,null,,,null,null
+Advance_Order_Items,9,CREATED_AT,timestamp with time zone,timestamptz,null,NO,now(),,,null,null
+Advance_Orders,1,ADVANCE_ORDER_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Advance_Orders,2,ORDER_NUMBER,text,text,null,NO,null,,UNIQUE,null,null
+Advance_Orders,3,SESSION_TOKEN,text,text,null,NO,null,,UNIQUE,null,null
+Advance_Orders,4,CUSTOMER_NAME,text,text,null,NO,null,,,null,null
+Advance_Orders,5,DINING_TYPE,text,text,null,NO,'dine-in'::text,,,null,"CHECK ((""DINING_TYPE"" = ANY (ARRAY['dine-in'::text, 'take-away'::text])))"
+Advance_Orders,6,STATUS,text,text,null,NO,'PENDING'::text,,,null,"CHECK ((""STATUS"" = ANY (ARRAY['PENDING'::text, 'CONFIRMED'::text, 'PREPARING'::text, 'READY'::text, 'COMPLETED'::text, 'CANCELLED'::text, 'EXPIRED'::text])))"
+Advance_Orders,7,SUBTOTAL,numeric,numeric,null,NO,0.00,,,null,null
+Advance_Orders,8,TOTAL_AMOUNT,numeric,numeric,null,NO,0.00,,,null,null
+Advance_Orders,9,NOTES,text,text,null,YES,null,,,null,null
+Advance_Orders,10,CREATED_AT,timestamp with time zone,timestamptz,null,NO,now(),,,null,null
+Advance_Orders,11,EXPIRES_AT,timestamp with time zone,timestamptz,null,NO,(now() + '00:30:00'::interval),,,null,null
+Advance_Orders,12,CONFIRMED_AT,timestamp with time zone,timestamptz,null,YES,null,,,null,null
+Advance_Orders,13,COMPLETED_AT,timestamp with time zone,timestamptz,null,YES,null,,,null,null
+Advance_Orders,14,CANCELLED_AT,timestamp with time zone,timestamptz,null,YES,null,,,null,null
+Bill_Requests,1,REQUEST_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Bill_Requests,2,TABLE_ID,bigint,int8,null,NO,null,,,null,null
+Bill_Requests,3,ORDER_ID,bigint,int8,null,YES,null,,,null,null
+Bill_Requests,4,PAYMENT_METHOD,text,text,null,NO,null,,,null,"CHECK ((""PAYMENT_METHOD"" = ANY (ARRAY['CASH'::text, 'CREDIT_CARD'::text, 'INSTAPAY_QR'::text])))"
+Bill_Requests,5,STATUS,text,text,null,NO,'REQUESTED'::text,,,null,"CHECK ((""STATUS"" = ANY (ARRAY['REQUESTED'::text, 'PROCESSING'::text, 'PAID'::text, 'CANCELLED'::text])))"
+Bill_Requests,6,REQUESTED_AT,timestamp without time zone,timestamp,null,YES,now(),,,null,null
+Cashier_Staff,1,CASHIER_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Cashier_Staff,2,STAFF_ID,bigint,int8,null,NO,null,,,null,null
+Cashier_Staff,3,TOTAL_SHIFT_EARNING,double precision,float8,null,YES,null,,,null,null
+Cashier_Staff,4,TOTAL_TABLES_HANDLED,bigint,int8,null,YES,null,,,null,null
+Discounts,1,DISCOUNT_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Discounts,2,ORDER_ID,bigint,int8,null,NO,null,,,FK → Restaurant_Orders.ORDER_ID,null
+Discounts,3,ORDER_ITEM_ID,bigint,int8,null,YES,null,,,FK → Order_Items.ORDER_ITEM_ID,null
+Discounts,4,PWD,boolean,bool,null,YES,false,,,null,null
+Discounts,5,PWD_AMOUNT,bigint,int8,null,YES,'0'::bigint,,,null,null
+Discounts,6,SENIOR,boolean,bool,null,YES,false,,,null,null
+Discounts,7,SENIOR_AMOUNT,bigint,int8,null,YES,'0'::bigint,,,null,null
+Discounts,8,CUSTOM_PERCENT,bigint,int8,null,YES,'0'::bigint,,,null,null
+Discounts,9,PESO_DISCOUNT,double precision,float8,null,YES,'0'::double precision,,,null,null
+Dispatcher_Staff,1,DISPATCHER_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Dispatcher_Staff,2,STAFF_ID,bigint,int8,null,NO,null,,,null,null
+Dispatcher_Staff,3,CURRENT_DISPATCHED_MEALS,bigint,int8,null,YES,null,,,null,null
+Dispatcher_Staff,4,TOTAL_DISPATCHED_MEALS,bigint,int8,null,YES,null,,,null,null
+Menu_Categories,1,CATEGORY_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Menu_Categories,2,CATEGORY_NAME,text,text,null,NO,null,,,null,null
+Menu_Categories,3,CATEGORY_ITEM_COUNT,bigint,int8,null,YES,'0'::bigint,,,null,null
+Menu_Categories,4,CATEGORY_ICON,text,text,null,YES,null,,,null,null
+Menu_Item_Groups,1,MENU_GROUP_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Menu_Item_Groups,2,GROUP_ID,bigint,int8,null,NO,null,,,null,null
+Menu_Item_Groups,3,GROUP_NAME,text,text,null,YES,null,,,null,null
+Menu_Item_Groups,4,GROUP_DESCRIPTION,text,text,null,YES,null,,,null,null
+Menu_Item_Groups,5,GROUP_PRICE,double precision,float8,null,YES,null,,,null,null
+Menu_Items,1,ITEM_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Menu_Items,2,CATEGORY_ID,bigint,int8,null,NO,null,,,FK → Menu_Categories.CATEGORY_ID,null
+Menu_Items,3,ITEM_NAME,text,text,null,YES,null,,,null,null
+Menu_Items,4,ITEM_DESCRIPTION,text,text,null,YES,null,,,null,null
+Menu_Items,5,ITEM_PRICE,double precision,float8,null,YES,null,,,null,null
+Menu_Items,6,ITEM_IMAGE_URL,text,text,null,YES,null,,,null,null
+Menu_Items,7,ITEM_STATUS,text,text,null,YES,'AVAILABLE'::text,,,null,"CHECK ((""ITEM_STATUS"" = ANY (ARRAY['AVAILABLE'::text, 'OUT_OF_STOCK'::text])))"
+Menu_Items,8,MENU_ITEM_DIETARY,text,text,null,YES,null,,,null,null
+Menu_Items,9,ORDER_LIMIT,bigint,int8,null,YES,'0'::bigint,,,null,null
+Order_Events,1,EVENT_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Order_Events,2,ORDER_ID,bigint,int8,null,NO,null,,,FK → Restaurant_Orders.ORDER_ID,null
+Order_Events,3,EVENT_TYPE,text,text,null,NO,null,,,null,null
+Order_Events,4,PREVIOUS_STATUS,text,text,null,YES,null,,,null,null
+Order_Events,5,NEW_STATUS,text,text,null,NO,null,,,null,null
+Order_Events,6,TIMESTAMP,timestamp without time zone,timestamp,null,YES,now(),,,null,null
+Order_Events,7,ACTOR,text,text,null,YES,null,,,null,null
+Order_Events,8,REASON,text,text,null,YES,null,,,null,null
+Order_Events,9,METADATA,jsonb,jsonb,null,YES,null,,,null,null
+Order_Items,1,ORDER_ITEM_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Order_Items,2,ORDER_ID,bigint,int8,null,NO,null,,,FK → Restaurant_Orders.ORDER_ID,null
+Order_Items,3,ITEM_ID,bigint,int8,null,YES,null,,,FK → Menu_Items.ITEM_ID,null
+Order_Items,4,DISCOUNT_ID,bigint,int8,null,YES,null,,,null,null
+Order_Items,5,ORDER_ITEM_STATUS,text,text,null,YES,'PENDING'::text,,,null,"CHECK ((""ORDER_ITEM_STATUS"" = ANY (ARRAY['PENDING'::text, 'COOKING'::text, 'DONE'::text, 'CANCELLED'::text])))"
+Order_Items,7,IS_FLAGGED,boolean,bool,null,YES,null,,,null,null
+Order_Items,8,REJECTION_REASON,ARRAY,_text,null,YES,null,,,null,null
+Restaurant_Events,1,EVENT_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Restaurant_Events,2,TITLE,text,text,null,NO,null,,,null,null
+Restaurant_Events,3,DESCRIPTION,text,text,null,YES,null,,,null,null
+Restaurant_Events,4,CATEGORY,text,text,null,NO,'Other'::text,,,null,"CHECK ((""CATEGORY"" = ANY (ARRAY['Private Event'::text, 'Birthday'::text, 'Corporate Event'::text, 'Meeting'::text, 'Reservation'::text, 'Catering'::text, 'Promotion'::text, 'Holiday'::text, 'Other'::text])))"
+Restaurant_Events,5,COLOR,text,text,null,YES,null,,,null,null
+Restaurant_Events,6,START_AT,timestamp with time zone,timestamptz,null,NO,null,,,null,"CHECK ((""END_AT"" >= ""START_AT""))"
+Restaurant_Events,7,END_AT,timestamp with time zone,timestamptz,null,NO,null,,,null,"CHECK ((""END_AT"" >= ""START_AT""))"
+Restaurant_Events,8,LOCATION,text,text,null,YES,null,,,null,null
+Restaurant_Events,9,ORGANIZER,text,text,null,YES,null,,,null,null
+Restaurant_Events,10,EXPECTED_ATTENDEES,integer,int4,null,YES,null,,,null,"CHECK (((""EXPECTED_ATTENDEES"" IS NULL) OR (""EXPECTED_ATTENDEES"" >= 0)))"
+Restaurant_Events,11,CONTACT_NAME,text,text,null,YES,null,,,null,null
+Restaurant_Events,12,CONTACT_PHONE,text,text,null,YES,null,,,null,null
+Restaurant_Events,13,CONTACT_EMAIL,text,text,null,YES,null,,,null,null
+Restaurant_Events,14,NOTES,text,text,null,YES,null,,,null,null
+Restaurant_Events,15,IS_CANCELLED,boolean,bool,null,NO,false,,,null,null
+Restaurant_Events,16,CREATED_BY,text,text,null,YES,null,,,null,null
+Restaurant_Events,17,CREATED_AT,timestamp with time zone,timestamptz,null,NO,now(),,,null,null
+Restaurant_Events,18,UPDATED_AT,timestamp with time zone,timestamptz,null,NO,now(),,,null,null
+Restaurant_Events,19,UPDATED_BY,text,text,null,YES,null,,,null,null
+Restaurant_Events,20,DELETED_AT,timestamp with time zone,timestamptz,null,YES,null,,,null,null
+Restaurant_Orders,1,ORDER_ID,bigint,int8,null,NO,null,PRIMARY KEY,UNIQUE,null,null
+Restaurant_Orders,2,TABLE_ID,bigint,int8,null,NO,null,,,FK → Restaurant_Tables.TABLE_ID,null
+Restaurant_Orders,5,REQUESTED_FROM,text,text,null,YES,'None'::text,,,null,"CHECK ((""REQUESTED_FROM"" = ANY (ARRAY['Cashier'::text, 'Customer'::text])))"
+Restaurant_Orders,6,ORDER_TYPE,text,text,null,YES,'Dine-in'::text,,,null,"CHECK ((""ORDER_TYPE"" = ANY (ARRAY['DINE-IN'::text, 'TAKEOUT'::text])))"
+Restaurant_Orders,7,ORDER_STATUS,text,text,null,YES,'Pending'::text,,,null,"CHECK ((""ORDER_STATUS"" = ANY (ARRAY['REQUESTED'::text, 'VERIFIED'::text, 'PREPARING'::text, 'READY'::text, 'SERVED'::text, 'CANCELLED'::text, 'COMPLETED'::text])))"
+Restaurant_Orders,8,SUBTOTAL_BILL,double precision,float8,null,YES,'0'::double precision,,,null,null
+Restaurant_Orders,9,TOTAL_BILL,double precision,float8,null,YES,'0'::double precision,,,null,null
+Restaurant_Orders,10,TIME,timestamp without time zone,timestamp,null,YES,null,,,null,null
+Restaurant_Orders,12,KITCHEN_NOTE,text,text,null,YES,null,,,null,null
+Restaurant_Orders,13,SERVER_NOTE,text,text,null,YES,null,,,null,null
+Restaurant_Orders,14,GUEST_COUNT,integer,int4,null,YES,1,,,null,null
+Restaurant_Orders,15,READY_AT,timestamp without time zone,timestamp,null,YES,null,,,null,null
+Restaurant_Orders,16,SERVED_AT,timestamp without time zone,timestamp,null,YES,null,,,null,null
+Restaurant_Orders,17,COMPLETED_AT,timestamp without time zone,timestamp,null,YES,null,,,null,null
+Restaurant_Orders,18,PAYMENT_METHOD,text,text,null,YES,'CASH'::text,,,null,null
+Restaurant_Tables,1,TABLE_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Restaurant_Tables,2,TABLE_NUM,bigint,int8,null,NO,'0'::bigint,,,null,null
+Restaurant_Tables,3,STATUS,text,text,null,YES,null,,,null,"CHECK ((""STATUS"" = ANY (ARRAY['AVAILABLE'::text, 'RESERVED'::text, 'OCCUPIED'::text, 'HAS_REQUEST'::text, 'UNAVAILABLE'::text])))"
+Restaurant_Tables,4,GUEST_CAPACITY,bigint,int8,null,YES,'0'::bigint,,,null,null
+Restaurant_Tables,5,CURRENT_GUEST_COUNT,bigint,int8,null,YES,'0'::bigint,,,null,null
+Restaurant_Tables,6,RESERVED_SINCE,timestamp without time zone,timestamp,null,YES,null,,,null,null
+Restaurant_Tables,7,BILL_OUT_REQUESTED,boolean,bool,null,YES,false,,,null,null
+Restaurant_Tables,8,MERGE_GROUP_ID,bigint,int8,null,YES,null,,,FK → Restaurant_Tables.TABLE_ID,null
+Restaurant_Tables,9,RESERVATION_NAME,text,text,null,YES,null,,,null,null
+Restaurant_Tables,10,RESERVATION_PAX,bigint,int8,null,YES,null,,,null,null
+Restaurant_Tables,11,RESERVATION_NOTES,text,text,null,YES,null,,,null,null
+Restaurant_Tables,12,IS_MERGE_MEMBER,boolean,bool,null,YES,false,,,null,null
+Restaurant_Tables,13,IS_MERGE_CAPTAIN,boolean,bool,null,YES,false,,,null,null
+Staff_Accounts,1,ACCOUNT_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Staff_Accounts,2,AUTH_USER_ID,uuid,uuid,null,YES,null,,,null,null
+Staff_Accounts,3,FULL_NAME,text,text,null,NO,null,,,null,null
+Staff_Accounts,4,EMAIL,text,text,null,NO,null,,UNIQUE,null,null
+Staff_Accounts,5,ROLE,text,text,null,NO,'STAFF'::text,,,null,"CHECK ((""ROLE"" = ANY (ARRAY['ADMIN'::text, 'MANAGER'::text, 'CASHIER'::text, 'KITCHEN'::text, 'STAFF'::text])))"
+Staff_Accounts,6,STATUS,text,text,null,NO,'ACTIVE'::text,,,null,"CHECK ((""STATUS"" = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text, 'SUSPENDED'::text])))"
+Staff_Accounts,7,PERMISSIONS,ARRAY,_text,null,NO,ARRAY[]::text[],,,null,null
+Staff_Accounts,8,PHONE,text,text,null,YES,null,,,null,null
+Staff_Accounts,9,NOTES,text,text,null,YES,null,,,null,null
+Staff_Accounts,10,CREATED_AT,timestamp with time zone,timestamptz,null,NO,now(),,,null,null
+Staff_Accounts,11,UPDATED_AT,timestamp with time zone,timestamptz,null,NO,now(),,,null,null
+Staff_Accounts,12,LAST_LOGIN,timestamp with time zone,timestamptz,null,YES,null,,,null,null
+Staff_Codes,1,CODE_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Staff_Codes,2,STAFF_NAME,text,text,null,NO,null,,,null,null
+Staff_Codes,3,STAFF_ROLE,text,text,null,YES,null,,,null,null
+Superviser_Codes,1,SUPERVISER_CODE,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Superviser_Codes,2,STAFF_ID,timestamp with time zone,timestamptz,null,NO,now(),,,null,null
+Table_Reservations,1,RESERVATION_ID,bigint,int8,null,NO,null,PRIMARY KEY,,null,null
+Table_Reservations,2,TABLE_ID,bigint,int8,null,NO,null,,,FK → Restaurant_Tables.TABLE_ID,null
+Table_Reservations,3,APPOINTED_NAME,text,text,null,YES,null,,,null,null
+Table_Reservations,4,GUEST_COUNT,bigint,int8,null,YES,null,,,null,null
+Table_Reservations,5,RESERVATION_NOTE,text,text,null,YES,null,,,null,null
+Table_Reservations,6,TIME_LIMIT,time without time zone,time,null,YES,null,,,null,null

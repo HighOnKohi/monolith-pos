@@ -14,7 +14,7 @@ import {
 } from '@/services/eventService'
 import {
   computeEventStats,
-  deriveEventStatus,
+  // deriveEventStatus,
   filterEvents,
   type EventCardType,
 } from './utils/eventUtils'
@@ -80,7 +80,7 @@ export default function EventsPage() {
 
   // ── Filters & Active Summary Card ──
   const [filters, setFilters] = useState<EventFilterParams>(EVENT_FILTER_DEFAULTS)
-  const [activeCard, setActiveCard] = useState<EventCardType>('total')
+  const [activeCard, setActiveCard] = useState<EventCardType | null>('total')
 
   // ── View Mode ──
   const [viewMode, setViewMode] = useState<ViewMode>('calendar')

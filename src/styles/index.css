@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 /* Page-specific styles */
-@import "./page-styles/kitchen.css";
-@import "./page-styles/cashier.css";
+@import "./page-styles/dispatcher-interface.css";
+@import "./page-styles/service-interface.css";
 @import "./page-styles/menu-manager.css";
 @import "./page-styles/table-manager.css";
 @import "./page-styles/order-logs.css";
@@ -12,6 +12,8 @@
 @import "./page-styles/table-qr.css";
 @import "./page-styles/menu-edit-sidebar.css";
 @import "./page-styles/events.css";
+@import "./page-styles/cashier-interface.css";
+@import "./page-styles/order-viewer.css";
 @import "./Components/sidebar.css";
 @import "./Components/menu-modals.css";
 
@@ -455,13 +457,13 @@ body:has(#customer-page-root) {
 }
 
 .staff-shell .kitchen-page-container .app-card > .p-5,
-.staff-shell .cashier-page-container .app-card > .p-4,
+.staff-shell .service-interface-page-container .app-card > .p-4,
 .staff-shell .table-manager-page-container .app-card > .p-5 {
   padding: 1.1rem;
 }
 
 .staff-shell .kitchen-page-container .grid > div.rounded-2xl,
-.staff-shell .cashier-page-container .grid > div.rounded-2xl,
+.staff-shell .service-interface-page-container .grid > div.rounded-2xl,
 .staff-shell .table-manager-page-container .grid > div.rounded-2xl {
   border-radius: 15px;
   box-shadow: none;

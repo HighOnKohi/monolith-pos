@@ -12,8 +12,10 @@ const CustomerPage = lazy(() => import('@/pages/Customer'))
 const NotFound = lazy(() => import('@/pages/NotFound'))
 
 // ─── Protected pages ──────────────────────────────────────────────────────────
-const KitchenPage = lazy(() => import('@/pages/Kitchen'))
-const CashierPage = lazy(() => import('@/pages/Cashier'))
+const DispatcherInterface = lazy(() => import('@/pages/DispatcherInterface'))
+const CashierPage = lazy(() => import('@/pages/ServiceInterface'))
+const CashierInterfacePage = lazy(() => import('@/pages/CashierInterface'))
+const OrderViewerPage = lazy(() => import('@/pages/OrderViewer'))
 const TableManagerPage = lazy(() => import('@/pages/TableManager'))
 const MenuManagerPage = lazy(() => import('@/pages/MenuManager'))
 const AnalyticsPage = lazy(() => import('@/pages/Analytics'))
@@ -103,9 +105,12 @@ export const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: '/', element: <Navigate to="/kitchen" replace /> },
-          { path: 'kitchen', element: wrap(KitchenPage) },
-          { path: 'cashier', element: wrap(CashierPage) },
+          { path: '/', element: <Navigate to="/dispatcher" replace /> },
+          { path: 'dispatcher', element: wrap(DispatcherInterface) },
+          { path: 'kitchen', element: <Navigate to="/dispatcher" replace /> },
+          { path: 'order-viewer', element: wrap(OrderViewerPage) },
+          { path: 'service', element: wrap(CashierPage) },
+          { path: 'cashier', element: wrap(CashierInterfacePage) },
           { path: 'tables', element: wrap(TableManagerPage) },
           { path: 'menu', element: wrap(MenuManagerPage) },
           { path: 'analytics', element: wrap(AnalyticsPage) },

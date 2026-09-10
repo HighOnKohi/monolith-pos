@@ -23,12 +23,12 @@ const STATUS_MESSAGES: Record<OrderStatus, { title: string; message: string }> =
     message: 'The kitchen has accepted your order and will start prep shortly.',
   },
   PREPARING: {
-    title: 'Cooking in Progress',
-    message: 'The chefs are actively preparing your dishes in the kitchen.',
+    title: 'Cooking Your Order',
+    message: 'The chefs are actively preparing your dishes.',
   },
   READY: {
-    title: 'Order Ready to Serve',
-    message: 'Your dishes are freshly cooked and being prepared for delivery.',
+    title: 'Order Ready',
+    message: 'Your dishes are ready and will be served shortly.',
   },
   SERVED: {
     title: 'Food Has Been Served!',

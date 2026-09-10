@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { X, AlertTriangle, Flag, Loader2 } from 'lucide-react'
-import type { KitchenOrder } from '@/services/kitchenService'
+import type { DispatcherOrder } from '@/services/dispatcherService'
 
 interface CancelOrderModalProps {
-  order: KitchenOrder
+  order: DispatcherOrder
   onClose: () => void
   onConfirm: (note: string, flaggedItemIds: string[]) => Promise<void>
 }
