@@ -14,6 +14,45 @@ export type StaffPermission =
   | 'access_analytics'
   | 'view_order_logs'
 
+// ─── Staff Codes (managed in Account Manager for operational logging & roles) ─
+
+export interface StaffCodeItem {
+  codeId: number // Primary Key / Staff PIN code e.g. 1001
+  staffName: string
+  staffRole: StaffRole
+  status: StaffStatus
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface StaffCodeFormData {
+  codeId: number
+  staffName: string
+  staffRole: StaffRole
+  status: StaffStatus
+}
+
+export interface StaffCodeFilterParams {
+  searchQuery?: string
+  role?: StaffRole | 'ALL'
+  status?: StaffStatus | 'ALL'
+  sortBy?: 'codeId' | 'staffName' | 'staffRole' | 'status'
+  sortOrder?: 'asc' | 'desc'
+}
+
+export interface StaffCodeSummaryStats {
+  totalCodes: number
+  activeCount: number
+  inactiveCount: number
+  adminCount: number
+  managerCount: number
+  cashierCount: number
+  kitchenCount: number
+  floorStaffCount: number
+}
+
+// ─── Legacy Primary Staff Account (Single store root account for terminal) ────
+
 export interface StaffAccount {
   accountId: number
   authUserId?: string | null

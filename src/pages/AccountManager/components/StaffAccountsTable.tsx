@@ -1,85 +1,46 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState } from 'react'
 import {
-  MoreVertical,
-  Eye,
   Edit2,
-  ShieldAlert,
   KeyRound,
-  AlertTriangle,
   UserCheck,
   UserX,
-  Clock,
-  Mail,
-  Phone,
+  Trash2,
+  Copy,
+  Check,
+  ShieldCheck,
+  ChefHat,
+  Store,
+  Users,
+  CheckCircle2,
 } from 'lucide-react'
-import type { StaffAccount, StaffRole } from '@/types/account'
+import type { StaffCodeItem, StaffRole } from '@/types/account'
 import { ROLE_DEFINITIONS } from '@/types/account'
 
 interface StaffAccountsTableProps {
-  accounts: StaffAccount[]
+  codes: StaffCodeItem[]
   loading?: boolean
-  currentAdminEmail?: string
-  onViewDetails: (account: StaffAccount) => void
-  onEditAccount: (account: StaffAccount) => void
-  onChangeRole: (account: StaffAccount) => void
-  onToggleStatus: (account: StaffAccount) => void
-  onSendPasswordReset: (account: StaffAccount) => void
+  activeSessionCodeId?: number
+  onEditCode: (code: StaffCodeItem) => void
+  onToggleStatus: (code: StaffCodeItem) => void
+  onDeleteCode: (code: StaffCodeItem) => void
+  onSelectForSession?: (code: StaffCodeItem) => void
 }
 
 export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
-  accounts,
+  codes,
   loading = false,
-  currentAdminEmail,
-  onViewDetails,
-  onEditAccount,
-  onChangeRole,
+  activeSessionCodeId,
+  onEditCode,
   onToggleStatus,
-  onSendPasswordReset,
+  onDeleteCode,
+  onSelectForSession,
 }) => {
-  const [openMenuId, setOpenMenuId] = useState<number | null>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
+  const [copiedCodeId, setCopiedCodeId] = useState<number | null>(null)
 
-  // Close menu when clicking outside
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpenMenuId(null)
-      }
-    }
-    if (openMenuId !== null) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [openMenuId])
-
-  const formatDate = (iso: string) => {
-    try {
-      const d = new Date(iso)
-      if (isNaN(d.getTime())) return iso
-      return d.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      })
-    } catch {
-      return iso
-    }
-  }
-
-  const formatLastActive = (iso?: string | null) => {
-    if (!iso) return 'Never logged in'
-    try {
-      const d = new Date(iso)
-      if (isNaN(d.getTime())) return 'Never'
-      return d.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-      })
-    } catch {
-      return 'Never'
-    }
+  const handleCopyCode = (codeId: number) => {
+    navigator.clipboard.writeText(String(codeId))
+    setCopiedCodeId(codeId)
+    setTimeout(() => setCopiedCodeId(null), 2000)
   }
 
   const getInitials = (name: string) => {
@@ -92,305 +53,228 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
 
   const renderRoleBadge = (role: StaffRole) => {
     const meta = ROLE_DEFINITIONS[role] || ROLE_DEFINITIONS.STAFF
+    let RoleIcon = Users
+    if (role === 'ADMIN') RoleIcon = ShieldCheck
+    if (role === 'MANAGER') RoleIcon = ShieldCheck
+    if (role === 'CASHIER') RoleIcon = Store
+    if (role === 'KITCHEN') RoleIcon = ChefHat
+
     return (
       <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-black border ${meta.badgeBg} ${meta.badgeText} ${meta.badgeBorder}`}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-black border ${meta.badgeBg} ${meta.badgeText} ${meta.badgeBorder}`}
       >
-        {meta.label}
+        <RoleIcon className="w-3 h-3 shrink-0" />
+        <span>{meta.label}</span>
       </span>
     )
   }
 
-  const renderStatusBadge = (status: StaffAccount['status']) => {
-    if (status === 'ACTIVE') {
-      return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200/80">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          <span>Active</span>
-        </span>
-      )
-    }
+  const renderStatusBadge = (status: string) => {
+    const isActive = status === 'ACTIVE'
     return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-rose-50 text-rose-700 border border-rose-200/80">
-        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-        <span>Inactive</span>
+      <span
+        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-black border ${
+          isActive
+            ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80'
+            : 'bg-slate-100 text-slate-600 border-slate-200'
+        }`}
+      >
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}
+        />
+        <span>{isActive ? 'Active' : 'Inactive'}</span>
       </span>
-    )
-  }
-
-  if (loading) {
-    return (
-      <div className="p-12 text-center bg-white rounded-2xl border border-slate-200/80 space-y-3">
-        <div className="w-8 h-8 rounded-full border-3 border-[#14274E] border-t-transparent animate-spin mx-auto" />
-        <p className="text-xs font-bold text-slate-500">Loading staff accounts...</p>
-      </div>
-    )
-  }
-
-  if (accounts.length === 0) {
-    return (
-      <div className="p-12 text-center bg-white rounded-2xl border border-slate-200/80 space-y-2">
-        <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto">
-          <AlertTriangle className="w-6 h-6" />
-        </div>
-        <h3 className="text-sm font-black text-slate-700">No staff accounts found</h3>
-        <p className="text-xs text-slate-400 max-w-sm mx-auto">
-          No accounts match your filter criteria or no accounts have been added yet.
-        </p>
-      </div>
     )
   }
 
   return (
-    <div className="space-y-3">
-      {/* ── Desktop Table (md and up) ── */}
-      <div className="hidden md:block rounded-2xl bg-white border border-slate-200/80 shadow-2xs overflow-visible">
-        <table className="w-full text-left text-xs border-collapse">
+    <div className="rounded-2xl border border-slate-200/80 bg-white shadow-2xs overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-black text-slate-400 uppercase tracking-wider">
-              <th className="py-3 px-4">Staff Member</th>
-              <th className="py-3 px-4">Contact</th>
-              <th className="py-3 px-4">Role</th>
-              <th className="py-3 px-4">Status</th>
-              <th className="py-3 px-4">Created</th>
-              <th className="py-3 px-4">Last Login</th>
-              <th className="py-3 px-4 text-right">Actions</th>
+            <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-black uppercase tracking-wider text-slate-400">
+              <th className="py-3.5 px-4">Staff Member</th>
+              <th className="py-3.5 px-4">Staff Code</th>
+              <th className="py-3.5 px-4">Assigned Role</th>
+              <th className="py-3.5 px-4">Status</th>
+              <th className="py-3.5 px-4 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-            {accounts.map((acc) => {
-              const isCurrentAdmin =
-                Boolean(currentAdminEmail) &&
-                acc.email.toLowerCase() === currentAdminEmail?.toLowerCase()
-
-              return (
-                <tr
-                  key={acc.accountId}
-                  className="hover:bg-slate-50/70 transition-colors group"
-                >
-                  {/* Name & Avatar */}
-                  <td className="py-3 px-4">
+          <tbody className="divide-y divide-slate-100 text-xs">
+            {/* Loading State */}
+            {loading &&
+              Array.from({ length: 5 }).map((_, i) => (
+                <tr key={`skel-${i}`} className="animate-pulse">
+                  <td className="py-3.5 px-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center font-black text-xs text-[#14274E] shrink-0 shadow-2xs">
-                        {getInitials(acc.fullName)}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-extrabold text-slate-900 text-xs">
-                            {acc.fullName}
-                          </span>
-                          {isCurrentAdmin && (
-                            <span className="text-[10px] font-extrabold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.2 rounded-full">
-                              You
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[11px] text-slate-400 block font-normal">
-                          ID: #{acc.accountId}
-                        </span>
+                      <div className="w-8 h-8 rounded-full bg-slate-200" />
+                      <div className="space-y-1.5">
+                        <div className="h-3 w-32 bg-slate-200 rounded" />
+                        <div className="h-2.5 w-20 bg-slate-100 rounded" />
                       </div>
                     </div>
                   </td>
-
-                  {/* Contact */}
-                  <td className="py-3 px-4">
-                    <div className="space-y-0.5 text-[11px]">
-                      <div className="flex items-center gap-1 text-slate-600">
-                        <Mail className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span className="truncate max-w-[160px]">{acc.email}</span>
-                      </div>
-                      {acc.phone && (
-                        <div className="flex items-center gap-1 text-slate-400">
-                          <Phone className="w-3 h-3 text-slate-400 shrink-0" />
-                          <span>{acc.phone}</span>
-                        </div>
-                      )}
-                    </div>
+                  <td className="py-3.5 px-4">
+                    <div className="h-4 w-16 bg-slate-200 rounded" />
                   </td>
-
-                  {/* Role */}
-                  <td className="py-3 px-4">{renderRoleBadge(acc.role)}</td>
-
-                  {/* Status */}
-                  <td className="py-3 px-4">{renderStatusBadge(acc.status)}</td>
-
-                  {/* Created Date */}
-                  <td className="py-3 px-4 text-slate-500 text-[11px]">
-                    {formatDate(acc.createdAt)}
+                  <td className="py-3.5 px-4">
+                    <div className="h-5 w-20 bg-slate-200 rounded-full" />
                   </td>
-
-                  {/* Last Login */}
-                  <td className="py-3 px-4 text-slate-500 text-[11px]">
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-slate-400 shrink-0" />
-                      <span>{formatLastActive(acc.lastLogin)}</span>
-                    </div>
+                  <td className="py-3.5 px-4">
+                    <div className="h-5 w-16 bg-slate-200 rounded-full" />
                   </td>
-
-                  {/* Actions Dropdown */}
-                  <td className="py-3 px-4 text-right relative">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setOpenMenuId(openMenuId === acc.accountId ? null : acc.accountId)
-                      }}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                      aria-label="Open staff action menu"
-                    >
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
-
-                    {openMenuId === acc.accountId && (
-                      <div
-                        ref={menuRef}
-                        className="absolute right-4 top-10 z-50 w-48 bg-white rounded-xl shadow-xl border border-slate-200/90 py-1.5 text-left text-xs font-semibold animate-in fade-in zoom-in-95 duration-100"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          onClick={() => {
-                            setOpenMenuId(null)
-                            onViewDetails(acc)
-                          }}
-                          className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors cursor-pointer"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-slate-400" />
-                          <span>View Details</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setOpenMenuId(null)
-                            onEditAccount(acc)
-                          }}
-                          className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors cursor-pointer"
-                        >
-                          <Edit2 className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Edit Account</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setOpenMenuId(null)
-                            onChangeRole(acc)
-                          }}
-                          className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors cursor-pointer"
-                        >
-                          <ShieldAlert className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Change Role</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setOpenMenuId(null)
-                            onSendPasswordReset(acc)
-                          }}
-                          className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors cursor-pointer"
-                        >
-                          <KeyRound className="w-3.5 h-3.5 text-amber-500" />
-                          <span>Send Password Reset</span>
-                        </button>
-
-                        <div className="my-1 border-t border-slate-100" />
-
-                        <button
-                          onClick={() => {
-                            setOpenMenuId(null)
-                            onToggleStatus(acc)
-                          }}
-                          className={`w-full px-3.5 py-2 flex items-center gap-2 transition-colors cursor-pointer ${
-                            acc.status === 'ACTIVE'
-                              ? 'text-rose-600 hover:bg-rose-50'
-                              : 'text-emerald-600 hover:bg-emerald-50'
-                          }`}
-                        >
-                          {acc.status === 'ACTIVE' ? (
-                            <>
-                              <UserX className="w-3.5 h-3.5 text-rose-500" />
-                              <span>Deactivate Account</span>
-                            </>
-                          ) : (
-                            <>
-                              <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
-                              <span>Activate Account</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    )}
+                  <td className="py-3.5 px-4 text-right">
+                    <div className="h-7 w-7 bg-slate-200 rounded-lg ml-auto" />
                   </td>
                 </tr>
-              )
-            })}
+              ))}
+
+            {/* Empty State */}
+            {!loading && codes.length === 0 && (
+              <tr>
+                <td colSpan={5} className="py-12 px-4 text-center">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 mb-3">
+                    <KeyRound className="h-6 w-6" />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-700">No staff codes found</h3>
+                  <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                    No staff codes match the current filter or search criteria.
+                  </p>
+                </td>
+              </tr>
+            )}
+
+            {/* Data Rows */}
+            {!loading &&
+              codes.map((item) => {
+                const isActiveSession = activeSessionCodeId === item.codeId
+
+                return (
+                  <tr
+                    key={item.codeId}
+                    className={`hover:bg-slate-50/75 transition-colors group ${
+                      isActiveSession ? 'bg-amber-50/30' : ''
+                    }`}
+                  >
+                    {/* 1. Staff Member */}
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-[#14274E] text-[#E9C46A] flex items-center justify-center font-black text-xs shrink-0 shadow-2xs">
+                          {getInitials(item.staffName)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-extrabold text-[#14274E] truncate">
+                              {item.staffName}
+                            </span>
+                            {isActiveSession && (
+                              <span className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-800 text-[10px] font-black tracking-tight">
+                                Current
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-slate-400 font-medium">
+                            POS Terminal Staff
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* 2. Staff Code */}
+                    <td className="py-3.5 px-4">
+                      <div className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200/80 px-2.5 py-1 rounded-xl transition-colors border border-slate-200/60">
+                        <KeyRound className="w-3 h-3 text-[#14274E]" />
+                        <span className="font-mono font-black text-xs text-[#14274E]">
+                          #{item.codeId}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyCode(item.codeId)}
+                          className="ml-1 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                          title="Copy Staff Code"
+                        >
+                          {copiedCodeId === item.codeId ? (
+                            <Check className="w-3 h-3 text-emerald-600" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </button>
+                      </div>
+                    </td>
+
+                    {/* 3. Assigned Role */}
+                    <td className="py-3.5 px-4">{renderRoleBadge(item.staffRole)}</td>
+
+                    {/* 4. Status */}
+                    <td className="py-3.5 px-4">{renderStatusBadge(item.status)}</td>
+
+                    {/* 5. Actions */}
+                    <td className="py-3.5 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1 relative">
+                        {/* Quick Set Active Session */}
+                        {onSelectForSession && item.status === 'ACTIVE' && (
+                          <button
+                            type="button"
+                            onClick={() => onSelectForSession(item)}
+                            className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                              isActiveSession
+                                ? 'text-amber-600 bg-amber-50 cursor-default'
+                                : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50/60'
+                            }`}
+                            title={
+                              isActiveSession
+                                ? 'Currently active staff session on this terminal'
+                                : 'Set as active staff for terminal action logging'
+                            }
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+
+                        {/* Quick Edit */}
+                        <button
+                          type="button"
+                          onClick={() => onEditCode(item)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-[#14274E] hover:bg-slate-100 transition-all cursor-pointer"
+                          title="Edit Staff Code"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Quick Toggle Status */}
+                        <button
+                          type="button"
+                          onClick={() => onToggleStatus(item)}
+                          className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                            item.status === 'ACTIVE'
+                              ? 'text-amber-600 hover:bg-amber-50'
+                              : 'text-emerald-600 hover:bg-emerald-50'
+                          }`}
+                          title={item.status === 'ACTIVE' ? 'Deactivate Code' : 'Activate Code'}
+                        >
+                          {item.status === 'ACTIVE' ? (
+                            <UserX className="w-3.5 h-3.5" />
+                          ) : (
+                            <UserCheck className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+
+                        {/* Delete Code */}
+                        <button
+                          type="button"
+                          onClick={() => onDeleteCode(item)}
+                          className="p-1.5 rounded-lg text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-all cursor-pointer"
+                          title="Delete Staff Code"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
           </tbody>
         </table>
-      </div>
-
-      {/* ── Mobile Responsive Cards (visible below md) ── */}
-      <div className="block md:hidden space-y-3">
-        {accounts.map((acc) => {
-          const isCurrentAdmin =
-            Boolean(currentAdminEmail) &&
-            acc.email.toLowerCase() === currentAdminEmail?.toLowerCase()
-
-          return (
-            <div
-              key={acc.accountId}
-              className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-2xs space-y-3"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center font-black text-xs text-[#14274E]">
-                    {getInitials(acc.fullName)}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-extrabold text-slate-900 text-sm">
-                        {acc.fullName}
-                      </span>
-                      {isCurrentAdmin && (
-                        <span className="text-[10px] font-extrabold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.2 rounded-full">
-                          You
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs text-slate-500 block truncate max-w-[200px]">
-                      {acc.email}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex flex-col items-end gap-1">
-                  {renderRoleBadge(acc.role)}
-                  {renderStatusBadge(acc.status)}
-                </div>
-              </div>
-
-              {/* Meta row */}
-              <div className="text-[11px] text-slate-400 flex items-center justify-between pt-2 border-t border-slate-100">
-                <span>Created {formatDate(acc.createdAt)}</span>
-                <span>Active: {formatLastActive(acc.lastLogin)}</span>
-              </div>
-
-              {/* Action buttons */}
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <button
-                  onClick={() => onViewDetails(acc)}
-                  className="py-1.5 px-3 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Eye className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Details</span>
-                </button>
-                <button
-                  onClick={() => onEditAccount(acc)}
-                  className="py-1.5 px-3 rounded-xl bg-[#14274E] text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                  <span>Edit</span>
-                </button>
-              </div>
-            </div>
-          )
-        })}
       </div>
     </div>
   )

@@ -53,7 +53,9 @@ export function CustomerNameGate({
     setTableError(null)
     try {
       const all = await fetchAllTables()
-      const available = all.filter((t) => t.STATUS === 'AVAILABLE')
+      const available = all.filter(
+        (t) => t.STATUS === 'AVAILABLE' || (initialTableId && t.TABLE_ID === initialTableId),
+      )
       setTables(available)
 
       // If user had a selected table that is still available, keep it, otherwise pick first available if dine-in

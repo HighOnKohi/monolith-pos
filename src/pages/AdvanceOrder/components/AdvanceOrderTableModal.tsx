@@ -25,8 +25,10 @@ export function AdvanceOrderTableModal({
     setFetchError(null)
     try {
       const all = await fetchAllTables()
-      // Filter strictly for available tables
-      const available = all.filter((t) => t.STATUS === 'AVAILABLE')
+      // Filter for available tables plus the currently selected table if re-opening
+      const available = all.filter(
+        (t) => t.STATUS === 'AVAILABLE' || (selectedTableId && t.TABLE_ID === selectedTableId),
+      )
       setTables(available)
     } catch (err) {
       console.error('[AdvanceOrderTableModal] Failed to fetch tables:', err)

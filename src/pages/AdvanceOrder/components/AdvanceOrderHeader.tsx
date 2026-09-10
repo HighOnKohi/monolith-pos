@@ -1,5 +1,5 @@
 import logo from '@/assets/images/monolith-logo-nobg.png'
-import { ShoppingBag, Clock, User, Edit3 } from 'lucide-react'
+import { ShoppingBag, Clock, User, Edit3, RotateCcw } from 'lucide-react'
 
 interface AdvanceOrderHeaderProps {
   customerName?: string
@@ -11,6 +11,7 @@ interface AdvanceOrderHeaderProps {
   hasActiveOrder?: boolean
   countdownFormatted?: string
   onOpenOrderTab?: () => void
+  onResetSession?: () => void
 }
 
 export function AdvanceOrderHeader({
@@ -23,6 +24,7 @@ export function AdvanceOrderHeader({
   hasActiveOrder = false,
   countdownFormatted,
   onOpenOrderTab,
+  onResetSession,
 }: AdvanceOrderHeaderProps) {
   return (
     <div className="flex items-center justify-between px-3 sm:px-4 pt-3 sm:pt-4 pb-2.5 sm:pb-3 bg-[#F1F6F9] w-full max-w-full min-w-0 gap-2">
@@ -83,6 +85,20 @@ export function AdvanceOrderHeader({
           >
             <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin" style={{ animationDuration: '8s' }} />
             <span className="font-mono text-xs font-black">{countdownFormatted || 'Active'}</span>
+          </button>
+        )}
+
+        {/* Reset Session Debug Button */}
+        {onResetSession && (
+          <button
+            type="button"
+            onClick={onResetSession}
+            className="px-2.5 py-1.5 rounded-xl border border-rose-200/90 bg-rose-50 hover:bg-rose-100/80 text-rose-700 font-extrabold text-[11px] flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-2xs"
+            title="Reset advance order session & clear cache (Debug)"
+          >
+            <RotateCcw className="w-3 h-3 text-rose-600" />
+            <span className="hidden sm:inline">Reset Session</span>
+            <span className="inline sm:hidden">Reset</span>
           </button>
         )}
 

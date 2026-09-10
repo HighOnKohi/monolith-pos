@@ -1,8 +1,9 @@
 import { useLocation } from 'react-router-dom'
-import { Menu, LogOut, UserCircle } from 'lucide-react'
+import { Menu, LogOut, UserCircle, KeyRound } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { navigation } from '@/config/navigation'
 import { APP_NAME } from '@/config/app'
+import { getActiveStaffSession } from '@/services/staffCodeService'
 
 interface AppHeaderProps {
   onMenuToggle: () => void
@@ -21,6 +22,7 @@ function usePageTitle(): string {
 export function AppHeader({ onMenuToggle }: AppHeaderProps) {
   const { user, signOut } = useAuth()
   const pageTitle = usePageTitle()
+  const activeStaff = getActiveStaffSession()
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-secondary/15 bg-white px-4 rounded-tr-2xl">
@@ -38,8 +40,22 @@ export function AppHeader({ onMenuToggle }: AppHeaderProps) {
         </span>
       </div>
 
-      {/* Right: user info + logout */}
+      {/* Right: active staff code + user info + logout */}
       <div className="flex items-center gap-2">
+        {/* Active Staff Code for Logging */}
+        {activeStaff && (
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 border border-slate-200 text-xs text-[#14274E]"
+            title={`Active Staff for Logging: #${activeStaff.codeId} - ${activeStaff.staffName} (${activeStaff.staffRole})`}
+          >
+            <KeyRound className="w-3.5 h-3.5 text-[#14274E]" />
+            <span className="font-mono font-black text-xs">#{activeStaff.codeId}</span>
+            <span className="hidden md:inline font-bold text-slate-700 truncate max-w-[120px]">
+              {activeStaff.staffName}
+            </span>
+          </div>
+        )}
+
         {user && (
           <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted">
             <UserCircle className="h-4 w-4" />

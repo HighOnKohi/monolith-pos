@@ -84,12 +84,72 @@ export function saveCustomerName(name: string): string {
   return trimmed
 }
 
-export function savePreOrderTable(tableId: number | null, tableNum: number | null) {
+/** Marks a table as RESERVED in Restaurant_Tables. */
+export async function markTableAsReserved(
+  tableId: number,
+  customerName: string,
+  note?: string,
+): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('Restaurant_Tables')
+      .update({
+        STATUS: 'RESERVED',
+        RESERVED_SINCE: new Date().toISOString(),
+        RESERVATION_NAME: customerName.trim(),
+        RESERVATION_NOTES: note || 'Advance Order',
+      })
+      .eq('TABLE_ID', tableId)
+
+    if (error) {
+      console.warn('[advanceOrderService] Could not update table status to RESERVED:', error)
+    }
+  } catch (err) {
+    console.warn('[advanceOrderService] Exception marking table as RESERVED:', err)
+  }
+}
+
+/** Releases a table reservation back to AVAILABLE. */
+export async function releaseTableReservation(tableId: number): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('Restaurant_Tables')
+      .update({
+        STATUS: 'AVAILABLE',
+        RESERVED_SINCE: null,
+        RESERVATION_NAME: null,
+        RESERVATION_NOTES: null,
+        RESERVATION_PAX: null,
+      })
+      .eq('TABLE_ID', tableId)
+
+    if (error) {
+      console.warn('[advanceOrderService] Could not release table to AVAILABLE:', error)
+    }
+  } catch (err) {
+    console.warn('[advanceOrderService] Exception releasing table:', err)
+  }
+}
+
+export async function savePreOrderTable(
+  tableId: number | null,
+  tableNum: number | null,
+  previousTableId?: number | null,
+  customerName?: string,
+) {
+  // If user held a previous table that changed, release it
+  if (previousTableId && previousTableId !== tableId) {
+    await releaseTableReservation(previousTableId)
+  }
+
   if (tableId != null) {
     localStorage.setItem(STORAGE_KEY_TABLE_ID, String(tableId))
+    // Mark chosen table as RESERVED
+    await markTableAsReserved(tableId, customerName || 'Advance Order Guest', 'Advance Order Seating')
   } else {
     localStorage.removeItem(STORAGE_KEY_TABLE_ID)
   }
+
   if (tableNum != null) {
     localStorage.setItem(STORAGE_KEY_TABLE_NUM, String(tableNum))
   } else {
@@ -125,6 +185,34 @@ export function clearActiveAdvanceOrder() {
   localStorage.removeItem(STORAGE_KEY_CART)
   localStorage.removeItem(STORAGE_KEY_TABLE_ID)
   localStorage.removeItem(STORAGE_KEY_TABLE_NUM)
+}
+
+/**
+ * Resets the entire advance order session for debugging/fresh start:
+ * releases any reserved table held by this session and wipes local storage cache.
+ */
+export async function resetAdvanceOrderSession(): Promise<void> {
+  const token = getActiveSessionToken()
+  if (token) {
+    const active = await getActiveAdvanceOrder(token)
+    if (active?.tableId) {
+      await releaseTableReservation(active.tableId)
+    }
+  }
+
+  const rawTableId = localStorage.getItem(STORAGE_KEY_TABLE_ID)
+  if (rawTableId) {
+    await releaseTableReservation(Number(rawTableId))
+  }
+
+  localStorage.removeItem(STORAGE_KEY_PREORDER_SESSION_ID)
+  localStorage.removeItem(STORAGE_KEY_CUSTOMER_NAME)
+  localStorage.removeItem(STORAGE_KEY_CART)
+  localStorage.removeItem(STORAGE_KEY_DINING_TYPE)
+  localStorage.removeItem(STORAGE_KEY_TABLE_ID)
+  localStorage.removeItem(STORAGE_KEY_TABLE_NUM)
+  localStorage.removeItem(STORAGE_KEY_ACTIVE_TOKEN)
+  localStorage.removeItem(STORAGE_KEY_DB_FALLBACK)
 }
 
 // ─── Local Storage Fallback Cache ─────────────────────────────────────────────
@@ -302,6 +390,15 @@ export async function createAdvanceOrder(
   setActiveSessionToken(sessionToken)
   clearPreOrderCart()
 
+  // Ensure chosen table is marked as RESERVED in Restaurant_Tables
+  if (payload.diningType === 'dine-in' && payload.tableId) {
+    await markTableAsReserved(
+      payload.tableId,
+      cleanName,
+      `Advance Order: ${orderNumber}`,
+    )
+  }
+
   return createdOrder
 }
 
@@ -421,6 +518,12 @@ export async function cancelAdvanceOrder(
         active.cancelledAt = now
         if (updatedNotes) active.notes = updatedNotes
         saveFallbackOrder(active)
+
+        // Release reserved table
+        if (active.tableId) {
+          await releaseTableReservation(active.tableId)
+        }
+
         return active
       }
     }
@@ -439,6 +542,12 @@ export async function cancelAdvanceOrder(
       order.notes = order.notes ? `${order.notes} ${cancelTag}` : cancelTag
     }
     saveFallbackOrder(order)
+
+    // Release reserved table
+    if (order.tableId) {
+      await releaseTableReservation(order.tableId)
+    }
+
     return order
   }
 

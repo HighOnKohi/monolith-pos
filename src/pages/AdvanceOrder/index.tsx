@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import PageLoader from '@/components/common/PageLoader'
 import { SearchBar } from '@/components/customer/SearchBar'
 import type { DietaryFilter } from '@/components/customer/FilterSheet'
@@ -27,6 +27,7 @@ import {
   getActiveAdvanceOrder,
   cancelAdvanceOrder,
   clearActiveAdvanceOrder,
+  resetAdvanceOrderSession,
   getRemainingSeconds,
   formatCountdown,
   setActiveSessionToken,
@@ -34,6 +35,21 @@ import {
 
 export default function AdvanceOrderPage() {
   const { token: urlToken } = useParams<{ token?: string }>()
+  const navigate = useNavigate()
+
+  // Ensure body and documentElement allow free scrolling on the advance order interface
+  useEffect(() => {
+    document.body.style.overflowY = 'auto'
+    document.body.style.height = 'auto'
+    document.documentElement.style.overflowY = 'auto'
+    document.documentElement.style.height = 'auto'
+    return () => {
+      document.body.style.overflowY = ''
+      document.body.style.height = ''
+      document.documentElement.style.overflowY = ''
+      document.documentElement.style.height = ''
+    }
+  }, [])
 
   // ─── States ─────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<AdvanceOrderTabType>('menu')
@@ -244,18 +260,42 @@ export default function AdvanceOrderPage() {
     tableNum: number | null,
   ) => {
     const saved = saveCustomerName(name)
+    const prevId = selectedTableId
     setCustomerName(saved)
     setDiningType(type)
     setSelectedTableId(tableId)
     setSelectedTableNum(tableNum)
-    savePreOrderTable(tableId, tableNum)
+    savePreOrderTable(tableId, tableNum, prevId, saved)
     setIsNameGateOpen(false)
   }
 
   const handleSelectTable = (tableId: number, tableNum: number) => {
+    const prevId = selectedTableId
     setSelectedTableId(tableId)
     setSelectedTableNum(tableNum)
-    savePreOrderTable(tableId, tableNum)
+    savePreOrderTable(tableId, tableNum, prevId, customerName)
+  }
+
+  const handleResetSession = async () => {
+    if (window.confirm('Reset advance order session and clear all test data?')) {
+      setIsLoadingOrder(true)
+      try {
+        await resetAdvanceOrderSession()
+        setCustomerName('')
+        setDiningType('dine-in')
+        setSelectedTableId(null)
+        setSelectedTableNum(null)
+        setCartItems([])
+        setActiveOrder(null)
+        setActiveTab('menu')
+        navigate('/advance-order', { replace: true })
+        setIsNameGateOpen(true)
+      } catch (err) {
+        console.error('[AdvanceOrderPage] Reset session failed:', err)
+      } finally {
+        setIsLoadingOrder(false)
+      }
+    }
   }
 
   const handleDiningTypeChange = (type: DiningType) => {
@@ -387,7 +427,7 @@ export default function AdvanceOrderPage() {
 
       {/* ─── TAB 1: MENU ─────────────────────────────────────────────────────── */}
       {activeTab === 'menu' && (
-        <div className="flex flex-col h-full w-full max-w-full min-w-0 animate-fade-in pb-24">
+        <div className="flex flex-col w-full max-w-full min-w-0 animate-fade-in pb-24">
           <div className="sticky top-0 z-20 bg-[#F1F6F9]/95 backdrop-blur-md pb-1.5 sm:pb-2 transition-all w-full max-w-full min-w-0">
             <AdvanceOrderHeader
               customerName={customerName}
@@ -399,6 +439,7 @@ export default function AdvanceOrderPage() {
               hasActiveOrder={Boolean(activeOrder)}
               countdownFormatted={countdownString}
               onOpenOrderTab={() => setActiveTab('order')}
+              onResetSession={handleResetSession}
             />
             <SearchBar
               value={searchQuery}
@@ -426,7 +467,7 @@ export default function AdvanceOrderPage() {
 
       {/* ─── TAB 2: YOUR ORDER ───────────────────────────────────────────────── */}
       {activeTab === 'order' && (
-        <div className="flex flex-col h-full w-full max-w-full min-w-0 animate-fade-in pb-36 sm:pb-40">
+        <div className="flex flex-col w-full max-w-full min-w-0 animate-fade-in pb-36 sm:pb-40">
           <div className="sticky top-0 z-20 bg-[#F1F6F9]/95 backdrop-blur-md pb-1.5 sm:pb-2 w-full max-w-full min-w-0">
             <AdvanceOrderHeader
               customerName={customerName || activeOrder?.customerName}
@@ -437,6 +478,7 @@ export default function AdvanceOrderPage() {
               onOpenCart={() => setIsCartExpanded(true)}
               hasActiveOrder={Boolean(activeOrder)}
               countdownFormatted={countdownString}
+              onResetSession={handleResetSession}
             />
           </div>
 

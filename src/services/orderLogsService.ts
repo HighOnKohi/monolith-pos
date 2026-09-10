@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import type { OrderStatus, OrderType, OrderTimelineEvent } from '@/types/order'
 import { parseDbTimestamp } from './analyticsService'
+import { getActiveStaffSession } from './staffCodeService'
 
 export type PaymentStatusFilter = 'ALL' | 'PAID' | 'UNPAID'
 export type PaymentMethodFilter = 'ALL' | 'CASH' | 'CREDIT_CARD' | 'INSTAPAY_QR'
@@ -724,6 +725,7 @@ export async function fetchOrderTimeline(
 
 /**
  * Log a new lifecycle event into Order_Events table if available.
+ * Attaches the active staff code and name for operational accountability.
  */
 export async function logOrderEvent(
   orderId: number,
@@ -737,14 +739,32 @@ export async function logOrderEvent(
   },
 ): Promise<void> {
   try {
+    const activeStaff = getActiveStaffSession()
+    const resolvedActor =
+      event.actor ||
+      (activeStaff
+        ? `#${activeStaff.codeId} ${activeStaff.staffName} (${activeStaff.staffRole})`
+        : 'Store Terminal')
+
+    const mergedMetadata = {
+      ...(activeStaff
+        ? {
+            staff_code_id: activeStaff.codeId,
+            staff_name: activeStaff.staffName,
+            staff_role: activeStaff.staffRole,
+          }
+        : {}),
+      ...(event.metadata || {}),
+    }
+
     await supabase.from('Order_Events').insert({
       ORDER_ID: orderId,
       EVENT_TYPE: event.eventType,
       PREVIOUS_STATUS: event.previousStatus || null,
       NEW_STATUS: event.newStatus,
-      ACTOR: event.actor || null,
+      ACTOR: resolvedActor,
       REASON: event.reason || null,
-      METADATA: event.metadata || null,
+      METADATA: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : null,
       TIMESTAMP: new Date().toISOString(),
     })
   } catch (err) {
