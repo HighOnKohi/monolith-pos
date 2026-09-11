@@ -5,6 +5,7 @@ import {
   Ticket,
   Plus,
   Minus,
+  ArrowLeft,
 } from 'lucide-react'
 import type { TicketCartItem } from '@/types/ticket'
 
@@ -17,6 +18,7 @@ interface TicketingRightPanelProps {
   onRemoveItem: (itemId: string) => void
   onClearCart: () => void
   onOpenCustomerModal: () => void
+  onBackToCatalog?: () => void
 }
 
 export const TicketingRightPanel: React.FC<TicketingRightPanelProps> = ({
@@ -27,17 +29,27 @@ export const TicketingRightPanel: React.FC<TicketingRightPanelProps> = ({
   onRemoveItem,
   onClearCart,
   onOpenCustomerModal,
+  onBackToCatalog,
 }) => {
   // Calculations
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
-  const tax = subtotal * 0.05
-  const total = subtotal + tax
+  const total = subtotal
 
   return (
     <div className="ticketing-right-panel-wrapper flex flex-col h-full bg-white">
       {/* Top Header */}
-      <div className="px-5 py-3.5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between shrink-0">
+      <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
+          {onBackToCatalog && (
+            <button
+              onClick={onBackToCatalog}
+              className="lg:hidden p-1.5 -ml-1.5 text-slate-500 hover:text-[#14274E] rounded-lg hover:bg-slate-200/80 transition-colors cursor-pointer"
+              title="Back to Catalog"
+              aria-label="Back to Catalog"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
           <Ticket className="w-4 h-4 text-[#14274E]" />
           <h2 className="text-sm font-black text-[#14274E]">Ticket Cart</h2>
         </div>
@@ -119,15 +131,6 @@ export const TicketingRightPanel: React.FC<TicketingRightPanelProps> = ({
             <span>Subtotal ({cart.reduce((s, c) => s + c.quantity, 0)} items)</span>
             <span>
               ₱{subtotal.toLocaleString('en-PH', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
-            </span>
-          </div>
-          <div className="flex justify-between text-slate-500">
-            <span>Tax (5%)</span>
-            <span>
-              ₱{tax.toLocaleString('en-PH', {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}

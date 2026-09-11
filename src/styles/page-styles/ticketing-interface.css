@@ -37,6 +37,11 @@
   background: #94a3b8;
 }
 
+/* Time input styling in ticketing customer info modal */
+.ticket-time-input::-webkit-datetime-edit-ampm-field {
+  display: none;
+}
+
 /* Main split layout controllers */
 .ticketing-interface-page-container .ticketing-interface-layout {
   --ticketing-interface-width: 62%;
@@ -227,15 +232,51 @@
 
 /* Responsive adjustments */
 @media (max-width: 1023px) {
+  .ticketing-interface-page-container {
+    height: 100%;
+    overflow: hidden;
+  }
+
   .ticketing-interface-page-container .ticketing-interface-layout {
     flex-direction: column;
     gap: 0;
+    flex: 1;
+    min-height: 0;
+    height: 100%;
   }
+
   .ticketing-interface-page-container .inner-ticketing-container {
     width: 100%;
+    flex: 1;
+    min-height: 0;
+    height: 100%;
   }
+
   .ticketing-interface-page-container .sidebar-container {
-    width: 100%;
-    padding: 0.75rem;
+    display: none !important;
   }
 }
+
+@media (max-width: 640px) {
+  .ticketing-interface-top-bar {
+    padding: 0.65rem 0.85rem;
+    gap: 0.5rem;
+  }
+
+  .ticketing-search-wrapper {
+    padding: 0.45rem 0.65rem;
+    gap: 0.4rem;
+  }
+
+  .ticketing-search-input {
+    font-size: 16px; /* Prevents auto-zoom on iOS */
+  }
+
+  .ticketing-pill-badge {
+    padding: 0.45rem 0.75rem;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+

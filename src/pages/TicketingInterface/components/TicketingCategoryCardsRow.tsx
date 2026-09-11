@@ -26,7 +26,7 @@ export const TicketingCategoryCardsRow: React.FC<TicketingCategoryCardsRowProps>
 
   return (
     <div className="w-full max-w-full min-w-0 overflow-hidden px-4 sm:px-6 py-2 bg-transparent shrink-0">
-      <div className="flex items-center gap-3 sm:gap-4 overflow-x-auto no-scrollbar py-1 w-full max-w-full min-w-0">
+      <div className="flex items-center gap-3 sm:gap-4 overflow-x-auto no-scrollbar py-1 w-full max-w-full min-w-0 scroll-smooth touch-pan-x overscroll-x-contain">
         {categories.map((cat, index) => {
           const isActive = selectedCategory === cat.id
           return (

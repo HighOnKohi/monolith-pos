@@ -15,7 +15,7 @@ export const TicketingHeader: React.FC<TicketingHeaderProps> = ({
   return (
     <div className="ticketing-interface-top-bar relative z-50 bg-transparent">
       {/* Left: Search input */}
-      <div className="ticketing-header-search flex-1 max-w-md">
+      <div className="ticketing-header-search flex-1 min-w-0 max-w-md">
         <div className="ticketing-search-wrapper">
           <Search className="w-4 h-4 text-slate-400 shrink-0" />
           <input
@@ -29,7 +29,7 @@ export const TicketingHeader: React.FC<TicketingHeaderProps> = ({
       </div>
 
       {/* Right: Active Ticket ID Display */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         <div
           className="ticketing-pill-badge cursor-default"
           title="Active Ticket ID for New Order"
