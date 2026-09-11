@@ -35,6 +35,8 @@ export interface EditorTable extends TablePosition {
   widthBlocks?: number
   heightBlocks?: number
   rotation?: number
+  tableNum?: number
+  capacity?: number
 }
 
 export const TABLE_DIMENSIONS_KEY = 'monolith_table_dimensions'
@@ -106,7 +108,7 @@ export interface FloorPlanState {
   markClean: () => void
 
   // Initialize from DB tables
-  initializeFromTables: (tables: TableData[], initialConfig?: FloorConfig) => void
+  initializeFromTables: (tables: TableData[], initialConfig?: FloorConfig, allowedTableIds?: Set<number>) => void
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
@@ -277,6 +279,8 @@ export function useFloorPlanState(): FloorPlanState {
     pushHistory()
     const newTable: EditorTable = {
       tableId: tableData.TABLE_ID,
+      tableNum: tableData.TABLE_NUM,
+      capacity: tableData.GUEST_CAPACITY,
       x: pos.x,
       y: pos.y,
       widthBlocks: w,
@@ -435,56 +439,56 @@ export function useFloorPlanState(): FloorPlanState {
 
   // ── Initialize from DB ─────────────────────────────────────────────────────
 
-  const initializeFromTables = useCallback((tables: TableData[], initialConfig?: FloorConfig) => {
+  const initializeFromTables = useCallback((tables: TableData[], initialConfig?: FloorConfig, allowedTableIds?: Set<number>) => {
     if (initialConfig) {
       setConfigState(initialConfig)
     }
     const activeConfig = initialConfig ?? config
     const dims = getStoredTableDimensions()
+
+    // Filter by allowedTableIds if provided
+    const targetTables = allowedTableIds
+      ? tables.filter((t) => allowedTableIds.has(t.TABLE_ID))
+      : tables
+
     // Check if tables have stored positions
-    const hasPositions = tables.some((t) => t.LAYOUT_X !== null && t.LAYOUT_Y !== null)
+    const hasPositions = targetTables.some((t) => t.LAYOUT_X !== null && t.LAYOUT_Y !== null)
 
     let newPositions: EditorTable[]
 
     if (hasPositions) {
-      newPositions = tables
+      newPositions = targetTables
         .filter((t) => t.LAYOUT_X !== null && t.LAYOUT_Y !== null)
         .map((t) => ({
           tableId: t.TABLE_ID,
+          tableNum: t.TABLE_NUM,
+          capacity: t.GUEST_CAPACITY,
           x: t.LAYOUT_X!,
           y: t.LAYOUT_Y!,
           widthBlocks: dims[t.TABLE_ID]?.widthBlocks ?? (t.GUEST_CAPACITY > 4 ? 4 : activeConfig.tableSizeBlocks),
           heightBlocks: dims[t.TABLE_ID]?.heightBlocks ?? activeConfig.tableSizeBlocks,
           rotation: dims[t.TABLE_ID]?.rotation ?? 0,
         }))
-
-      // Also include tables without positions — auto-place them
-      const positionedIds = new Set(newPositions.map((p) => p.tableId))
-      const unpositioned = tables.filter((t) => !positionedIds.has(t.TABLE_ID))
-      for (const table of unpositioned) {
-        const w = dims[table.TABLE_ID]?.widthBlocks ?? (table.GUEST_CAPACITY > 4 ? 4 : activeConfig.tableSizeBlocks)
-        const h = dims[table.TABLE_ID]?.heightBlocks ?? activeConfig.tableSizeBlocks
-        const rot = dims[table.TABLE_ID]?.rotation ?? 0
-        const pos = findFirstAvailablePosition(
-          activeConfig.tableSizeBlocks, activeConfig.widthBlocks, activeConfig.heightBlocks,
-          newPositions, activeConfig.spacingBlocks, w, h,
-        )
-        if (pos) newPositions.push({ tableId: table.TABLE_ID, x: pos.x, y: pos.y, widthBlocks: w, heightBlocks: h, rotation: rot })
-      }
+      // Do NOT auto-place unpositioned tables! Unpositioned tables belong to other layouts or are unplaced.
     } else {
       // No saved positions — generate initial layout
       const rawLayout = generateInitialLayout(
-        tables.map((t) => t.TABLE_ID),
+        targetTables.map((t) => t.TABLE_ID),
         activeConfig.widthBlocks,
         activeConfig.tableSizeBlocks,
         activeConfig.spacingBlocks,
       )
-      newPositions = rawLayout.map((p) => ({
-        ...p,
-        widthBlocks: dims[p.tableId]?.widthBlocks ?? activeConfig.tableSizeBlocks,
-        heightBlocks: dims[p.tableId]?.heightBlocks ?? activeConfig.tableSizeBlocks,
-        rotation: dims[p.tableId]?.rotation ?? 0,
-      }))
+      newPositions = rawLayout.map((p) => {
+        const t = targetTables.find((table) => table.TABLE_ID === p.tableId)
+        return {
+          ...p,
+          tableNum: t?.TABLE_NUM,
+          capacity: t?.GUEST_CAPACITY,
+          widthBlocks: dims[p.tableId]?.widthBlocks ?? activeConfig.tableSizeBlocks,
+          heightBlocks: dims[p.tableId]?.heightBlocks ?? activeConfig.tableSizeBlocks,
+          rotation: dims[p.tableId]?.rotation ?? 0,
+        }
+      })
     }
 
     const normalized: EditorTable[] = []

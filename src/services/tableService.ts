@@ -234,44 +234,81 @@ export async function batchCreateTables(
   // Find which nums already exist
   const { data: existingData } = await supabase
     .from('Restaurant_Tables')
-    .select('TABLE_NUM')
+    .select('*')
     .in('TABLE_NUM', nums)
 
-  const existingNums = new Set((existingData ?? []).map((r) => Number(r.TABLE_NUM)))
-  const toCreateItems = nums
-    .map((num, i) => ({ num, capacity: capacities[i] }))
-    .filter((item) => !existingNums.has(item.num))
-  const skipped = nums.filter((n) => existingNums.has(n))
+  const existingRows = (existingData as TableData[]) ?? []
+  const placedNums = new Set(
+    existingRows
+      .filter((r) => r.LAYOUT_X !== null && r.LAYOUT_Y !== null)
+      .map((r) => Number(r.TABLE_NUM)),
+  )
 
-  if (toCreateItems.length === 0) {
-    return { created: [], skipped }
+  const reusableTables = existingRows.filter(
+    (r) => r.LAYOUT_X === null && r.LAYOUT_Y === null,
+  )
+  const reusableMap = new Map(reusableTables.map((r) => [Number(r.TABLE_NUM), r]))
+
+  const reactivatedTables: TableData[] = []
+  const toCreateItems: Array<{ num: number; capacity: number }> = []
+  const skipped: number[] = []
+
+  for (let i = 0; i < nums.length; i++) {
+    const num = nums[i]
+    const cap = capacities[i]
+    if (placedNums.has(num)) {
+      skipped.push(num)
+    } else if (reusableMap.has(num)) {
+      const existing = reusableMap.get(num)!
+      reactivatedTables.push({ ...existing, GUEST_CAPACITY: cap, STATUS: 'AVAILABLE' })
+    } else {
+      toCreateItems.push({ num, capacity: cap })
+    }
   }
 
-  const addedCapacity = toCreateItems.reduce((sum, item) => sum + item.capacity, 0)
-  await assertCapacityLimit(addedCapacity, currentEffectivePax, maxPaxLimit)
+  const addedCapacity =
+    reactivatedTables.reduce((sum, item) => sum + item.GUEST_CAPACITY, 0) +
+    toCreateItems.reduce((sum, item) => sum + item.capacity, 0)
 
-  const { data: lastTable } = await supabase
-    .from('Restaurant_Tables')
-    .select('TABLE_ID')
-    .order('TABLE_ID', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  const nextTableId = Number(lastTable?.TABLE_ID ?? 0) + 1
+  if (addedCapacity > 0) {
+    await assertCapacityLimit(addedCapacity, currentEffectivePax, maxPaxLimit)
+  }
 
-  const rows = toCreateItems.map((item, index) => ({
-    TABLE_ID: nextTableId + index,
-    TABLE_NUM: item.num,
-    STATUS: 'AVAILABLE',
-    GUEST_CAPACITY: item.capacity,
-    CURRENT_GUEST_COUNT: 0,
-    BILL_OUT_REQUESTED: false,
-    MERGE_GROUP_ID: null,
-  }))
+  // Update reactivated tables
+  for (const table of reactivatedTables) {
+    await supabase
+      .from('Restaurant_Tables')
+      .update({ GUEST_CAPACITY: table.GUEST_CAPACITY, STATUS: 'AVAILABLE' })
+      .eq('TABLE_ID', table.TABLE_ID)
+  }
 
-  const { data, error } = await supabase.from('Restaurant_Tables').insert(rows).select()
-  if (error) throw error
+  let createdList: TableData[] = [...reactivatedTables]
 
-  return { created: (data as TableData[]) ?? [], skipped }
+  if (toCreateItems.length > 0) {
+    const { data: lastTable } = await supabase
+      .from('Restaurant_Tables')
+      .select('TABLE_ID')
+      .order('TABLE_ID', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const nextTableId = Number(lastTable?.TABLE_ID ?? 0) + 1
+
+    const rows = toCreateItems.map((item, index) => ({
+      TABLE_ID: nextTableId + index,
+      TABLE_NUM: item.num,
+      STATUS: 'AVAILABLE',
+      GUEST_CAPACITY: item.capacity,
+      CURRENT_GUEST_COUNT: 0,
+      BILL_OUT_REQUESTED: false,
+      MERGE_GROUP_ID: null,
+    }))
+
+    const { data, error } = await supabase.from('Restaurant_Tables').insert(rows).select()
+    if (error) throw error
+    if (data) createdList = [...createdList, ...(data as TableData[])]
+  }
+
+  return { created: createdList.sort((a, b) => a.TABLE_NUM - b.TABLE_NUM), skipped }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

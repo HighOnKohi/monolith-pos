@@ -24,6 +24,7 @@ export interface LayoutPreset {
     heightBlocks?: number
     rotation?: number
     capacity?: number
+    tableNum?: number
   }>
   MERGE_GROUPS: Array<{ anchorId: number; memberIds: number[] }>
   IS_ACTIVE: boolean
@@ -125,11 +126,13 @@ export async function createPreset(
     SNAP_TO_GRID: config.snapEnabled,
     LAYOUT_DATA: positions.map((p) => ({
       tableId: p.tableId,
+      tableNum: (p as any).tableNum,
+      capacity: (p as any).capacity,
       x: p.x,
       y: p.y,
       widthBlocks: p.widthBlocks,
       heightBlocks: p.heightBlocks,
-      rotation: p.rotation,
+      rotation: p.rotation ?? 0,
     })),
     MERGE_GROUPS: mergeGroups.map((g) => ({ anchorId: g.anchorId, memberIds: g.memberIds })),
     IS_ACTIVE: false,
@@ -190,11 +193,13 @@ export async function updatePreset(
   if (fields.positions) {
     payload.LAYOUT_DATA = fields.positions.map((p) => ({
       tableId: p.tableId,
+      tableNum: (p as any).tableNum,
+      capacity: (p as any).capacity,
       x: p.x,
       y: p.y,
       widthBlocks: p.widthBlocks,
       heightBlocks: p.heightBlocks,
-      rotation: p.rotation,
+      rotation: p.rotation ?? 0,
     }))
   }
   if (fields.mergeGroups) {
@@ -263,27 +268,45 @@ export async function setActivePreset(presetId: number): Promise<LayoutPreset> {
 
 /**
  * Load a preset and apply its table positions to the Restaurant_Tables rows.
- * Updates LAYOUT_X / LAYOUT_Y on each referenced table.
- * Does NOT create or delete tables — presets are arrangements, not table definitions.
+ * Updates LAYOUT_X / LAYOUT_Y on referenced tables, and clears them on unreferenced tables.
  */
 export async function applyPresetPositions(
   preset: LayoutPreset,
 ): Promise<void> {
   const positions = preset.LAYOUT_DATA ?? []
+  const activeIds = new Set(positions.map((p) => p.tableId))
 
   // Batch update positions
   for (const pos of positions) {
     await supabase
       .from('Restaurant_Tables')
-      .update({ LAYOUT_X: pos.x, LAYOUT_Y: pos.y })
+      .update({
+        LAYOUT_X: pos.x,
+        LAYOUT_Y: pos.y,
+        ...(pos.capacity ? { GUEST_CAPACITY: pos.capacity } : {}),
+      })
       .eq('TABLE_ID', pos.tableId)
+  }
+
+  // Clear positions for tables not belonging to this preset
+  const { data: allTables } = await supabase.from('Restaurant_Tables').select('TABLE_ID')
+  if (allTables) {
+    const unreferencedIds = allTables
+      .map((t) => Number(t.TABLE_ID))
+      .filter((id) => !activeIds.has(id))
+    if (unreferencedIds.length > 0) {
+      await supabase
+        .from('Restaurant_Tables')
+        .update({ LAYOUT_X: null, LAYOUT_Y: null })
+        .in('TABLE_ID', unreferencedIds)
+    }
   }
 }
 
 // ── Batch Update Positions (for saving current layout) ───────────────────────
 
 export async function batchUpdateTablePositions(
-  positions: Array<{ tableId: number; x: number; y: number }>,
+  positions: Array<{ tableId: number; x: number | null; y: number | null }>,
 ): Promise<void> {
   for (const pos of positions) {
     const { error } = await supabase
@@ -294,3 +317,15 @@ export async function batchUpdateTablePositions(
     if (error) throw new Error(`Failed to save table ${pos.tableId}'s position: ${error.message}`)
   }
 }
+
+/** Clear floor plan coordinates for specified tables */
+export async function clearTablePositions(tableIds: number[]): Promise<void> {
+  if (tableIds.length === 0) return
+  const { error } = await supabase
+    .from('Restaurant_Tables')
+    .update({ LAYOUT_X: null, LAYOUT_Y: null })
+    .in('TABLE_ID', tableIds)
+
+  if (error) throw new Error(`Failed to clear table positions: ${error.message}`)
+}
+

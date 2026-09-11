@@ -53,6 +53,7 @@ import {
   createPreset,
   setActivePreset,
   batchUpdateTablePositions,
+  clearTablePositions,
   updatePreset,
   deletePreset,
   type LayoutPreset,
@@ -568,7 +569,22 @@ export default function TableManagerPage() {
     toastTimerRef.current = setTimeout(() => setToast(null), 3000)
   }
 
-  const existingTableNums = useMemo(() => tables.map((t) => t.TABLE_NUM), [tables])
+  const layoutTableIds = useMemo(
+    () => new Set(floorPlan.positions.map((p) => p.tableId)),
+    [floorPlan.positions],
+  )
+
+  const layoutTables = useMemo(
+    () => tables.filter((t) => layoutTableIds.has(t.TABLE_ID)),
+    [tables, layoutTableIds],
+  )
+
+  const layoutTableNums = useMemo(
+    () => layoutTables.map((t) => t.TABLE_NUM),
+    [layoutTables],
+  )
+
+  const existingTableNums = layoutTableNums
 
   const activePreset = useMemo(
     () => presets.find((p) => p.PRESET_ID === activePresetId) ?? null,
@@ -591,15 +607,15 @@ export default function TableManagerPage() {
   }, [activeLinkedEvent])
 
   const hasActiveOrders = useMemo(() => {
-    const hasOccupiedTable = tables.some(
+    const hasOccupiedTable = layoutTables.some(
       (t) => OCCUPIED_STATUSES.includes(t.STATUS) || (t.CURRENT_GUEST_COUNT ?? 0) > 0 || t.BILL_OUT_REQUESTED,
     )
-    const hasOrdersInProgress = Array.from(orderSummaries.values()).some(
-      (s) => s.activeOrderCount > 0,
+    const hasOrdersInProgress = Array.from(orderSummaries.entries()).some(
+      ([tableId, s]) => layoutTableIds.has(tableId) && s.activeOrderCount > 0,
     )
-    const hasActiveBills = billRequests.length > 0
+    const hasActiveBills = billRequests.some((r) => layoutTableIds.has(r.tableId))
     return Boolean(hasOccupiedTable || hasOrdersInProgress || hasActiveBills)
-  }, [tables, orderSummaries, billRequests])
+  }, [layoutTables, layoutTableIds, orderSummaries, billRequests])
 
   // ── Selected table for inspector ──
   const inspectorTable = useMemo(
@@ -742,7 +758,11 @@ export default function TableManagerPage() {
             }
           : undefined
 
-        floorPlan.initializeFromTables(data, initialConfig)
+        const allowedTableIds = activePresetForInit?.LAYOUT_DATA
+          ? new Set(activePresetForInit.LAYOUT_DATA.map((item) => item.tableId))
+          : undefined
+
+        floorPlan.initializeFromTables(data, initialConfig, allowedTableIds)
         floorPlan.markClean()
       }
     } catch (err) {
@@ -870,11 +890,14 @@ export default function TableManagerPage() {
     }
     isMutatingRef.current = true
     try {
-      const nextNum = Math.max(0, ...tables.map((t) => t.TABLE_NUM)) + 1
+      const nextNum = Math.max(0, ...layoutTableNums) + 1
       const result = await batchCreateTables(nextNum, 1, capacity, totalSeats, effectiveMaxPax)
       if (result.created.length > 0) {
         const newTable = result.created[0]
-        setTables((prev) => [...prev, ...result.created].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM))
+        setTables((prev) => {
+          const newIds = new Set(result.created.map((t) => t.TABLE_ID))
+          return [...prev.filter((t) => !newIds.has(t.TABLE_ID)), ...result.created].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
+        })
         floorPlan.addTable(newTable, widthBlocks, heightBlocks)
         floorPlan.setSelectedTableId(newTable.TABLE_ID)
         showToast(`Table ${newTable.TABLE_NUM} added (${capacity} Pax).`, 'success')
@@ -924,6 +947,23 @@ export default function TableManagerPage() {
     setDeleteLoading(true)
     isMutatingRef.current = true
     try {
+      // Check if table is used in any other saved preset
+      const isUsedInOtherPreset = presets.some(
+        (p) => p.PRESET_ID !== activePresetId && p.LAYOUT_DATA?.some((item) => item.tableId === tableId),
+      )
+
+      if (isUsedInOtherPreset) {
+        // Only remove from current layout: clear positions in DB and local state
+        await clearTablePositions([tableId])
+        setTables((prev) =>
+          prev.map((t) => (t.TABLE_ID === tableId ? { ...t, LAYOUT_X: null, LAYOUT_Y: null } : t)),
+        )
+        floorPlan.removeTable(tableId)
+        showToast('Table removed from current layout.', 'success')
+        setShowDeleteConfirm(null)
+        return
+      }
+
       const result = await deleteTables([tableId])
       if (result.deleted.length > 0) {
         setTables((prev) => prev.filter((t) => !result.deleted.includes(t.TABLE_ID)))
@@ -947,21 +987,51 @@ export default function TableManagerPage() {
     setDeleteLoading(true)
     isMutatingRef.current = true
     try {
-      const result = await deleteTables(tables.map((table) => table.TABLE_ID))
-      if (result.deleted.length > 0) {
-        setTables((prev) => prev.filter((table) => !result.deleted.includes(table.TABLE_ID)))
-        setOrderSummaries((prev) => {
-          const next = new Map(prev)
-          result.deleted.forEach((id) => next.delete(id))
-          return next
-        })
-        result.deleted.forEach((id) => floorPlan.removeTable(id))
+      const placedTableIds = floorPlan.positions.map((p) => p.tableId)
+      if (placedTableIds.length === 0) {
+        setShowRemoveAllConfirm(false)
+        return
       }
-      if (result.blocked.length > 0) {
-        showToast(`${result.deleted.length} removed; ${result.blocked.length} kept because they have active data.`, 'info')
-      } else {
-        showToast(`${result.deleted.length} table(s) removed.`, 'success')
+
+      // Find which placed tables are used in other presets
+      const usedInOtherPresets = new Set<number>()
+      for (const p of presets) {
+        if (p.PRESET_ID !== activePresetId && p.LAYOUT_DATA) {
+          for (const item of p.LAYOUT_DATA) {
+            if (placedTableIds.includes(item.tableId)) {
+              usedInOtherPresets.add(item.tableId)
+            }
+          }
+        }
       }
+
+      const toUnplace = placedTableIds.filter((id) => usedInOtherPresets.has(id))
+      const toDelete = placedTableIds.filter((id) => !usedInOtherPresets.has(id))
+
+      if (toUnplace.length > 0) {
+        await clearTablePositions(toUnplace)
+        setTables((prev) =>
+          prev.map((t) => (toUnplace.includes(t.TABLE_ID) ? { ...t, LAYOUT_X: null, LAYOUT_Y: null } : t)),
+        )
+      }
+
+      if (toDelete.length > 0) {
+        const result = await deleteTables(toDelete)
+        if (result.deleted.length > 0) {
+          setTables((prev) => prev.filter((table) => !result.deleted.includes(table.TABLE_ID)))
+          setOrderSummaries((prev) => {
+            const next = new Map(prev)
+            result.deleted.forEach((id) => next.delete(id))
+            return next
+          })
+        }
+        if (result.blocked.length > 0) {
+          showToast(`${result.deleted.length} removed; ${result.blocked.length} kept because they have active data.`, 'info')
+        }
+      }
+
+      floorPlan.setPositions([])
+      showToast('All tables removed from current layout.', 'success')
       setShowRemoveAllConfirm(false)
     } catch (err: unknown) {
       showToast((err as Error).message, 'error')
@@ -1018,15 +1088,29 @@ export default function TableManagerPage() {
       await batchUpdateTablePositions(
         floorPlan.positions.map((p) => ({ tableId: p.tableId, x: p.x, y: p.y })),
       )
-      const positionsWithDims = floorPlan.positions.map((p) => ({
-        tableId: p.tableId,
-        x: p.x,
-        y: p.y,
-        widthBlocks: p.widthBlocks,
-        heightBlocks: p.heightBlocks,
-        rotation: p.rotation ?? 0,
-        capacity: tables.find((t) => t.TABLE_ID === p.tableId)?.GUEST_CAPACITY,
-      }))
+
+      // Clear coordinates for tables not in the current floor plan
+      const placedIds = new Set(floorPlan.positions.map((p) => p.tableId))
+      const unplacedIds = tables
+        .map((t) => t.TABLE_ID)
+        .filter((id) => !placedIds.has(id))
+      if (unplacedIds.length > 0) {
+        await clearTablePositions(unplacedIds)
+      }
+
+      const positionsWithDims = floorPlan.positions.map((p) => {
+        const t = tables.find((tbl) => tbl.TABLE_ID === p.tableId)
+        return {
+          tableId: p.tableId,
+          tableNum: p.tableNum ?? t?.TABLE_NUM,
+          x: p.x,
+          y: p.y,
+          widthBlocks: p.widthBlocks,
+          heightBlocks: p.heightBlocks,
+          rotation: p.rotation ?? 0,
+          capacity: p.capacity ?? t?.GUEST_CAPACITY ?? 4,
+        }
+      })
 
       // Synchronize merge groups to Restaurant_Tables in Supabase
       const updatedTables = await syncTableMergeGroups(
@@ -1078,15 +1162,29 @@ export default function TableManagerPage() {
       await batchUpdateTablePositions(
         floorPlan.positions.map((p) => ({ tableId: p.tableId, x: p.x, y: p.y })),
       )
-      const positionsWithDims = floorPlan.positions.map((p) => ({
-        tableId: p.tableId,
-        x: p.x,
-        y: p.y,
-        widthBlocks: p.widthBlocks,
-        heightBlocks: p.heightBlocks,
-        rotation: p.rotation ?? 0,
-        capacity: tables.find((t) => t.TABLE_ID === p.tableId)?.GUEST_CAPACITY,
-      }))
+
+      // Clear coordinates for tables not in the current floor plan
+      const placedIds = new Set(floorPlan.positions.map((p) => p.tableId))
+      const unplacedIds = tables
+        .map((t) => t.TABLE_ID)
+        .filter((id) => !placedIds.has(id))
+      if (unplacedIds.length > 0) {
+        await clearTablePositions(unplacedIds)
+      }
+
+      const positionsWithDims = floorPlan.positions.map((p) => {
+        const t = tables.find((tbl) => tbl.TABLE_ID === p.tableId)
+        return {
+          tableId: p.tableId,
+          tableNum: p.tableNum ?? t?.TABLE_NUM,
+          x: p.x,
+          y: p.y,
+          widthBlocks: p.widthBlocks,
+          heightBlocks: p.heightBlocks,
+          rotation: p.rotation ?? 0,
+          capacity: p.capacity ?? t?.GUEST_CAPACITY ?? 4,
+        }
+      })
 
       // Synchronize merge groups to Restaurant_Tables in Supabase
       const updatedTables = await syncTableMergeGroups(
@@ -1202,16 +1300,39 @@ export default function TableManagerPage() {
           usedTableIds.add(match.TABLE_ID)
           assignedPositions.push({
             tableId: match.TABLE_ID,
+            tableNum: p.tableNum ?? match.TABLE_NUM,
+            capacity: p.capacity ?? match.GUEST_CAPACITY,
             x: p.x,
             y: p.y,
-            widthBlocks: (p as any).widthBlocks,
-            heightBlocks: (p as any).heightBlocks,
-            rotation: (p as any).rotation ?? 0,
+            widthBlocks: p.widthBlocks,
+            heightBlocks: p.heightBlocks,
+            rotation: p.rotation ?? 0,
           })
         }
       }
 
-      // Pass 2: unassigned preset placements matched to available tables
+      // Pass 2: match by tableNum if present in preset placement data
+      for (const p of presetPlacements) {
+        if (assignedPositions.some((ap) => ap.x === p.x && ap.y === p.y)) continue
+        if (p.tableNum != null) {
+          const match = currentTables.find((t) => t.TABLE_NUM === p.tableNum && !usedTableIds.has(t.TABLE_ID))
+          if (match) {
+            usedTableIds.add(match.TABLE_ID)
+            assignedPositions.push({
+              tableId: match.TABLE_ID,
+              tableNum: match.TABLE_NUM,
+              capacity: p.capacity ?? match.GUEST_CAPACITY,
+              x: p.x,
+              y: p.y,
+              widthBlocks: p.widthBlocks,
+              heightBlocks: p.heightBlocks,
+              rotation: p.rotation ?? 0,
+            })
+          }
+        }
+      }
+
+      // Pass 3: unassigned preset placements matched to available tables in DB
       const unassignedPreset = presetPlacements.filter(
         (p) => !assignedPositions.some((ap) => ap.x === p.x && ap.y === p.y),
       )
@@ -1226,34 +1347,37 @@ export default function TableManagerPage() {
           usedTableIds.add(t.TABLE_ID)
           assignedPositions.push({
             tableId: t.TABLE_ID,
+            tableNum: p.tableNum ?? t.TABLE_NUM,
+            capacity: p.capacity ?? t.GUEST_CAPACITY,
             x: p.x,
             y: p.y,
-            widthBlocks: (p as any).widthBlocks,
-            heightBlocks: (p as any).heightBlocks,
-            rotation: (p as any).rotation ?? 0,
+            widthBlocks: p.widthBlocks,
+            heightBlocks: p.heightBlocks,
+            rotation: p.rotation ?? 0,
           })
         } else {
           missingToCreate.push(p)
         }
       }
 
-      // Pass 3: If preset needs more tables than exist in DB, create them
+      // Pass 4: If preset needs more tables than exist in DB, create them
       if (missingToCreate.length > 0) {
         const startNum = Math.max(0, ...currentTables.map((t) => t.TABLE_NUM)) + 1
-        const capacities = missingToCreate.map((p: any) => p.capacity ?? 4)
+        const capacities = missingToCreate.map((p) => p.capacity ?? 4)
         const res = await batchCreateTables(startNum, capacities, 4, 0)
         if (res.created.length > 0) {
           currentTables = [...currentTables, ...res.created].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
-          setTables(currentTables)
           res.created.forEach((newT, i) => {
             const p = missingToCreate[i]
             assignedPositions.push({
               tableId: newT.TABLE_ID,
+              tableNum: newT.TABLE_NUM,
+              capacity: newT.GUEST_CAPACITY,
               x: p.x,
               y: p.y,
-              widthBlocks: (p as any).widthBlocks,
-              heightBlocks: (p as any).heightBlocks,
-              rotation: (p as any).rotation ?? 0,
+              widthBlocks: p.widthBlocks,
+              heightBlocks: p.heightBlocks,
+              rotation: p.rotation ?? 0,
             })
           })
         }
@@ -1261,10 +1385,35 @@ export default function TableManagerPage() {
 
       floorPlan.setPositions(assignedPositions)
 
-      // Save positions to DB
+      // Save positions to DB: assigned get coordinates; unassigned get (null, null)
       await batchUpdateTablePositions(
         assignedPositions.map((p) => ({ tableId: p.tableId, x: p.x, y: p.y })),
       )
+      const assignedIds = new Set(assignedPositions.map((p) => p.tableId))
+      const unassignedIds = currentTables
+        .map((t) => t.TABLE_ID)
+        .filter((id) => !assignedIds.has(id))
+      if (unassignedIds.length > 0) {
+        await clearTablePositions(unassignedIds)
+      }
+
+      // Update local tables state
+      currentTables = currentTables.map((t) => {
+        const pos = assignedPositions.find((ap) => ap.tableId === t.TABLE_ID)
+        if (pos) {
+          return {
+            ...t,
+            LAYOUT_X: pos.x,
+            LAYOUT_Y: pos.y,
+            ...(pos.capacity ? { GUEST_CAPACITY: pos.capacity } : {}),
+          }
+        }
+        return {
+          ...t,
+          LAYOUT_X: null,
+          LAYOUT_Y: null,
+        }
+      })
 
       // Calculate merge groups from newly assigned positions and sync to Restaurant_Tables
       const newMergeGroups = calculateMergeGroups(
@@ -1377,7 +1526,7 @@ export default function TableManagerPage() {
     if (unmergedTableIds.size === 0) return
 
     // Calculate effective seating on floor
-    const floorSeats = tables.reduce((sum, t) => {
+    const floorSeats = layoutTables.reduce((sum, t) => {
       return sum + calculateEffectiveCapacity(
         t,
         floorPlan.positions,
@@ -1387,8 +1536,8 @@ export default function TableManagerPage() {
     }, 0)
 
     if (floorSeats > effectiveMaxPax) {
-      const unmergedTablesList = tables.filter((t) => unmergedTableIds.has(t.TABLE_ID))
-      const otherTablesPax = tables
+      const unmergedTablesList = layoutTables.filter((t) => unmergedTableIds.has(t.TABLE_ID))
+      const otherTablesPax = layoutTables
         .filter((t) => !unmergedTableIds.has(t.TABLE_ID))
         .reduce((sum, t) => {
           return sum + calculateEffectiveCapacity(
@@ -1419,11 +1568,11 @@ export default function TableManagerPage() {
         console.error('Failed to update unmerged capacities:', e)
       })
     }
-  }, [floorPlan.positions, floorPlan.mergeGroups, tables, floorPlan.config.tableSizeBlocks, effectiveMaxPax])
+  }, [floorPlan.positions, floorPlan.mergeGroups, layoutTables, floorPlan.config.tableSizeBlocks, effectiveMaxPax])
 
   // ── Totals ──
   const totalSeats = useMemo(() => {
-    return tables.reduce((sum, t) => {
+    return layoutTables.reduce((sum, t) => {
       return sum + calculateEffectiveCapacity(
         t,
         floorPlan.positions,
@@ -1431,7 +1580,7 @@ export default function TableManagerPage() {
         floorPlan.mergeGroups,
       )
     }, 0)
-  }, [tables, floorPlan.positions, floorPlan.config.tableSizeBlocks, floorPlan.mergeGroups])
+  }, [layoutTables, floorPlan.positions, floorPlan.config.tableSizeBlocks, floorPlan.mergeGroups])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1462,8 +1611,8 @@ export default function TableManagerPage() {
 
       {/* Alerts Banner */}
       <TableAlertsBanner
-        tables={tables}
-        billRequests={billRequests}
+        tables={layoutTables}
+        billRequests={billRequests.filter((r) => layoutTableIds.has(r.tableId))}
         onClearAssistance={handleClearAssistance}
         onClearBillOut={handleClearBillOut}
       />
@@ -1487,10 +1636,10 @@ export default function TableManagerPage() {
         onOpenGridSettings={() => setShowGridSettings(true)}
         onSavePreset={handleToolbarSave}
         onPrintQr={() => {
-          if (tables.length > 0) void downloadBulkQrPdf(tables)
+          if (layoutTables.length > 0) void downloadBulkQrPdf(layoutTables)
         }}
         onRemoveAll={() => {
-          if (tables.length > 0) setShowRemoveAllConfirm(true)
+          if (floorPlan.positions.length > 0) setShowRemoveAllConfirm(true)
         }}
       />
 
@@ -1514,7 +1663,7 @@ export default function TableManagerPage() {
 
         {/* Center — Floor Plan */}
         <div className="fp-center-panel">
-          {tables.length === 0 ? (
+          {floorPlan.positions.length === 0 ? (
             <div className="fp-empty">
               <div className="fp-empty-icon"><TableProperties className="w-7 h-7" /></div>
               <div>
@@ -1568,7 +1717,10 @@ export default function TableManagerPage() {
           currentEffectivePax={totalSeats}
           effectiveMaxPax={effectiveMaxPax}
           onCreated={(newTables, createdTemplates) => {
-            setTables((prev) => [...prev, ...newTables].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM))
+            setTables((prev) => {
+              const newIds = new Set(newTables.map((t) => t.TABLE_ID))
+              return [...prev.filter((t) => !newIds.has(t.TABLE_ID)), ...newTables].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
+            })
             newTables.forEach((t, i) => {
               const tmpl = createdTemplates?.[i]
               floorPlan.addTable(t, tmpl?.widthBlocks, tmpl?.heightBlocks)
