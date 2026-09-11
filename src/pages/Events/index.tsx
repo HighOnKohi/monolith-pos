@@ -243,28 +243,35 @@ export default function EventsPage() {
     setDrawerOpen(true)
   }
 
-  const eventFromForm = (data: EventFormData, previous?: RestaurantEvent): RestaurantEvent => ({
-    eventId: previous?.eventId ?? -Date.now(),
-    title: data.title.trim(),
-    description: data.description.trim() || null,
-    category: data.category,
-    color: data.color || null,
-    startAt: new Date(`${data.startDate}T${data.startTime}`).toISOString(),
-    endAt: new Date(`${data.endDate}T${data.endTime}`).toISOString(),
-    location: data.location.trim() || null,
-    organizer: data.organizer.trim() || null,
-    expectedAttendees: data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : null,
-    contactName: data.contactName.trim() || null,
-    contactPhone: data.contactPhone.trim() || null,
-    contactEmail: data.contactEmail.trim() || null,
-    notes: data.notes.trim() || null,
-    isCancelled: previous?.isCancelled ?? false,
-    createdBy: previous?.createdBy ?? userEmail,
-    createdAt: previous?.createdAt ?? new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    updatedBy: userEmail,
-    deletedAt: null,
-  })
+  const eventFromForm = (data: EventFormData, previous?: RestaurantEvent): RestaurantEvent => {
+    const pax = data.maxPax
+      ? parseInt(data.maxPax, 10)
+      : (data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : 50)
+    return {
+      eventId: previous?.eventId ?? -Date.now(),
+      title: data.title.trim(),
+      description: data.description.trim() || null,
+      category: data.category,
+      color: data.color || null,
+      startAt: new Date(`${data.startDate}T${data.startTime}`).toISOString(),
+      endAt: new Date(`${data.endDate}T${data.endTime}`).toISOString(),
+      location: data.location.trim() || 'Bill Shaw Restaurant',
+      organizer: data.organizer.trim() || null,
+      maxPax: pax,
+      expectedAttendees: pax,
+      presetId: data.presetId ?? null,
+      contactName: data.contactName.trim() || null,
+      contactPhone: data.contactPhone.trim() || null,
+      contactEmail: data.contactEmail.trim() || null,
+      notes: data.notes.trim() || null,
+      isCancelled: previous?.isCancelled ?? false,
+      createdBy: previous?.createdBy ?? userEmail,
+      createdAt: previous?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      updatedBy: userEmail,
+      deletedAt: null,
+    }
+  }
 
   const handleCancelEvent = async (event: RestaurantEvent) => {
     const previous = event
@@ -551,6 +558,7 @@ export default function EventsPage() {
         event={selectedEvent}
         prefillDate={prefillDate}
         canManageEvents={canManageEvents}
+        existingEvents={events}
         submitting={submitting}
         onClose={() => setDrawerOpen(false)}
         onSave={handleSave}

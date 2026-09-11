@@ -131,6 +131,16 @@ function saveFallbackEvents(events: RestaurantEvent[]): void {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapRow(row: Record<string, any>): RestaurantEvent {
+  // Read PRESET_ID from column or fallback tag in NOTES: "[PRESET_ID:123]"
+  let presetId: number | null = row['PRESET_ID'] != null ? Number(row['PRESET_ID']) : null
+  const notes = row['NOTES'] ?? null
+  if (presetId == null && typeof notes === 'string') {
+    const match = notes.match(/\[PRESET_ID:(\d+)\]/)
+    if (match) presetId = Number(match[1])
+  }
+
+  const pax = row['EXPECTED_ATTENDEES'] != null ? Number(row['EXPECTED_ATTENDEES']) : null
+
   return {
     eventId: row['EVENT_ID'],
     title: row['TITLE'],
@@ -139,13 +149,15 @@ function mapRow(row: Record<string, any>): RestaurantEvent {
     color: row['COLOR'] ?? null,
     startAt: row['START_AT'],
     endAt: row['END_AT'],
-    location: row['LOCATION'] ?? null,
+    location: row['LOCATION'] ?? 'Bill Shaw Restaurant',
     organizer: row['ORGANIZER'] ?? null,
-    expectedAttendees: row['EXPECTED_ATTENDEES'] ?? null,
+    maxPax: pax,
+    expectedAttendees: pax,
+    presetId,
     contactName: row['CONTACT_NAME'] ?? null,
     contactPhone: row['CONTACT_PHONE'] ?? null,
     contactEmail: row['CONTACT_EMAIL'] ?? null,
-    notes: row['NOTES'] ?? null,
+    notes,
     isCancelled: row['IS_CANCELLED'] ?? false,
     createdBy: row['CREATED_BY'] ?? null,
     createdAt: row['CREATED_AT'],
@@ -273,6 +285,50 @@ export async function fetchEvents(filters?: Partial<EventFilterParams>): Promise
   }
 }
 
+// ─── Duplicate Title Check ────────────────────────────────────────────────────
+
+export async function checkDuplicateEventTitle(
+  title: string,
+  startDateStr: string,
+  excludeEventId?: number,
+): Promise<RestaurantEvent | null> {
+  const normTitle = title.trim().toLowerCase()
+  if (!normTitle || !startDateStr) return null
+
+  try {
+    let query = supabase
+      .from('Restaurant_Events')
+      .select('*')
+      .is('DELETED_AT', null)
+      .eq('IS_CANCELLED', false)
+      .gte('START_AT', `${startDateStr}T00:00:00`)
+      .lte('START_AT', `${startDateStr}T23:59:59.999Z`)
+
+    if (excludeEventId) {
+      query = query.neq('EVENT_ID', excludeEventId)
+    }
+
+    const { data } = await query
+    const match = (data ?? []).find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (r: any) => String(r['TITLE'] || '').trim().toLowerCase() === normTitle,
+    )
+    if (match) return mapRow(match)
+  } catch {
+    // Check in fallback
+  }
+
+  const fallbackAll = getFallbackEvents()
+  const matchFallback = fallbackAll.find((e) => {
+    if (e.deletedAt || e.isCancelled) return false
+    if (excludeEventId && e.eventId === excludeEventId) return false
+    const eDate = e.startAt.slice(0, 10)
+    return eDate === startDateStr && e.title.trim().toLowerCase() === normTitle
+  })
+
+  return matchFallback ?? null
+}
+
 // ─── Create Event ──────────────────────────────────────────────────────────────
 
 export async function createEvent(
@@ -282,36 +338,74 @@ export async function createEvent(
   const startAt = new Date(`${data.startDate}T${data.startTime}`).toISOString()
   const endAt = new Date(`${data.endDate}T${data.endTime}`).toISOString()
 
-  try {
-    const { data: row, error } = await supabase
-      .from('Restaurant_Events')
-      .insert({
-        TITLE: data.title.trim(),
-        DESCRIPTION: data.description.trim() || null,
-        CATEGORY: data.category,
-        COLOR: data.color || null,
-        START_AT: startAt,
-        END_AT: endAt,
-        LOCATION: data.location.trim() || null,
-        ORGANIZER: data.organizer.trim() || null,
-        EXPECTED_ATTENDEES: data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : null,
-        CONTACT_NAME: data.contactName.trim() || null,
-        CONTACT_PHONE: data.contactPhone.trim() || null,
-        CONTACT_EMAIL: data.contactEmail.trim() || null,
-        NOTES: data.notes.trim() || null,
-        IS_CANCELLED: false,
-        CREATED_BY: userEmail ?? null,
-        UPDATED_BY: userEmail ?? null,
-      })
-      .select()
-      .single()
+  // 1. Prevention of multiple events at the same time
+  const conflicts = await checkEventConflicts(startAt, endAt)
+  if (conflicts.length > 0) {
+    throw new Error(
+      `Cannot create event: time overlaps with "${conflicts[0].title}". Simultaneous events are not permitted.`,
+    )
+  }
 
-    if (error) {
-      throw error
+  // 2. Duplication prevention: check for duplicate title on the same start date
+  const duplicate = await checkDuplicateEventTitle(data.title, data.startDate)
+  if (duplicate) {
+    throw new Error(
+      `An event titled "${data.title.trim()}" is already scheduled on this date. Please use a unique title.`,
+    )
+  }
+
+  const maxPaxVal = data.maxPax
+    ? parseInt(data.maxPax, 10)
+    : (data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : 50)
+
+  let notesVal = data.notes.trim() || null
+  if (data.presetId) {
+    if (!notesVal) {
+      notesVal = `[PRESET_ID:${data.presetId}]`
+    } else if (!notesVal.includes(`[PRESET_ID:${data.presetId}]`)) {
+      notesVal = `${notesVal.replace(/\[PRESET_ID:\d+\]/g, '').trim()}\n[PRESET_ID:${data.presetId}]`.trim()
+    }
+  }
+
+  try {
+    // Try inserting with PRESET_ID first
+    const insertObj: Record<string, unknown> = {
+      TITLE: data.title.trim(),
+      DESCRIPTION: data.description.trim() || null,
+      CATEGORY: data.category,
+      COLOR: data.color || null,
+      START_AT: startAt,
+      END_AT: endAt,
+      LOCATION: data.location.trim() || 'Bill Shaw Restaurant',
+      ORGANIZER: data.organizer.trim() || null,
+      EXPECTED_ATTENDEES: maxPaxVal,
+      CONTACT_NAME: data.contactName.trim() || null,
+      CONTACT_PHONE: data.contactPhone.trim() || null,
+      CONTACT_EMAIL: data.contactEmail.trim() || null,
+      NOTES: notesVal,
+      IS_CANCELLED: false,
+      CREATED_BY: userEmail ?? null,
+      UPDATED_BY: userEmail ?? null,
+    }
+
+    if (data.presetId != null) {
+      insertObj['PRESET_ID'] = data.presetId
+    }
+
+    let res = await supabase.from('Restaurant_Events').insert(insertObj).select().single()
+
+    // If PRESET_ID column doesn't exist yet, retry without it (the tag is stored in NOTES)
+    if (res.error && data.presetId != null && res.error.message.includes('PRESET_ID')) {
+      delete insertObj['PRESET_ID']
+      res = await supabase.from('Restaurant_Events').insert(insertObj).select().single()
+    }
+
+    if (res.error) {
+      throw res.error
     }
 
     isUsingFallbackStorage = false
-    return mapRow(row)
+    return mapRow(res.data)
   } catch (err) {
     console.warn('[eventService] Supabase createEvent failed, saving to localStorage fallback:', err)
     isUsingFallbackStorage = true
@@ -325,13 +419,15 @@ export async function createEvent(
       color: data.color || null,
       startAt,
       endAt,
-      location: data.location.trim() || null,
+      location: data.location.trim() || 'Bill Shaw Restaurant',
       organizer: data.organizer.trim() || null,
-      expectedAttendees: data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : null,
+      maxPax: maxPaxVal,
+      expectedAttendees: maxPaxVal,
+      presetId: data.presetId ?? null,
       contactName: data.contactName.trim() || null,
       contactPhone: data.contactPhone.trim() || null,
       contactEmail: data.contactEmail.trim() || null,
-      notes: data.notes.trim() || null,
+      notes: notesVal,
       isCancelled: false,
       createdBy: userEmail ?? 'staff@monolith.pos',
       createdAt: new Date().toISOString(),
@@ -355,36 +451,83 @@ export async function updateEvent(
   const startAt = new Date(`${data.startDate}T${data.startTime}`).toISOString()
   const endAt = new Date(`${data.endDate}T${data.endTime}`).toISOString()
 
+  // 1. Prevention of multiple events at the same time
+  const conflicts = await checkEventConflicts(startAt, endAt, eventId)
+  if (conflicts.length > 0) {
+    throw new Error(
+      `Cannot update event: time overlaps with "${conflicts[0].title}". Simultaneous events are not permitted.`,
+    )
+  }
+
+  // 2. Duplication prevention: check for duplicate title on the same start date
+  const duplicate = await checkDuplicateEventTitle(data.title, data.startDate, eventId)
+  if (duplicate) {
+    throw new Error(
+      `An event titled "${data.title.trim()}" is already scheduled on this date. Please use a unique title.`,
+    )
+  }
+
+  const maxPaxVal = data.maxPax
+    ? parseInt(data.maxPax, 10)
+    : (data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : 50)
+
+  let notesVal = data.notes.trim() || null
+  if (data.presetId) {
+    if (!notesVal) {
+      notesVal = `[PRESET_ID:${data.presetId}]`
+    } else if (!notesVal.includes(`[PRESET_ID:${data.presetId}]`)) {
+      notesVal = `${notesVal.replace(/\[PRESET_ID:\d+\]/g, '').trim()}\n[PRESET_ID:${data.presetId}]`.trim()
+    }
+  } else if (notesVal) {
+    notesVal = notesVal.replace(/\[PRESET_ID:\d+\]/g, '').trim() || null
+  }
+
   try {
-    const { data: row, error } = await supabase
+    const updateObj: Record<string, unknown> = {
+      TITLE: data.title.trim(),
+      DESCRIPTION: data.description.trim() || null,
+      CATEGORY: data.category,
+      COLOR: data.color || null,
+      START_AT: startAt,
+      END_AT: endAt,
+      LOCATION: data.location.trim() || 'Bill Shaw Restaurant',
+      ORGANIZER: data.organizer.trim() || null,
+      EXPECTED_ATTENDEES: maxPaxVal,
+      CONTACT_NAME: data.contactName.trim() || null,
+      CONTACT_PHONE: data.contactPhone.trim() || null,
+      CONTACT_EMAIL: data.contactEmail.trim() || null,
+      NOTES: notesVal,
+      UPDATED_AT: new Date().toISOString(),
+      UPDATED_BY: userEmail ?? null,
+    }
+
+    if (data.presetId !== undefined) {
+      updateObj['PRESET_ID'] = data.presetId
+    }
+
+    let res = await supabase
       .from('Restaurant_Events')
-      .update({
-        TITLE: data.title.trim(),
-        DESCRIPTION: data.description.trim() || null,
-        CATEGORY: data.category,
-        COLOR: data.color || null,
-        START_AT: startAt,
-        END_AT: endAt,
-        LOCATION: data.location.trim() || null,
-        ORGANIZER: data.organizer.trim() || null,
-        EXPECTED_ATTENDEES: data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : null,
-        CONTACT_NAME: data.contactName.trim() || null,
-        CONTACT_PHONE: data.contactPhone.trim() || null,
-        CONTACT_EMAIL: data.contactEmail.trim() || null,
-        NOTES: data.notes.trim() || null,
-        UPDATED_AT: new Date().toISOString(),
-        UPDATED_BY: userEmail ?? null,
-      })
+      .update(updateObj)
       .eq('EVENT_ID', eventId)
       .select()
       .single()
 
-    if (error) {
-      throw error
+    if (res.error && data.presetId !== undefined && res.error.message.includes('PRESET_ID')) {
+      delete updateObj['PRESET_ID']
+      res = await supabase
+        .from('Restaurant_Events')
+        .update(updateObj)
+        .eq('EVENT_ID', eventId)
+        .select()
+        .single()
+    }
+
+    if (res.error) {
+      throw res.error
     }
 
     isUsingFallbackStorage = false
-    return mapRow(row)
+    return mapRow(res.data)
   } catch (err) {
     console.warn('[eventService] Supabase updateEvent failed, updating in localStorage fallback:', err)
     isUsingFallbackStorage = true
@@ -401,13 +544,15 @@ export async function updateEvent(
       color: data.color || null,
       startAt,
       endAt,
-      location: data.location.trim() || null,
+      location: data.location.trim() || 'Bill Shaw Restaurant',
       organizer: data.organizer.trim() || null,
-      expectedAttendees: data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : null,
+      maxPax: maxPaxVal,
+      expectedAttendees: maxPaxVal,
+      presetId: data.presetId ?? null,
       contactName: data.contactName.trim() || null,
       contactPhone: data.contactPhone.trim() || null,
       contactEmail: data.contactEmail.trim() || null,
-      notes: data.notes.trim() || null,
+      notes: notesVal,
       updatedAt: new Date().toISOString(),
       updatedBy: userEmail ?? null,
     }

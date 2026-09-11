@@ -45,7 +45,9 @@ export interface RestaurantEvent {
   endAt: string   // ISO timestamp
   location?: string | null
   organizer?: string | null
-  expectedAttendees?: number | null
+  maxPax?: number | null
+  expectedAttendees?: number | null // alias for backwards compatibility
+  presetId?: number | null         // linked Table_Layout_Presets ID
   contactName?: string | null
   contactPhone?: string | null
   contactEmail?: string | null
@@ -71,7 +73,9 @@ export interface EventFormData {
   endTime: string    // 'HH:MM'
   location: string
   organizer: string
-  expectedAttendees: string  // string for input, parsed to int on save
+  maxPax: string     // string for input, parsed to int on save (default: 50)
+  expectedAttendees?: string // deprecated alias
+  presetId?: number | null   // linked layout preset ID
   contactName: string
   contactPhone: string
   contactEmail: string
@@ -87,9 +91,11 @@ export const EVENT_FORM_DEFAULTS: EventFormData = {
   startTime: '09:00',
   endDate: '',
   endTime: '17:00',
-  location: '',
+  location: 'Bill Shaw Restaurant',
   organizer: '',
-  expectedAttendees: '',
+  maxPax: '50',
+  expectedAttendees: '50',
+  presetId: null,
   contactName: '',
   contactPhone: '',
   contactEmail: '',

@@ -1,13 +1,13 @@
 /**
- * TableManager — Phase 2
+ * TableManager — Phase 3: Floor-Plan Editor
  *
  * Architecture:
- * - mode: 'normal' | 'multi'
- *   · normal: clicking a card opens the right sidebar for that table
- *   · multi: clicking cards toggles checkbox selection; sidebar shows bulk panel
- * - Refresh loop fix: realtime events do targeted setTables patches (no full reload).
- *   loadOrderSummaries is called ONCE on initial load, then per-table on status changes.
- * - Sidebar is always-visible (persistent right panel, not a modal).
+ * - Three-panel layout: TablePalette (left) | FloorPlanEditor (center) | TableInspector (right)
+ * - useFloorPlanState hook manages visual editor state (positions, zoom, drag, history)
+ * - DB data layer preserved from Phase 2: realtime + polling, targeted patches
+ * - Operational flows (status, reservations, merge, QR, billing, assistance) unchanged
+ * - Layout positions stored in Restaurant_Tables.LAYOUT_X/LAYOUT_Y
+ * - Layout presets stored in Table_Layout_Presets
  */
 
 import {
@@ -16,27 +16,16 @@ import {
   useCallback,
   useMemo,
   useRef,
-  memo,
   type ReactNode,
 } from 'react'
+import { useBlocker } from 'react-router-dom'
 import {
-  Users,
   Plus,
-  Trash2,
   X,
-  QrCode,
-  FileDown,
-  Printer,
-  RefreshCw,
-  Check,
   AlertTriangle,
+  CheckCircle2,
   TableProperties,
   Minus,
-  CheckCircle2,
-  LayoutGrid,
-  CheckCheck,
-  GitMerge,
-  BookMarked,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { supabase } from '@/lib/supabase'
@@ -46,7 +35,6 @@ import type { BillRequest } from '@/types/bill'
 import { TableAlertsBanner } from '@/components/alerts/TableAlertsBanner'
 import { TableQrPreview } from '@/components/table-qr/TableQrPreview'
 import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
-import { printBulkQrPdf } from '@/components/table-qr/tableQrPrinter'
 import {
   fetchAllTables,
   fetchOrderSummariesForIds,
@@ -55,35 +43,45 @@ import {
   batchCreateTables,
   updateTable,
   deleteTables,
-  bulkEditTables,
-  reserveTable,
-  cancelReservation,
   setTableStatus,
-  saveTableMerge,
+  syncTableMergeGroups,
   type TableData,
   type TableStatus,
-  type ReservationData,
 } from '@/services/tableService'
+import {
+  fetchAllPresets,
+  createPreset,
+  setActivePreset,
+  batchUpdateTablePositions,
+  updatePreset,
+  deletePreset,
+  type LayoutPreset,
+} from '@/services/layoutService'
+import { fetchEvents } from '@/services/eventService'
+import type { RestaurantEvent } from '@/types/event'
+import { useFloorPlanState } from './useFloorPlanState'
+import { FloorPlanEditor } from './FloorPlanEditor'
+import { FloorPlanToolbar } from './FloorPlanToolbar'
+import { TablePalette } from './TablePalette'
+import { TableInspector } from './TableInspector'
+import { GridSettingsModal } from './GridSettingsModal'
+import { SavePresetModal, ConfirmLoadModal, ConfirmDeletePresetModal } from './PresetModal'
+import { findGroupForTable, calculateEffectiveCapacity, disburseCapacities, calculateMergeGroups, type MergeGroup } from '@/utils/floorPlan/adjacency'
+import { findFirstAvailablePosition } from '@/utils/floorPlan/collision'
+import type { FloorConfig } from '@/utils/floorPlan/grid'
+import { calculateCustomTemplateDistribution, type TemplateDistributionTarget } from '@/utils/floorPlan/distribution'
+import { fetchAllTableTemplates, getLocalTemplates, type TableTemplate } from '@/services/templateService'
+import { ConnectedDistributionSliders } from './ConnectedDistributionSliders'
+import { getStoredTableDimensions, saveStoredTableDimensions, type EditorTable } from './useFloorPlanState'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types / helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-type PageMode = 'normal' | 'multi' | 'merge'
-
 interface ToastMsg { text: string; type: 'success' | 'error' | 'info' }
-
 interface OrderSummary { totalBill: number; activeOrderCount: number }
 
 const OCCUPIED_STATUSES: TableStatus[] = ['OCCUPIED', 'HAS_REQUEST']
-
-function statusLabel(s: TableStatus): string {
-  return { AVAILABLE: 'Available', OCCUPIED: 'Occupied', RESERVED: 'Reserved', HAS_REQUEST: 'Needs Help', UNAVAILABLE: 'Unavailable' }[s] ?? s
-}
-
-function statusClass(s: TableStatus): string {
-  return { AVAILABLE: 'tm-status-available', OCCUPIED: 'tm-status-occupied', RESERVED: 'tm-status-reserved', HAS_REQUEST: 'tm-status-has_request', UNAVAILABLE: 'tm-status-unavailable' }[s] ?? ''
-}
 
 /** Apply a list of updated rows into an existing table array (targeted patch). */
 function patchTables(prev: TableData[], updated: TableData[]): TableData[] {
@@ -99,25 +97,101 @@ interface PaxStepperProps { value: number; min?: number; max?: number; onChange:
 
 function PaxStepper({ value, min = 0, max = 999, onChange, disabled, id }: PaxStepperProps) {
   const [raw, setRaw] = useState(String(value))
-  useEffect(() => { setRaw(String(value)) }, [value])
+  const isFocusedRef = useRef(false)
 
-  function commit(v: string) {
-    const n = parseInt(v, 10)
-    if (isNaN(n)) { setRaw(String(value)); return }
-    const c = Math.max(min, Math.min(max, n))
-    setRaw(String(c)); onChange(c)
+  useEffect(() => {
+    if (!isFocusedRef.current) {
+      setRaw(String(value))
+    }
+  }, [value])
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const text = e.target.value
+    setRaw(text)
+    if (text === '') return
+    const n = parseInt(text, 10)
+    if (!isNaN(n)) {
+      if (n >= min && n <= max) {
+        onChange(n)
+      } else if (n > max) {
+        onChange(max)
+      }
+    }
+  }
+
+  function handleBlur() {
+    isFocusedRef.current = false
+    const n = parseInt(raw, 10)
+    if (isNaN(n) || n < min) {
+      setRaw(String(min))
+      onChange(min)
+    } else if (n > max) {
+      setRaw(String(max))
+      onChange(max)
+    } else {
+      setRaw(String(n))
+      onChange(n)
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const n = parseInt(raw, 10)
+      if (isNaN(n) || n < min) {
+        setRaw(String(min))
+        onChange(min)
+      } else if (n > max) {
+        setRaw(String(max))
+        onChange(max)
+      } else {
+        setRaw(String(n))
+        onChange(n)
+      }
+      ;(e.target as HTMLInputElement).blur()
+    }
   }
 
   return (
     <div className="tm-stepper">
-      <button type="button" className="tm-stepper-btn" onClick={() => onChange(Math.max(min, value - 1))} disabled={disabled || value <= min}>
+      <button
+        type="button"
+        className="tm-stepper-btn"
+        onClick={() => {
+          const next = Math.max(min, value - 1)
+          setRaw(String(next))
+          onChange(next)
+        }}
+        disabled={disabled || value <= min}
+      >
         <Minus className="w-3 h-3" />
       </button>
-      <input id={id} type="number" className="tm-stepper-val" value={raw} min={min} max={max} disabled={disabled}
-        onChange={(e) => setRaw(e.target.value)}
-        onBlur={(e) => commit(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') commit((e.target as HTMLInputElement).value) }} />
-      <button type="button" className="tm-stepper-btn" onClick={() => onChange(Math.min(max, value + 1))} disabled={disabled || value >= max}>
+      <input
+        id={id}
+        type="number"
+        className="tm-stepper-val"
+        value={raw}
+        min={min}
+        max={max}
+        disabled={disabled}
+        onFocus={(e) => {
+          isFocusedRef.current = true
+          e.target.select()
+        }}
+        onChange={handleInputChange}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+      />
+      <button
+        type="button"
+        className="tm-stepper-btn"
+        onClick={() => {
+          const next = Math.min(max, value + 1)
+          setRaw(String(next))
+          onChange(next)
+        }}
+        disabled={disabled || value >= max}
+      >
         <Plus className="w-3 h-3" />
       </button>
     </div>
@@ -125,7 +199,7 @@ function PaxStepper({ value, min = 0, max = 999, onChange, disabled, id }: PaxSt
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ConfirmDialog (modal)
+// ConfirmDialog (modal) — reused from Phase 2
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface ConfirmDialogProps {
@@ -163,17 +237,112 @@ function ConfirmDialog({ title, description, confirmLabel, confirmVariant = 'dan
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AddTablesModal — batch creation
+// ─────────────────────────────────────────────────────────────────────────────
+// AddTablesModal — batch creation with customizable distribution & saved templates
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface AddTablesModalProps { onClose: () => void; onCreated: (tables: TableData[]) => void; existingNums: number[] }
+interface AddTablesModalProps {
+  onClose: () => void
+  onCreated: (tables: TableData[], createdTemplates?: TableTemplate[]) => void
+  existingNums: number[]
+  maxCapacity?: number
+  currentEffectivePax?: number
+  effectiveMaxPax?: number
+}
 
-function AddTablesModal({ onClose, onCreated, existingNums }: AddTablesModalProps) {
-  const [startNum, setStartNum] = useState(Math.max(1, ...(existingNums.length > 0 ? [Math.max(...existingNums) + 1] : [1])))
-  const [count, setCount] = useState(1)
-  const [capacity, setCapacity] = useState(4)
+function AddTablesModal({
+  onClose,
+  onCreated,
+  existingNums,
+  maxCapacity = 50,
+  currentEffectivePax,
+  effectiveMaxPax = 50,
+}: AddTablesModalProps) {
+  const nextAvailableNum = Math.max(1, ...(existingNums.length > 0 ? [Math.max(...existingNums) + 1] : [1]))
+  const [startNum, setStartNum] = useState(nextAvailableNum)
+  const [targetPax, setTargetPax] = useState(Math.min(effectiveMaxPax, Math.max(2, maxCapacity)))
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // Saved table templates (Standard + Custom)
+  const [templates, setTemplates] = useState<TableTemplate[]>(() => getLocalTemplates())
+
+  useEffect(() => {
+    void fetchAllTableTemplates().then((all) => {
+      if (all.length > 0) setTemplates(all)
+    })
+  }, [])
+
+  // Active template IDs for distribution
+  const [activeTemplateIds, setActiveTemplateIds] = useState<string[]>(() => {
+    const local = getLocalTemplates()
+    const has4 = local.some((t) => t.id === 'tmpl-4top')
+    const has2 = local.some((t) => t.id === 'tmpl-2top')
+    if (has4 && has2) return ['tmpl-4top', 'tmpl-2top']
+    return local.slice(0, 2).map((t) => t.id)
+  })
+
+  // Proportional percentages (sum to 100%)
+  const [percentages, setPercentages] = useState<Record<string, number>>(() => {
+    return { 'tmpl-4top': 80, 'tmpl-2top': 20 }
+  })
+
+  // Toggle template inclusion
+  function handleToggleTemplate(templateId: string) {
+    if (activeTemplateIds.includes(templateId)) {
+      if (activeTemplateIds.length <= 1) return
+      const nextActive = activeTemplateIds.filter((id) => id !== templateId)
+      setActiveTemplateIds(nextActive)
+
+      const remainingSum = nextActive.reduce((s, id) => s + (percentages[id] ?? 0), 0)
+      const nextPct: Record<string, number> = {}
+      if (remainingSum > 0) {
+        let allocated = 0
+        nextActive.forEach((id, idx) => {
+          if (idx === nextActive.length - 1) {
+            nextPct[id] = Math.max(0, 100 - allocated)
+          } else {
+            const share = Math.round(((percentages[id] ?? 0) / remainingSum * 100) / 5) * 5
+            nextPct[id] = share
+            allocated += share
+          }
+        })
+      } else {
+        const base = Math.floor(100 / nextActive.length / 5) * 5
+        let allocated = 0
+        nextActive.forEach((id, idx) => {
+          if (idx === nextActive.length - 1) {
+            nextPct[id] = Math.max(0, 100 - allocated)
+          } else {
+            nextPct[id] = base
+            allocated += base
+          }
+        })
+      }
+      setPercentages(nextPct)
+    } else {
+      const nextActive = [...activeTemplateIds, templateId]
+      setActiveTemplateIds(nextActive)
+
+      const newShare = 20
+      const rem = 100 - newShare
+      const prevSum = activeTemplateIds.reduce((s, id) => s + (percentages[id] ?? 0), 0)
+      const nextPct: Record<string, number> = { [templateId]: newShare }
+
+      let allocated = 0
+      activeTemplateIds.forEach((id, idx) => {
+        if (idx === activeTemplateIds.length - 1) {
+          nextPct[id] = Math.max(0, rem - allocated)
+        } else {
+          const ratio = prevSum > 0 ? (percentages[id] ?? 0) / prevSum : 1 / activeTemplateIds.length
+          const share = Math.round((rem * ratio) / 5) * 5
+          nextPct[id] = share
+          allocated += share
+        }
+      })
+      setPercentages(nextPct)
+    }
+  }
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -181,23 +350,53 @@ function AddTablesModal({ onClose, onCreated, existingNums }: AddTablesModalProp
     return () => document.removeEventListener('keydown', h)
   }, [onClose])
 
+  const activeTargets: TemplateDistributionTarget[] = useMemo(() => {
+    return activeTemplateIds.map((id) => {
+      const tmpl = templates.find((t) => t.id === id)
+      return {
+        templateId: id,
+        seats: tmpl?.seats ?? 4,
+        percentage: percentages[id] ?? 0,
+      }
+    })
+  }, [activeTemplateIds, templates, percentages])
+
+  const plan = useMemo(() => {
+    return calculateCustomTemplateDistribution(targetPax, activeTargets, maxCapacity)
+  }, [targetPax, activeTargets, maxCapacity])
+
   const preview = useMemo(() => {
-    const nums = Array.from({ length: count }, (_, i) => startNum + i)
     const existSet = new Set(existingNums)
-    return { toCreate: nums.filter(n => !existSet.has(n)), toSkip: nums.filter(n => existSet.has(n)) }
-  }, [startNum, count, existingNums])
+    const templateMap = new Map(templates.map((t) => [t.id, t]))
+    const items = plan.orderedTemplateIds.map((tmplId, i) => {
+      const tmpl = templateMap.get(tmplId)
+      const cap = tmpl?.seats ?? 4
+      const num = startNum + i
+      return { num, capacity: cap, template: tmpl, exists: existSet.has(num) }
+    })
+    const toCreate = items.filter((item) => !item.exists)
+    const toSkip = items.filter((item) => item.exists)
+    return { items, toCreate, toSkip }
+  }, [startNum, plan.orderedTemplateIds, existingNums, templates])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (startNum < 1) { setError('Starting number must be at least 1.'); return }
-    if (count < 1 || count > 50) { setError('Count must be between 1 and 50.'); return }
-    if (capacity < 1) { setError('Capacity must be at least 1.'); return }
-    if (preview.toCreate.length === 0) { setError('All table numbers in this range already exist.'); return }
+    if (startNum < 1) { setError('Starting table number must be at least 1.'); return }
+    if (targetPax < 2 || targetPax > maxCapacity) {
+      setError(`Target pax must be between 2 and ${maxCapacity}.`)
+      return
+    }
+    if (preview.toCreate.length === 0) {
+      setError('All table numbers in this range already exist.')
+      return
+    }
     setLoading(true)
     try {
-      const result = await batchCreateTables(startNum, count, capacity)
-      onCreated(result.created)
+      const capacities = preview.toCreate.map((item) => item.capacity)
+      const templatesForTables = preview.toCreate.map((item) => item.template!).filter(Boolean)
+      const result = await batchCreateTables(startNum, capacities, 4, currentEffectivePax, effectiveMaxPax)
+      onCreated(result.created, templatesForTables)
       onClose()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create tables.')
@@ -206,39 +405,87 @@ function AddTablesModal({ onClose, onCreated, existingNums }: AddTablesModalProp
     }
   }
 
+  const createdPax = preview.toCreate.reduce((s, item) => s + item.capacity, 0)
+
   return (
     <div className="tm-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <form className="tm-modal" onSubmit={handleSubmit} noValidate>
+      <form className="tm-modal max-w-xl" onSubmit={handleSubmit} noValidate>
         <div className="tm-modal-header">
           <div>
             <div className="tm-modal-title"><Plus className="w-4 h-4" />Add Tables</div>
-            <p className="tm-modal-desc">Create one or multiple tables in a single operation.</p>
+            <p className="tm-modal-desc">Customize automatic distribution with snapping sliders across any saved table types.</p>
           </div>
-          <button type="button" onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
         <div className="tm-modal-body space-y-4">
-          <div>
-            <label className="tm-field-label">Starting Table Number</label>
-            <PaxStepper value={startNum} min={1} max={999} onChange={(v) => { setStartNum(v); setError('') }} />
-          </div>
-          <div>
-            <label className="tm-field-label">Number of Tables</label>
-            <PaxStepper value={count} min={1} max={50} onChange={(v) => { setCount(v); setError('') }} />
-          </div>
-          <div>
-            <label className="tm-field-label">Capacity per Table</label>
-            <PaxStepper value={capacity} min={1} max={99} onChange={(v) => { setCapacity(v); setError('') }} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="tm-field-label">Starting Table Number</label>
+              <PaxStepper
+                value={startNum}
+                min={1}
+                max={999}
+                onChange={(v) => {
+                  setStartNum(v)
+                  setError('')
+                }}
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="tm-field-label mb-0">Target Pax</label>
+                <span className="text-[0.68rem] text-slate-500 font-semibold">
+                  Max {maxCapacity} Pax
+                </span>
+              </div>
+              <PaxStepper
+                value={targetPax}
+                min={2}
+                max={maxCapacity}
+                onChange={(v) => {
+                  setTargetPax(v)
+                  setError('')
+                }}
+              />
+            </div>
           </div>
 
-          {/* Preview */}
-          {count > 0 && (
+          {/* Connected Snapping Sliders */}
+          <ConnectedDistributionSliders
+            templates={templates}
+            activeTemplateIds={activeTemplateIds}
+            percentages={percentages}
+            templateCounts={plan.templateCounts}
+            onPercentagesChange={setPercentages}
+            onToggleTemplate={handleToggleTemplate}
+          />
+
+          {plan.totalPax > 0 && !plan.exact && (
+            <p className="text-[0.68rem] text-amber-700 font-semibold">
+              Target adjusted from {targetPax} to {plan.totalPax} Pax to fit complete tables.
+            </p>
+          )}
+
+          {preview.items.length > 0 && (
             <div>
-              <p className="tm-field-label mb-1.5">Preview</p>
-              <div className="tm-preview-pills">
-                {Array.from({ length: count }, (_, i) => startNum + i).map((n) => (
-                  <span key={n} className={`tm-preview-pill ${new Set(existingNums).has(n) ? 'skip' : 'new'}`}>
-                    {n}
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="tm-field-label mb-0">Preview ({plan.totalTables} Tables · {plan.totalPax} Pax)</p>
+                <span className="text-[0.68rem] text-slate-500 font-medium">
+                  {preview.toCreate.length} to create
+                </span>
+              </div>
+              <div className="tm-preview-pills max-h-28 overflow-y-auto">
+                {preview.items.map((item) => (
+                  <span
+                    key={item.num}
+                    className={`tm-preview-pill ${item.exists ? 'skip' : 'new'}`}
+                    title={`Table ${item.num} (${item.capacity} seats · ${item.template?.label ?? ''})`}
+                  >
+                    {item.num} <span className="text-[0.6rem] font-normal opacity-75">({item.capacity}p)</span>
                   </span>
                 ))}
               </div>
@@ -249,7 +496,7 @@ function AddTablesModal({ onClose, onCreated, existingNums }: AddTablesModalProp
               )}
               {preview.toCreate.length > 0 && (
                 <p className="text-[0.7rem] text-emerald-700 font-semibold mt-1">
-                  {preview.toCreate.length} new table(s) will be created.
+                  {preview.toCreate.length} new table(s) will be created ({createdPax} Pax).
                 </p>
               )}
             </div>
@@ -259,9 +506,11 @@ function AddTablesModal({ onClose, onCreated, existingNums }: AddTablesModalProp
         </div>
 
         <div className="tm-modal-footer">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors">Cancel</button>
+          <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors">
+            Cancel
+          </button>
           <Button type="submit" variant="primary" size="sm" loading={loading} disabled={preview.toCreate.length === 0}>
-            Add {preview.toCreate.length > 0 ? preview.toCreate.length : ''} Table{preview.toCreate.length !== 1 ? 's' : ''}
+            Add {preview.toCreate.length} Table{preview.toCreate.length !== 1 ? 's' : ''} ({createdPax} Pax)
           </Button>
         </div>
       </form>
@@ -270,639 +519,7 @@ function AddTablesModal({ onClose, onCreated, existingNums }: AddTablesModalProp
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TableCard
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface TableCardProps {
-  table: TableData
-  mode: PageMode
-  isQrSelectionMode: boolean
-  isQrSelected: boolean
-  isActive: boolean        // sidebar is showing this table (normal mode)
-  summary?: OrderSummary
-  onClick: () => void
-  onQrClick: () => void
-  mergeRole: 'core' | 'node' | 'removed-node' | null
-  mergeLabelRole: 'core' | 'node' | 'removed-node' | null
-  isMergeDisabled: boolean
-}
-
-const TableCard = memo(function TableCard({
-  table, mode, isQrSelectionMode, isQrSelected, isActive, onClick, onQrClick, mergeRole, mergeLabelRole, isMergeDisabled,
-}: TableCardProps) {
-  const hasRequest = table.STATUS === 'HAS_REQUEST'
-  const isUnavailable = table.STATUS === 'UNAVAILABLE'
-  const displayGuestCount = table.CURRENT_GUEST_COUNT
-  const displayCapacity = table.GUEST_CAPACITY
-  const paxFull = displayGuestCount >= displayCapacity && displayCapacity > 0
-
-  const cardClass = [
-    'tm-table-card',
-    mode === 'merge' && isMergeDisabled ? 'tm-merge-disabled' : '',
-    mode === 'normal' && isActive ? 'is-active' : '',
-    isQrSelectionMode && isQrSelected ? 'is-selected-qr' : '',
-    mode === 'merge' && mergeRole === 'core' ? 'tm-merge-core' : '',
-    mode === 'merge' && mergeRole === 'node' ? 'tm-merge-node' : '',
-    mode === 'merge' && mergeRole === 'removed-node' ? 'tm-merge-removed-node-card' : '',
-    mode !== 'merge' && isUnavailable ? 'is-unavailable' : '',
-    mode !== 'merge' && hasRequest ? 'has-request' : '',
-  ].filter(Boolean).join(' ')
-
-  if (mode === 'merge' || mode === 'multi') {
-    return (
-      <div
-        className={cardClass}
-        onClick={mode === 'merge' && !isMergeDisabled ? onClick : undefined}
-        role="button"
-        aria-disabled={isMergeDisabled}
-        tabIndex={isMergeDisabled ? -1 : 0}
-        onKeyDown={(e) => { if (!isMergeDisabled && (e.key === 'Enter' || e.key === ' ')) onClick() }}
-      >
-        {mode === 'merge' && mergeLabelRole && (
-          <span className={`tm-merge-role-label tm-merge-role-${mergeLabelRole}`}>
-            {mergeLabelRole === 'core' ? 'Core' : mergeLabelRole === 'removed-node' ? 'Member node' : 'Node'}
-          </span>
-        )}
-        <div className="tm-merge-table-number">{table.TABLE_NUM}</div>
-        {mode === 'multi' && (
-          <div className={`tm-pax-row ${paxFull ? 'tm-pax-full' : ''}`}>
-            <Users className="w-3 h-3 shrink-0" />
-            <span>{displayGuestCount}/{displayCapacity}</span>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div
-      className={cardClass}
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick() }}
-      aria-pressed={isActive}
-    >
-      {/* Assistance ping */}
-      {hasRequest && (
-        <div className="tm-ping-dot">
-          <span className="flex h-3.5 w-3.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-600" />
-          </span>
-        </div>
-      )}
-
-      <header className="tm-table-card-header">
-        <div className={`tm-pax-row ${paxFull ? 'tm-pax-full' : ''}`}>
-          <Users className="w-3 h-3 shrink-0" />
-          <span>{displayGuestCount}/{displayCapacity}</span>
-        </div>
-        {isQrSelectionMode ? (
-          <label className="tm-qr-checkbox" onClick={(e) => e.stopPropagation()} title={`Select Table ${table.TABLE_NUM} QR code`}>
-            <input
-              type="checkbox"
-              checked={isQrSelected}
-              onChange={onClick}
-              aria-label={`Select Table ${table.TABLE_NUM} QR code`}
-            />
-            <span className={`tm-checkbox ${isQrSelected ? 'checked' : ''}`}>
-              {isQrSelected && <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
-            </span>
-          </label>
-        ) : (
-          <button type="button" className="tm-qr-btn" onClick={(e) => { e.stopPropagation(); onQrClick() }} title={`QR for Table ${table.TABLE_NUM}`}>
-            <QrCode className="w-3 h-3" />
-          </button>
-        )}
-      </header>
-
-      <div className="tm-table-card-body">
-        <div className="tm-table-num">{table.TABLE_NUM}</div>
-      </div>
-
-      <footer className="tm-table-card-footer">
-        <span className={`tm-status-badge ${statusClass(table.STATUS)}`}>
-          {statusLabel(table.STATUS)}
-        </span>
-      </footer>
-    </div>
-  )
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TableSidebar — persistent right panel
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface SidebarDraft {
-  capacity: number
-  seatedPax: number
-  // Reservation
-  reservationName: string
-  reservationPax: number
-  reservationHours: number
-  reservationMinutes: number
-  reservationNotes: string
-}
-
-function tableToDraft(t: TableData): SidebarDraft {
-  const capacity = t.GUEST_CAPACITY
-  const seatedPax = t.CURRENT_GUEST_COUNT
-
-  return {
-    capacity,
-    seatedPax,
-    reservationName: t.RESERVATION_NAME ?? '',
-    reservationPax: t.RESERVATION_PAX ?? capacity,
-    reservationHours: 1,
-    reservationMinutes: 0,
-    reservationNotes: t.RESERVATION_NOTES ?? '',
-  }
-}
-
-interface TableSidebarProps {
-  mode: PageMode
-  table: TableData | null        // currently-open single table
-  allTables: TableData[]
-  onClose: () => void
-  onExitMultiMode: () => void
-  onApplyTableSetup: (count: number, capacity: number) => Promise<void>
-  onTableUpdated: (row: TableData) => void
-  onTablesPatched: (rows: TableData[]) => void
-  showToast: (t: string, type?: ToastMsg['type']) => void
-  mergeCaptainId: number | null
-  mergeMemberIds: Set<number>
-  isEditingSavedMerge: boolean
-  onSelectNewMergeCaptain: () => void
-  onDeselectMergeMembers: () => void
-}
-
-function TableSidebar({
-  mode, table, allTables,
-  onClose, onExitMultiMode, onApplyTableSetup,
-  onTableUpdated, onTablesPatched, showToast,
-  mergeCaptainId, mergeMemberIds, isEditingSavedMerge, onSelectNewMergeCaptain, onDeselectMergeMembers,
-}: TableSidebarProps) {
-
-  // ── Draft state (reset when the selected table ID changes) ──
-  const [draft, setDraft] = useState<SidebarDraft | null>(null)
-  const [showReservationForm, setShowReservationForm] = useState(false)
-  const [sidebarError, setSidebarError] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [reserving, setReserving] = useState(false)
-  const [cancelling, setCancelling] = useState(false)
-  const pendingReservationRowsRef = useRef<TableData[] | null>(null)
-
-  // Use a ref to track the previous table ID to know when to reset draft
-  const prevTableIdRef = useRef<number | null>(null)
-
-  useEffect(() => {
-    if (table?.TABLE_ID !== prevTableIdRef.current) {
-      prevTableIdRef.current = table?.TABLE_ID ?? null
-      setDraft(table ? tableToDraft(table) : null)
-      setShowReservationForm(false)
-      setSidebarError('')
-    }
-  }, [table])
-
-  // Check if draft differs from current table data (unsaved changes)
-  const isDirty = useMemo(() => {
-    if (!draft || !table) return false
-    return (
-      draft.capacity !== table.GUEST_CAPACITY ||
-      draft.seatedPax !== table.CURRENT_GUEST_COUNT
-    )
-  }, [draft, table])
-
-  // ── Save changes ──
-  async function handleSave() {
-    if (!table || !draft) return
-    setSidebarError(''); setSaving(true)
-    try {
-      if (draft.seatedPax > draft.capacity) throw new Error(`Seated pax cannot exceed capacity (${draft.capacity}).`)
-
-      const updatedRows = await updateTable(table.TABLE_ID, {
-        capacity: draft.capacity !== table.GUEST_CAPACITY ? draft.capacity : undefined,
-        seatedPax: draft.seatedPax !== table.CURRENT_GUEST_COUNT ? draft.seatedPax : undefined,
-      })
-
-      onTablesPatched(updatedRows)
-      const updated = updatedRows.find(r => r.TABLE_ID === table.TABLE_ID) ?? updatedRows[0]
-      if (updated) {
-        onTableUpdated(updated)
-      }
-      showToast(`Table ${table.TABLE_NUM} saved.`, 'success')
-    } catch (err: unknown) {
-      setSidebarError((err as Error).message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  // ── Reservation and status ──
-  function getMergeGroupRows() {
-    if (!table) return []
-    const anchorId = table.MERGE_GROUP_ID ?? table.TABLE_ID
-    return allTables.filter((candidate) =>
-      candidate.TABLE_ID === anchorId || candidate.MERGE_GROUP_ID === anchorId,
-    )
-  }
-
-  async function handleStatusToggle(status: TableStatus) {
-    if (!table || table.STATUS === status) return
-    setSidebarError('')
-
-    const affectedRows = getMergeGroupRows()
-    const optimisticRows = affectedRows.map((row) => ({ ...row, STATUS: status }))
-    if (status === 'RESERVED') {
-      pendingReservationRowsRef.current = affectedRows
-    }
-    onTablesPatched(optimisticRows)
-
-    if (status === 'RESERVED') {
-      setShowReservationForm(true)
-      return
-    }
-
-    setShowReservationForm(false)
-    try {
-      const updatedRows = await setTableStatus(table.TABLE_ID, status)
-      onTablesPatched(updatedRows)
-      showToast('Saved', 'success')
-    } catch (err: unknown) {
-      onTablesPatched(affectedRows)
-      setSidebarError((err as Error).message)
-    }
-  }
-
-  async function handleMarkOccupied() {
-    await handleStatusToggle('OCCUPIED')
-  }
-
-  async function handleReserve() {
-    if (!table || !draft) return
-    setSidebarError(''); setReserving(true)
-    try {
-      if (!draft.reservationName.trim()) throw new Error('Guest name is required.')
-      const timeLimit = `${String(draft.reservationHours).padStart(2, '0')}:${String(draft.reservationMinutes).padStart(2, '0')}:00`
-      const resData: ReservationData = {
-        name: draft.reservationName,
-        pax: draft.reservationPax,
-        timeLimit,
-        notes: draft.reservationNotes || undefined,
-      }
-      const updatedRows = await reserveTable(table.TABLE_ID, resData)
-      onTablesPatched(updatedRows)
-      setShowReservationForm(false)
-      showToast('Saved', 'success')
-    } catch (err: unknown) {
-      setSidebarError((err as Error).message)
-    } finally {
-      setReserving(false)
-    }
-  }
-
-  function handleCancelReservationForm() {
-    const pendingRows = pendingReservationRowsRef.current
-    if (pendingRows) {
-      onTablesPatched(pendingRows)
-      pendingReservationRowsRef.current = null
-    }
-    setShowReservationForm(false)
-  }
-
-  async function handleCancelReservation() {
-    if (!table) return
-    setCancelling(true)
-    try {
-      const updatedRows = await cancelReservation(table.TABLE_ID)
-      onTablesPatched(updatedRows)
-      setShowReservationForm(false)
-      showToast('Saved', 'success')
-    } catch (err: unknown) {
-      setSidebarError((err as Error).message)
-    } finally {
-      setCancelling(false)
-    }
-  }
-
-  // ── Bulk edit state ──
-  const [bulkCount, setBulkCount] = useState(allTables.length)
-  useEffect(() => setBulkCount(allTables.length), [allTables.length])
-  const [bulkCapacity, setBulkCapacity] = useState(() => allTables[0]?.GUEST_CAPACITY ?? 4)
-  const [bulkError, setBulkError] = useState('')
-  const [bulkSaving, setBulkSaving] = useState(false)
-
-  async function handleBulkApply() {
-    setBulkError(''); setBulkSaving(true)
-    try {
-      if (bulkCount !== allTables.length) {
-        await onApplyTableSetup(bulkCount, bulkCapacity)
-      } else {
-        const result = await bulkEditTables(allTables.map((candidate) => candidate.TABLE_ID), { capacity: bulkCapacity })
-        if (result.updated.length > 0) onTablesPatched(result.updated)
-        if (result.blocked.length > 0) showToast(`${result.blocked.length} table(s) could not be updated.`, 'error')
-        showToast('Table capacity updated.', 'success')
-      }
-    } catch (err: unknown) {
-      setBulkError((err as Error).message)
-    } finally {
-      setBulkSaving(false)
-    }
-  }
-
-  // ─── RENDER ───────────────────────────────────────────────────────────────
-
-  if (mode === 'merge') {
-    const captain = allTables.find((candidate) => candidate.TABLE_ID === mergeCaptainId) ?? null
-    const members = allTables.filter((candidate) => mergeMemberIds.has(candidate.TABLE_ID))
-    const removedMembers = isEditingSavedMerge
-      ? allTables.filter((candidate) => candidate.MERGE_GROUP_ID === mergeCaptainId && !mergeMemberIds.has(candidate.TABLE_ID))
-      : []
-    const displayedMembers = [...members, ...removedMembers].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
-
-    return (
-      <aside className="tm-sidebar">
-        <div className="tm-sidebar-header">
-          <div>
-            <div className="tm-sidebar-title"><GitMerge className="w-4 h-4" />Merge Tables</div>
-            <div className="tm-sidebar-subtitle">Core and Node selection</div>
-          </div>
-        </div>
-
-        <div className="tm-sidebar-body">
-          {!captain ? (
-            <div className="tm-sidebar-empty">
-              <div className="tm-sidebar-empty-icon"><GitMerge className="w-6 h-6" /></div>
-              <div>
-                <p className="text-sm font-bold text-[#14274E]">Select a Core first</p>
-                <p className="text-xs text-slate-400 mt-0.5">Choose a table from the grid to use as the Core.</p>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="tm-sidebar-section">
-                <span className="tm-sidebar-section-title">Current Core</span>
-                <div className="tm-merge-sidebar-core">Table {captain.TABLE_NUM}</div>
-              </div>
-
-              <div className="tm-divider" />
-
-              <div className="tm-sidebar-section">
-                <span className="tm-sidebar-section-title">Nodes</span>
-                {displayedMembers.length === 0 ? (
-                  <p className="text-xs text-slate-400">Select at least one Node from the grid.</p>
-                ) : (
-                  <div className="tm-selected-list">
-                    {displayedMembers.map((member) => {
-                      const isRemoved = removedMembers.some((removed) => removed.TABLE_ID === member.TABLE_ID)
-                      return (
-                        <div key={member.TABLE_ID} className={`tm-selected-list-item tm-merge-node-list-item${isRemoved ? ' tm-merge-removed-node' : ''}`}>
-                          <span className="font-bold text-[#14274E]">Table {member.TABLE_NUM}</span>
-                          <span className="text-xs">{isRemoved ? 'Member node' : 'Node'}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="tm-sidebar-footer">
-          <button className="tm-sidebar-btn secondary" onClick={onSelectNewMergeCaptain} disabled={!captain}>
-            <RefreshCw className="w-3.5 h-3.5" /> Change Core
-          </button>
-          <button className="tm-sidebar-btn ghost" onClick={onDeselectMergeMembers} disabled={!captain || members.length === 0}>
-            <X className="w-3.5 h-3.5" /> Deselect Nodes
-          </button>
-        </div>
-      </aside>
-    )
-  }
-
-  // EDIT mode: manage the total number of tables and shared capacity
-  if (mode === 'multi') {
-    return (
-      <aside className="tm-sidebar">
-        <div className="tm-sidebar-body tm-edit-tables-sidebar">
-          <div className="tm-sidebar-section">
-            <span className="tm-sidebar-section-title">Edit Tables</span>
-            <p className="text-xs text-slate-400">Set the total number of tables and the maximum capacity for every table.</p>
-          </div>
-          <div className="tm-divider" />
-          <div className="tm-sidebar-section">
-            <label className="tm-field-label">Number of Tables</label>
-            <PaxStepper value={bulkCount} min={0} max={999} onChange={setBulkCount} />
-          </div>
-          <div className="tm-sidebar-section">
-            <label className="tm-field-label">Maximum Capacity</label>
-            <PaxStepper value={bulkCapacity} min={1} max={99} onChange={setBulkCapacity} />
-          </div>
-          {bulkError && <p className="tm-error-text">{bulkError}</p>}
-          <button className="tm-sidebar-btn primary" onClick={() => void handleBulkApply()} disabled={bulkSaving}>
-            {bulkSaving ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <CheckCheck className="w-3.5 h-3.5" />}
-            Save Table Settings
-          </button>
-        </div>
-        <div className="tm-sidebar-footer">
-          <button className="tm-sidebar-btn ghost" onClick={onExitMultiMode}>
-            <X className="w-3.5 h-3.5" /> Exit Edit Tables
-          </button>
-        </div>
-      </aside>
-    )
-  }
-
-  // NORMAL mode — no table selected
-  if (!table || !draft) {
-    return (
-      <aside className="tm-sidebar">
-        <div className="tm-sidebar-header">
-          <div className="tm-sidebar-title"><TableProperties className="w-4 h-4" />Table Details</div>
-        </div>
-        <div className="tm-sidebar-body">
-          <div className="tm-sidebar-empty">
-            <div className="tm-sidebar-empty-icon"><LayoutGrid className="w-6 h-6" /></div>
-            <div>
-              <p className="text-sm font-bold text-[#14274E]">Select a table</p>
-              <p className="text-xs text-slate-400 mt-0.5">Click any table to view and edit its details.</p>
-            </div>
-          </div>
-        </div>
-      </aside>
-    )
-  }
-
-  // NORMAL mode — single table selected
-  const isOccupied = OCCUPIED_STATUSES.includes(table.STATUS)
-  const isReserved = table.STATUS === 'RESERVED' || showReservationForm
-
-  return (
-    <aside className="tm-sidebar">
-      <div className="tm-sidebar-header">
-        <div>
-          <div className="tm-sidebar-title">
-            Table {table.TABLE_NUM}
-            {isDirty && <span className="tm-dirty-dot" title="Unsaved changes" />}
-          </div>
-          <div className="tm-sidebar-subtitle">
-            <span className={`tm-status-badge ${statusClass(table.STATUS)}`}>{statusLabel(table.STATUS)}</span>
-          </div>
-        </div>
-        <button className="tm-sidebar-close" onClick={onClose}><X className="w-4 h-4" /></button>
-      </div>
-
-      {/* Scrollable body — key resets form when table changes */}
-      <div className="tm-sidebar-body" key={table.TABLE_ID}>
-
-        {/* ── Table Info ── */}
-        <div className="tm-sidebar-section">
-          <span className="tm-sidebar-section-title">Table Info</span>
-          <div>
-            <label className="tm-field-label">Maximum Pax (Capacity)</label>
-            <PaxStepper
-              value={draft.capacity} min={Math.max(1, draft.seatedPax)} max={99}
-              onChange={v => setDraft(d => d ? { ...d, capacity: v } : d)}
-            />
-          </div>
-          {table.STATUS !== 'UNAVAILABLE' && (
-            <div>
-              <label className="tm-field-label">
-                Seated Pax
-                {draft.seatedPax >= draft.capacity && <span className="ml-1 text-amber-600 normal-case"> (Full)</span>}
-              </label>
-              <PaxStepper
-                value={draft.seatedPax} min={0} max={draft.capacity}
-                onChange={v => setDraft(d => d ? { ...d, seatedPax: v } : d)}
-              />
-              <button
-                className="tm-sidebar-btn primary mt-2"
-                onClick={() => void handleSave()}
-                disabled={saving || !isDirty}
-              >
-                {saving ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Check className="w-3.5 h-3.5" />}
-                Save Changes
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* ── Status ── */}
-        <div className="tm-divider" />
-        <div className="tm-sidebar-section">
-          <span className="tm-sidebar-section-title">Table Status</span>
-          <div className="tm-status-toggle" role="group" aria-label="Table status">
-            <button
-              className={table.STATUS === 'AVAILABLE' && !showReservationForm ? 'is-active' : ''}
-              onClick={() => void handleStatusToggle('AVAILABLE')}
-            >Available</button>
-            <button
-              className={isReserved ? 'is-active' : ''}
-              onClick={() => setShowReservationForm(true)}
-              disabled={isOccupied}
-            >Reserved</button>
-            <button
-              className={isOccupied ? 'is-active' : ''}
-              onClick={() => void handleMarkOccupied()}
-            >Occupied</button>
-          </div>
-        </div>
-
-        {/* ── Reservation ── */}
-        {(isReserved || showReservationForm) && (
-          <>
-            <div className="tm-divider" />
-            <div className="tm-sidebar-section">
-              <span className="tm-sidebar-section-title">Reservation</span>
-
-              {table.STATUS === 'RESERVED' && !showReservationForm ? (
-                /* Existing reservation details */
-                <div className="tm-reservation-section">
-                  <div className="tm-info-row"><span>Guest</span><strong>{table.RESERVATION_NAME}</strong></div>
-                  {table.RESERVATION_PAX && <div className="tm-info-row"><span>Pax</span><strong>{table.RESERVATION_PAX}</strong></div>}
-
-                  {table.RESERVATION_NOTES && (
-                    <p className="text-[0.7rem] text-slate-500 mt-0.5">{table.RESERVATION_NOTES}</p>
-                  )}
-                  <button className="tm-sidebar-btn danger" onClick={() => void handleCancelReservation()} disabled={cancelling}>
-                    {cancelling
-                      ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                      : <X className="w-3.5 h-3.5" />}
-                    Cancel Reservation
-                  </button>
-                </div>
-              ) : showReservationForm ? (
-                /* New reservation form */
-                <div className="tm-reservation-section">
-                  <div>
-                    <label className="tm-field-label">Guest Name *</label>
-                    <input type="text" className="tm-input" placeholder="e.g. Juan Dela Cruz"
-                      value={draft.reservationName}
-                      onChange={e => setDraft(d => d ? { ...d, reservationName: e.target.value } : d)} />
-                  </div>
-                  <div>
-                    <label className="tm-field-label">Reservation Pax</label>
-                    <PaxStepper value={draft.reservationPax} min={1} max={draft.capacity}
-                      onChange={v => setDraft(d => d ? { ...d, reservationPax: v } : d)} />
-                    <p className="text-[0.68rem] text-slate-400 mt-0.5">Max {draft.capacity} pax for this table.</p>
-                  </div>
-                  <div>
-                    <label className="tm-field-label">Reservation Limit</label>
-                    <div className="flex gap-2">
-                      <div className="flex-1">
-                        <input type="number" min={0} className="tm-input" value={draft.reservationHours}
-                          onChange={e => setDraft(d => d ? { ...d, reservationHours: Math.max(0, Number(e.target.value)) } : d)} />
-                        <span className="text-[0.68rem] text-slate-400">Hours</span>
-                      </div>
-                      <div className="flex-1">
-                        <input type="number" min={0} max={59} className="tm-input" value={draft.reservationMinutes}
-                          onChange={e => setDraft(d => d ? { ...d, reservationMinutes: Math.max(0, Math.min(59, Number(e.target.value))) } : d)} />
-                        <span className="text-[0.68rem] text-slate-400">Minutes</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="tm-field-label">Notes (optional)</label>
-                    <textarea className="tm-textarea" placeholder="Birthday dinner, requires highchair…"
-                      value={draft.reservationNotes}
-                      onChange={e => setDraft(d => d ? { ...d, reservationNotes: e.target.value } : d)} />
-                  </div>
-                  <div className="flex gap-2">
-                    <button className="tm-sidebar-btn ghost flex-1" onClick={handleCancelReservationForm}>Cancel</button>
-                    <button className="tm-sidebar-btn accent flex-1" onClick={() => void handleReserve()} disabled={reserving}>
-                      {reserving
-                        ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                        : <BookMarked className="w-3.5 h-3.5" />}
-                      Save
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <button className="tm-sidebar-btn secondary" onClick={() => setShowReservationForm(true)}>
-                    <BookMarked className="w-3.5 h-3.5" /> Reserve Table
-                  </button>
-                  <button className="tm-sidebar-btn primary" onClick={() => void handleMarkOccupied()}>
-                    <Users className="w-3.5 h-3.5" /> Mark as Occupied
-                  </button>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {sidebarError && <p className="tm-error-text">{sidebarError}</p>}
-      </div>
-
-      <div className="tm-sidebar-footer" />
-    </aside>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Main page
+// Main page — Floor Plan Editor
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function TableManagerPage() {
@@ -910,40 +527,40 @@ export default function TableManagerPage() {
   const [tables, setTables] = useState<TableData[]>(() => getCachedTables() ?? [])
   const [billRequests, setBillRequests] = useState<BillRequest[]>([])
   const [orderSummaries, setOrderSummaries] = useState<Map<number, OrderSummary>>(new Map())
+  const [events, setEvents] = useState<RestaurantEvent[]>([])
 
-  // ── Selection / mode ──
-  const [mode, setMode] = useState<PageMode>('normal')
-  const [sidebarTableId, setSidebarTableId] = useState<number | null>(null)
-  const [mergeCaptainId, setMergeCaptainId] = useState<number | null>(null)
-  const [mergeMemberIds, setMergeMemberIds] = useState<Set<number>>(new Set())
-  const [isEditingSavedMerge, setIsEditingSavedMerge] = useState(false)
-  const [isSavingMerge, setIsSavingMerge] = useState(false)
-  const [isQrSelectionMode, setIsQrSelectionMode] = useState(false)
-  const [qrSelectedIds, setQrSelectedIds] = useState<Set<number>>(new Set())
+  // ── Floor plan editor state ──
+  const floorPlan = useFloorPlanState()
+
+  // ── Presets ──
+  const [presets, setPresets] = useState<LayoutPreset[]>([])
+  const [activePresetId, setActivePresetId] = useState<number | null>(null)
 
   // ── Modals ──
   const [showAddModal, setShowAddModal] = useState(false)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null) // table ID to delete
+  const [showRemoveAllConfirm, setShowRemoveAllConfirm] = useState(false)
+  const [showGridSettings, setShowGridSettings] = useState(false)
+  const [showSavePreset, setShowSavePreset] = useState(false)
+  const [confirmLoadPreset, setConfirmLoadPreset] = useState<LayoutPreset | null>(null)
+  const [renamePreset, setRenamePreset] = useState<LayoutPreset | null>(null)
+  const [deletePresetConfirm, setDeletePresetConfirm] = useState<LayoutPreset | null>(null)
   const [qrModalTable, setQrModalTable] = useState<TableData | null>(null)
 
-  // ── Delete state ──
+  // ── Loading states ──
+  const [savingCapacity, setSavingCapacity] = useState(false)
+  const [savingPreset, setSavingPreset] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
-
-  // ── QR state ──
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
-  const [isPrinting, setIsPrinting] = useState(false)
+  const [savingLayout, setSavingLayout] = useState(false)
+  const navigationBlocker = useBlocker(floorPlan.isDirty)
 
   // ── Toast ──
   const [toast, setToast] = useState<ToastMsg | null>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // ── Mutation guard (prevents polling from firing during a write) ──
+  // ── Mutation guard ──
   const isMutatingRef = useRef(false)
-
-  const sidebarTableIdRef = useRef(sidebarTableId)
-  useEffect(() => {
-    sidebarTableIdRef.current = sidebarTableId
-  }, [sidebarTableId])
+  const initializedRef = useRef(false)
 
   function showToast(text: string, type: ToastMsg['type'] = 'success') {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
@@ -951,15 +568,79 @@ export default function TableManagerPage() {
     toastTimerRef.current = setTimeout(() => setToast(null), 3000)
   }
 
-  // ── Derived state ──
-  const sidebarTable = useMemo(
-    () => (sidebarTableId !== null ? tables.find((t) => t.TABLE_ID === sidebarTableId) ?? null : null),
-    [tables, sidebarTableId],
-  )
-
   const existingTableNums = useMemo(() => tables.map((t) => t.TABLE_NUM), [tables])
 
-  // ── Load order summaries (targeted — only for occupied tables) ──
+  const activePreset = useMemo(
+    () => presets.find((p) => p.PRESET_ID === activePresetId) ?? null,
+    [presets, activePresetId],
+  )
+
+  const activeLinkedEvent = useMemo(() => {
+    if (!activePreset) return null
+    return events.find((e) =>
+      (activePreset.EVENT_ID && e.eventId === activePreset.EVENT_ID) ||
+      (e.presetId && e.presetId === activePreset.PRESET_ID)
+    ) ?? null
+  }, [activePreset, events])
+
+  const effectiveMaxPax = useMemo(() => {
+    if (activeLinkedEvent && activeLinkedEvent.maxPax && activeLinkedEvent.maxPax > 0) {
+      return activeLinkedEvent.maxPax
+    }
+    return 50
+  }, [activeLinkedEvent])
+
+  const hasActiveOrders = useMemo(() => {
+    const hasOccupiedTable = tables.some(
+      (t) => OCCUPIED_STATUSES.includes(t.STATUS) || (t.CURRENT_GUEST_COUNT ?? 0) > 0 || t.BILL_OUT_REQUESTED,
+    )
+    const hasOrdersInProgress = Array.from(orderSummaries.values()).some(
+      (s) => s.activeOrderCount > 0,
+    )
+    const hasActiveBills = billRequests.length > 0
+    return Boolean(hasOccupiedTable || hasOrdersInProgress || hasActiveBills)
+  }, [tables, orderSummaries, billRequests])
+
+  // ── Selected table for inspector ──
+  const inspectorTable = useMemo(
+    () => (floorPlan.selectedTableId !== null
+      ? tables.find((t) => t.TABLE_ID === floorPlan.selectedTableId) ?? null
+      : null),
+    [tables, floorPlan.selectedTableId],
+  )
+
+  const inspectorPosition = useMemo(
+    () => (floorPlan.selectedTableId !== null
+      ? floorPlan.positions.find((p) => p.tableId === floorPlan.selectedTableId) ?? null
+      : null),
+    [floorPlan.positions, floorPlan.selectedTableId],
+  )
+
+  const inspectorMergeGroup = useMemo(
+    () => (floorPlan.selectedTableId !== null
+      ? findGroupForTable(floorPlan.selectedTableId, floorPlan.mergeGroups)
+      : null),
+    [floorPlan.selectedTableId, floorPlan.mergeGroups],
+  )
+
+  const inspectorOrderSummary = useMemo(() => {
+    if (!inspectorTable) return undefined
+    if (!inspectorMergeGroup || inspectorMergeGroup.memberIds.length <= 1) {
+      return orderSummaries.get(inspectorTable.TABLE_ID)
+    }
+    return inspectorMergeGroup.memberIds.reduce(
+      (acc, id) => {
+        const s = orderSummaries.get(id)
+        return {
+          activeOrderCount: acc.activeOrderCount + (s?.activeOrderCount ?? 0),
+          totalBill: acc.totalBill + (s?.totalBill ?? 0),
+        }
+      },
+      { activeOrderCount: 0, totalBill: 0 },
+    )
+  }, [inspectorTable, inspectorMergeGroup, orderSummaries])
+
+  // ── Load order summaries ──
   const loadSummariesForTables = useCallback(async (tableList: TableData[]) => {
     const occupiedIds = tableList
       .filter((t) => OCCUPIED_STATUSES.includes(t.STATUS))
@@ -984,11 +665,13 @@ export default function TableManagerPage() {
   // ── Initial full load ──
   const loadAll = useCallback(async () => {
     try {
-      const [data, bReqs] = await Promise.all([
+      const [data, bReqs, eventList] = await Promise.all([
         fetchAllTables(),
         fetchAllBillRequests(),
+        fetchEvents().catch(() => [] as RestaurantEvent[]),
       ])
       setBillRequests(bReqs)
+      setEvents(eventList)
       cacheTables(data)
       setTables((prev) => {
         if (prev.length === data.length) {
@@ -1008,27 +691,78 @@ export default function TableManagerPage() {
         }
         return data
       })
-      // Load summaries ONCE here — not via a tables-dependency effect
       await loadSummariesForTables(data)
+
+      // Initialize floor plan positions (only once)
+      if (!initializedRef.current) {
+        initializedRef.current = true
+
+        // Load presets
+        let activePresetForInit: LayoutPreset | null = null
+        try {
+          const allPresets = await fetchAllPresets()
+          setPresets(allPresets)
+          const active = allPresets.find((p) => p.IS_ACTIVE)
+          if (active) {
+            setActivePresetId(active.PRESET_ID)
+            activePresetForInit = active
+
+            // Sync active preset's merge groups to Restaurant_Tables if out of sync
+            if (active.MERGE_GROUPS && active.MERGE_GROUPS.length > 0) {
+              const hasUnsynced = active.MERGE_GROUPS.some((g) => {
+                const anchor = data.find((t) => t.TABLE_ID === g.anchorId)
+                return !anchor || !anchor.IS_MERGE_CAPTAIN
+              })
+              if (hasUnsynced) {
+                try {
+                  const synced = await syncTableMergeGroups(
+                    active.MERGE_GROUPS,
+                    data.map((t) => t.TABLE_ID),
+                    data,
+                  )
+                  setTables(synced)
+                  cacheTables(synced)
+                } catch (syncErr) {
+                  console.error('[TableManager] Failed to auto-sync active preset merge groups:', syncErr)
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[TableManager] Failed to load presets:', err)
+        }
+
+        const initialConfig = activePresetForInit
+          ? {
+              widthBlocks: activePresetForInit.FLOOR_WIDTH_BLOCKS ?? 20,
+              heightBlocks: activePresetForInit.FLOOR_HEIGHT_BLOCKS ?? 16,
+              tableSizeBlocks: activePresetForInit.TABLE_SIZE_BLOCKS ?? 2,
+              spacingBlocks: activePresetForInit.TABLE_SPACING_BLOCKS ?? 1,
+              snapEnabled: activePresetForInit.SNAP_TO_GRID ?? true,
+            }
+          : undefined
+
+        floorPlan.initializeFromTables(data, initialConfig)
+        floorPlan.markClean()
+      }
     } catch (err) {
       console.error('[TableManager] Load error:', err)
     }
-  }, [loadSummariesForTables])
+  }, [loadSummariesForTables, floorPlan])
 
   useEffect(() => {
     void loadAll()
   }, [loadAll])
 
-  // ── Realtime subscriptions & visibility sync ──
+  // ── Realtime subscriptions ──
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible' && !isMutatingRef.current) void loadAll()
     }
     document.addEventListener('visibilitychange', handleVisibility)
 
-    // ── Realtime subscription (targeted updates only) ──
     const channel = supabase
-      .channel('tm-phase2-tables')
+      .channel('tm-phase3-tables')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Tables' }, async (payload) => {
         if (payload.eventType === 'UPDATE') {
           const updated = payload.new as TableData
@@ -1037,7 +771,6 @@ export default function TableManagerPage() {
             cacheTables(next)
             return next
           })
-          // Targeted summary refresh only if occupancy status changed
           const oldStatus = (payload.old as Partial<TableData>).STATUS as TableStatus | undefined
           const newStatus = updated.STATUS
           const wasOccupied = oldStatus && OCCUPIED_STATUSES.includes(oldStatus)
@@ -1060,6 +793,8 @@ export default function TableManagerPage() {
             cacheTables(next)
             return next
           })
+          // Auto-place new table on floor plan
+          floorPlan.addTable(inserted)
         } else if (payload.eventType === 'DELETE') {
           const deletedId = (payload.old as { TABLE_ID: number }).TABLE_ID
           setTables((prev) => {
@@ -1067,8 +802,7 @@ export default function TableManagerPage() {
             cacheTables(next)
             return next
           })
-          setQrSelectedIds((prev) => { const next = new Set(prev); next.delete(deletedId); return next })
-          if (sidebarTableIdRef.current === deletedId) setSidebarTableId(null)
+          floorPlan.removeTable(deletedId)
         }
       })
       .on(
@@ -1097,6 +831,14 @@ export default function TableManagerPage() {
           void fetchAllBillRequests().then(setBillRequests)
         },
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Restaurant_Events' },
+        async () => {
+          const evts = await fetchEvents().catch(() => [])
+          setEvents(evts)
+        },
+      )
       .on('broadcast', { event: 'assistance_request' }, (payload) => {
         const { tableId, tableIds } = (payload.payload ?? {}) as { tableId?: number; tableIds?: number[] }
         const ids = tableIds && tableIds.length > 0 ? tableIds : (tableId ? [tableId] : [])
@@ -1117,201 +859,120 @@ export default function TableManagerPage() {
       document.removeEventListener('visibilitychange', handleVisibility)
       void supabase.removeChannel(channel)
     }
-  }, [loadAll])
+  }, [loadAll, floorPlan])
 
-  // ── Card click ──
-  function handleCardClick(table: TableData) {
-    if (mode === 'merge') {
-      if (mergeCaptainId === null) {
-        const existingCoreId = table.IS_MERGE_CAPTAIN ? table.TABLE_ID : table.MERGE_GROUP_ID
-        setMergeCaptainId(existingCoreId ?? table.TABLE_ID)
-        setIsEditingSavedMerge(existingCoreId !== null)
-        setMergeMemberIds(
-          existingCoreId
-            ? new Set(tables.filter((candidate) => candidate.MERGE_GROUP_ID === existingCoreId).map((candidate) => candidate.TABLE_ID))
-            : new Set(),
-        )
-      } else if (table.TABLE_ID === mergeCaptainId) {
-        setMergeCaptainId(null)
-        setMergeMemberIds(new Set())
-        setIsEditingSavedMerge(false)
-      } else if (table.IS_MERGE_CAPTAIN) {
-        const existingCoreId = table.TABLE_ID
-        setMergeCaptainId(existingCoreId)
-        setIsEditingSavedMerge(true)
-        setMergeMemberIds(
-          new Set(tables.filter((candidate) => candidate.MERGE_GROUP_ID === existingCoreId).map((candidate) => candidate.TABLE_ID)),
-        )
-      } else {
-        setMergeMemberIds((prev) => {
-          const next = new Set(prev)
-          if (next.has(table.TABLE_ID)) next.delete(table.TABLE_ID)
-          else next.add(table.TABLE_ID)
-          return next
-        })
+  // ── Table operations ──────────────────────────────────────────────────────
+
+  async function handleAddTable(capacity: number, widthBlocks?: number, heightBlocks?: number) {
+    if (totalSeats + capacity > effectiveMaxPax) {
+      showToast(`Cannot add table: remaining seating budget is ${Math.max(0, effectiveMaxPax - totalSeats)} Pax.`, 'error')
+      return
+    }
+    isMutatingRef.current = true
+    try {
+      const nextNum = Math.max(0, ...tables.map((t) => t.TABLE_NUM)) + 1
+      const result = await batchCreateTables(nextNum, 1, capacity, totalSeats, effectiveMaxPax)
+      if (result.created.length > 0) {
+        const newTable = result.created[0]
+        setTables((prev) => [...prev, ...result.created].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM))
+        floorPlan.addTable(newTable, widthBlocks, heightBlocks)
+        floorPlan.setSelectedTableId(newTable.TABLE_ID)
+        showToast(`Table ${newTable.TABLE_NUM} added (${capacity} Pax).`, 'success')
       }
-      return
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+    } finally {
+      isMutatingRef.current = false
     }
-
-    if (isQrSelectionMode) {
-      setQrSelectedIds((prev) => {
-        const next = new Set(prev)
-        if (next.has(table.TABLE_ID)) next.delete(table.TABLE_ID)
-        else next.add(table.TABLE_ID)
-        return next
-      })
-      return
-    }
-
-    setSidebarTableId(table.TABLE_ID)
   }
 
-  async function enterMultiMode() {
-    const freshTables = await fetchAllTables()
-    setTables(freshTables)
-    cacheTables(freshTables)
-    setMode('multi')
-    setSidebarTableId(null)
-  }
-
-  function exitMultiMode() {
-    setMode('normal')
-  }
-
-  async function applyTableSetup(count: number, capacity: number) {
-    if (count < 0 || count > 999) throw new Error('Number of tables must be between 0 and 999.')
-    if (capacity < 1) throw new Error('Maximum capacity must be at least 1.')
-
-    let currentTables = await fetchAllTables()
-    const existingNumbers = new Set(currentTables.map((table) => table.TABLE_NUM))
-    const missingNumbers = Array.from({ length: count }, (_, index) => index + 1)
-      .filter((tableNumber) => !existingNumbers.has(tableNumber))
-
-    if (missingNumbers.length > 0) {
-      const result = await batchCreateTables(missingNumbers[0], missingNumbers.length, capacity)
-      if (result.created.length > 0) showToast(`${result.created.length} table(s) added.`, 'success')
+  async function handleCapacityChange(tableId: number, capacity: number): Promise<boolean> {
+    setSavingCapacity(true)
+    isMutatingRef.current = true
+    try {
+      const updated = await updateTable(tableId, { capacity })
+      setTables((prev) => patchTables(prev, updated))
+      showToast('Capacity updated.', 'success')
+      return true
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+      return false
+    } finally {
+      setSavingCapacity(false)
+      isMutatingRef.current = false
     }
+  }
 
-    currentTables = await fetchAllTables()
-    const tablesToDelete = currentTables.filter((table) => table.TABLE_NUM > count)
-    if (tablesToDelete.length > 0) {
-      const result = await deleteTables(tablesToDelete.map((table) => table.TABLE_ID))
+  async function handleStatusChange(tableId: number, status: TableStatus) {
+    isMutatingRef.current = true
+    try {
+      const updated = await setTableStatus(tableId, status)
+      setTables((prev) => patchTables(prev, updated))
+      if (OCCUPIED_STATUSES.includes(status)) {
+        const summaries = await fetchOrderSummariesForIds([tableId])
+        setOrderSummaries((prev) => new Map([...prev, ...summaries]))
+      }
+      showToast(`Table marked as ${status.toLowerCase().replace('_', ' ')}.`, 'success')
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+    } finally {
+      isMutatingRef.current = false
+    }
+  }
+
+  async function handleDeleteTable(tableId: number) {
+    setDeleteLoading(true)
+    isMutatingRef.current = true
+    try {
+      const result = await deleteTables([tableId])
       if (result.deleted.length > 0) {
+        setTables((prev) => prev.filter((t) => !result.deleted.includes(t.TABLE_ID)))
+        setOrderSummaries((prev) => { const next = new Map(prev); result.deleted.forEach(id => next.delete(id)); return next })
+        floorPlan.removeTable(tableId)
+        showToast('Table deleted.', 'success')
+      }
+      if (result.blocked.length > 0) {
+        showToast(result.blocked[0].reason, 'error')
+      }
+      setShowDeleteConfirm(null)
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+    } finally {
+      setDeleteLoading(false)
+      isMutatingRef.current = false
+    }
+  }
+
+  async function handleRemoveAllTables() {
+    setDeleteLoading(true)
+    isMutatingRef.current = true
+    try {
+      const result = await deleteTables(tables.map((table) => table.TABLE_ID))
+      if (result.deleted.length > 0) {
+        setTables((prev) => prev.filter((table) => !result.deleted.includes(table.TABLE_ID)))
         setOrderSummaries((prev) => {
           const next = new Map(prev)
           result.deleted.forEach((id) => next.delete(id))
           return next
         })
+        result.deleted.forEach((id) => floorPlan.removeTable(id))
+      }
+      if (result.blocked.length > 0) {
+        showToast(`${result.deleted.length} removed; ${result.blocked.length} kept because they have active data.`, 'info')
+      } else {
         showToast(`${result.deleted.length} table(s) removed.`, 'success')
       }
-      if (result.blocked.length > 0) {
-        throw new Error(`${result.blocked.length} table(s) could not be removed because they have active data.`)
-      }
-    }
-
-    const resultingTables = (await fetchAllTables()).sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
-    const result = await bulkEditTables(resultingTables.map((table) => table.TABLE_ID), { capacity })
-    const finalTables = patchTables(resultingTables, result.updated)
-    setTables(finalTables)
-    cacheTables(finalTables)
-    if (result.blocked.length > 0) showToast(`${result.blocked.length} table(s) could not be updated.`, 'error')
-    showToast('Table settings updated.', 'success')
-  }
-
-  function enterMergeMode() {
-    setMode('merge')
-    setSidebarTableId(null)
-    setIsQrSelectionMode(false)
-    setQrSelectedIds(new Set())
-    setMergeCaptainId(null)
-    setMergeMemberIds(new Set())
-    setIsEditingSavedMerge(false)
-  }
-
-  function exitMergeMode() {
-    setMode('normal')
-    setMergeCaptainId(null)
-    setMergeMemberIds(new Set())
-    setIsEditingSavedMerge(false)
-  }
-
-  function selectNewMergeCaptain() {
-    setMergeCaptainId(null)
-    setMergeMemberIds(new Set())
-    setIsEditingSavedMerge(false)
-  }
-
-  function deselectMergeMembers() {
-    setMergeMemberIds(new Set())
-  }
-
-  async function deleteMergeGroup() {
-    if (mergeCaptainId === null) return
-
-    setIsSavingMerge(true)
-    isMutatingRef.current = true
-    try {
-      const updated = await saveTableMerge(mergeCaptainId, [])
-      const patchedTables = patchTables(tables, updated)
-      setTables(patchedTables)
-      cacheTables(patchedTables)
-      showToast('Merge group deleted.', 'success')
-      exitMergeMode()
+      setShowRemoveAllConfirm(false)
     } catch (err: unknown) {
       showToast((err as Error).message, 'error')
     } finally {
-      setIsSavingMerge(false)
+      setDeleteLoading(false)
       isMutatingRef.current = false
-    }
-  }
-
-  async function completeMerge() {
-    if (mergeCaptainId === null || (!isEditingSavedMerge && mergeMemberIds.size === 0)) {
-      showToast('Select one Core and at least one Node.', 'error')
-      return
-    }
-
-    setIsSavingMerge(true)
-    isMutatingRef.current = true
-    try {
-      const updated = await saveTableMerge(mergeCaptainId, [...mergeMemberIds])
-      const patchedTables = patchTables(tables, updated)
-      setTables(patchedTables)
-      cacheTables(patchedTables)
-      showToast('Merge saved.', 'success')
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      setIsSavingMerge(false)
-      isMutatingRef.current = false
-    }
-  }
-
-  // ── Delete ──
-  async function handleDelete() {
-    const ids = sidebarTableId ? [sidebarTableId] : []
-    if (ids.length === 0) return
-    setDeleteLoading(true); isMutatingRef.current = true
-    try {
-      const result = await deleteTables(ids)
-      if (result.deleted.length > 0) {
-        setTables((prev) => prev.filter((t) => !result.deleted.includes(t.TABLE_ID)))
-        setOrderSummaries((prev) => { const next = new Map(prev); result.deleted.forEach(id => next.delete(id)); return next })
-        if (sidebarTableId && result.deleted.includes(sidebarTableId)) setSidebarTableId(null)
-        showToast(`${result.deleted.length} table(s) deleted.`, 'success')
-      }
-      if (result.blocked.length > 0) {
-        showToast(`${result.blocked.length} table(s) could not be deleted.`, 'error')
-      }
-      setShowDeleteConfirm(false)
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      setDeleteLoading(false); isMutatingRef.current = false
     }
   }
 
   // ── Assistance & Bill Out ──
+
   async function handleClearAssistance(tableId: number) {
     isMutatingRef.current = true
     try {
@@ -1349,58 +1010,447 @@ export default function TableManagerPage() {
     }
   }
 
-  // ── QR ──
-  const selectedQrTables = tables.filter((table) => qrSelectedIds.has(table.TABLE_ID))
+  // ── Layout persistence ──
 
-  async function handleDownloadPdf() {
-    if (selectedQrTables.length === 0) {
-      showToast('Select at least one table.', 'error')
-      return
-    }
-    setIsGeneratingPdf(true)
-    try { await downloadBulkQrPdf(selectedQrTables) }
-    catch { showToast('Failed to generate PDF.', 'error') }
-    finally { setIsGeneratingPdf(false) }
-  }
+  async function handleSaveLayout(): Promise<boolean> {
+    setSavingLayout(true)
+    try {
+      await batchUpdateTablePositions(
+        floorPlan.positions.map((p) => ({ tableId: p.tableId, x: p.x, y: p.y })),
+      )
+      const positionsWithDims = floorPlan.positions.map((p) => ({
+        tableId: p.tableId,
+        x: p.x,
+        y: p.y,
+        widthBlocks: p.widthBlocks,
+        heightBlocks: p.heightBlocks,
+        rotation: p.rotation ?? 0,
+        capacity: tables.find((t) => t.TABLE_ID === p.tableId)?.GUEST_CAPACITY,
+      }))
 
-  async function handlePrint() {
-    if (selectedQrTables.length === 0) {
-      showToast('Select at least one table.', 'error')
-      return
-    }
-    setIsPrinting(true)
-    try { await printBulkQrPdf(selectedQrTables) }
-    catch { showToast('Failed to print.', 'error') }
-    finally { setIsPrinting(false) }
-  }
+      // Synchronize merge groups to Restaurant_Tables in Supabase
+      const updatedTables = await syncTableMergeGroups(
+        floorPlan.mergeGroups,
+        tables.map((t) => t.TABLE_ID),
+        tables,
+      )
+      setTables(updatedTables)
+      cacheTables(updatedTables)
 
-  function toggleQrSelectionMode() {
-    setIsQrSelectionMode((active) => {
-      if (active) {
-        setQrSelectedIds(new Set())
+      if (activePresetId !== null) {
+        const updatedPreset = await updatePreset(activePresetId, {
+          config: floorPlan.config,
+          positions: positionsWithDims,
+          mergeGroups: floorPlan.mergeGroups,
+        })
+        setPresets((prev) => prev.map((preset) =>
+          preset.PRESET_ID === updatedPreset.PRESET_ID ? updatedPreset : preset,
+        ))
+        const activeName =
+          presets.find((p) => p.PRESET_ID === activePresetId)?.PRESET_NAME ||
+          updatedPreset.PRESET_NAME
+        showToast(`Layout "${activeName}" saved.`, 'success')
       } else {
-        setQrSelectedIds(new Set(tables.map((table) => table.TABLE_ID)))
+        showToast('Layout saved.', 'success')
       }
-      return !active
-    })
+      floorPlan.markClean()
+      return true
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+      return false
+    } finally {
+      setSavingLayout(false)
+    }
   }
 
-  function toggleAllQrTables() {
-    setQrSelectedIds((prev) =>
-      prev.size === tables.length
-        ? new Set()
-        : new Set(tables.map((table) => table.TABLE_ID)),
+  async function handleToolbarSave() {
+    if (activePresetId !== null) {
+      await handleSaveLayout()
+    } else {
+      setShowSavePreset(true)
+    }
+  }
+
+  async function handleSavePreset(name: string, description: string, eventId?: number | null) {
+    setSavingPreset(true)
+    try {
+      // Save current positions to DB first
+      await batchUpdateTablePositions(
+        floorPlan.positions.map((p) => ({ tableId: p.tableId, x: p.x, y: p.y })),
+      )
+      const positionsWithDims = floorPlan.positions.map((p) => ({
+        tableId: p.tableId,
+        x: p.x,
+        y: p.y,
+        widthBlocks: p.widthBlocks,
+        heightBlocks: p.heightBlocks,
+        rotation: p.rotation ?? 0,
+        capacity: tables.find((t) => t.TABLE_ID === p.tableId)?.GUEST_CAPACITY,
+      }))
+
+      // Synchronize merge groups to Restaurant_Tables in Supabase
+      const updatedTables = await syncTableMergeGroups(
+        floorPlan.mergeGroups,
+        tables.map((t) => t.TABLE_ID),
+        tables,
+      )
+      setTables(updatedTables)
+      cacheTables(updatedTables)
+
+      const preset = await createPreset(
+        name,
+        description || null,
+        floorPlan.config,
+        positionsWithDims,
+        floorPlan.mergeGroups,
+        eventId ?? null,
+      )
+      await setActivePreset(preset.PRESET_ID)
+      setActivePresetId(preset.PRESET_ID)
+      setPresets((prev) => [
+        { ...preset, IS_ACTIVE: true },
+        ...prev.map((p) => ({ ...p, IS_ACTIVE: false })),
+      ])
+      setShowSavePreset(false)
+      floorPlan.markClean()
+      showToast(`Layout "${name}" saved.`, 'success')
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+    } finally {
+      setSavingPreset(false)
+    }
+  }
+
+  async function handleRenamePreset(name: string, description: string, eventId?: number | null) {
+    if (!renamePreset) return
+    setSavingPreset(true)
+    try {
+      const updated = await updatePreset(renamePreset.PRESET_ID, { name, description, eventId })
+      setPresets((prev) => prev.map((preset) => preset.PRESET_ID === updated.PRESET_ID ? updated : preset))
+      setRenamePreset(null)
+      showToast('Layout updated.', 'success')
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+    } finally {
+      setSavingPreset(false)
+    }
+  }
+
+  async function handleDeletePreset() {
+    if (!deletePresetConfirm) return
+    setSavingPreset(true)
+    try {
+      await deletePreset(deletePresetConfirm.PRESET_ID)
+      setPresets((prev) => prev.filter((preset) => preset.PRESET_ID !== deletePresetConfirm.PRESET_ID))
+      if (activePresetId === deletePresetConfirm.PRESET_ID) setActivePresetId(null)
+      setDeletePresetConfirm(null)
+      showToast('Saved layout deleted. Restaurant tables were not changed.', 'success')
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+    } finally {
+      setSavingPreset(false)
+    }
+  }
+
+  async function handleLoadPreset(presetId: number) {
+    if (hasActiveOrders) {
+      showToast('Cannot switch table layout while active orders are in progress.', 'error')
+      return
+    }
+
+    const preset = presets.find((p) => p.PRESET_ID === presetId)
+    if (!preset) return
+
+    // Check for unsaved changes
+    if (floorPlan.isDirty) {
+      setConfirmLoadPreset(preset)
+      return
+    }
+
+    await doLoadPreset(preset)
+  }
+
+  async function doLoadPreset(preset: LayoutPreset) {
+    if (hasActiveOrders) {
+      showToast('Cannot switch table layout while active orders are in progress.', 'error')
+      return
+    }
+    try {
+      // Apply preset config
+      floorPlan.setConfig({
+        widthBlocks: preset.FLOOR_WIDTH_BLOCKS ?? 20,
+        heightBlocks: preset.FLOOR_HEIGHT_BLOCKS ?? 16,
+        tableSizeBlocks: preset.TABLE_SIZE_BLOCKS ?? 2,
+        spacingBlocks: preset.TABLE_SPACING_BLOCKS ?? 1,
+        snapEnabled: preset.SNAP_TO_GRID ?? true,
+      })
+
+      const presetPlacements = preset.LAYOUT_DATA ?? []
+      if (presetPlacements.length === 0) {
+        showToast(`Preset "${preset.PRESET_NAME}" has no table layout data.`, 'info')
+        return
+      }
+
+      let currentTables = [...tables]
+      const assignedPositions: EditorTable[] = []
+      const usedTableIds = new Set<number>()
+
+      // Pass 1: exact tableId match
+      for (const p of presetPlacements) {
+        const match = currentTables.find((t) => t.TABLE_ID === p.tableId && !usedTableIds.has(t.TABLE_ID))
+        if (match) {
+          usedTableIds.add(match.TABLE_ID)
+          assignedPositions.push({
+            tableId: match.TABLE_ID,
+            x: p.x,
+            y: p.y,
+            widthBlocks: (p as any).widthBlocks,
+            heightBlocks: (p as any).heightBlocks,
+            rotation: (p as any).rotation ?? 0,
+          })
+        }
+      }
+
+      // Pass 2: unassigned preset placements matched to available tables
+      const unassignedPreset = presetPlacements.filter(
+        (p) => !assignedPositions.some((ap) => ap.x === p.x && ap.y === p.y),
+      )
+      const availableTables = currentTables.filter((t) => !usedTableIds.has(t.TABLE_ID))
+
+      let availIdx = 0
+      const missingToCreate: typeof presetPlacements = []
+
+      for (const p of unassignedPreset) {
+        if (availIdx < availableTables.length) {
+          const t = availableTables[availIdx++]
+          usedTableIds.add(t.TABLE_ID)
+          assignedPositions.push({
+            tableId: t.TABLE_ID,
+            x: p.x,
+            y: p.y,
+            widthBlocks: (p as any).widthBlocks,
+            heightBlocks: (p as any).heightBlocks,
+            rotation: (p as any).rotation ?? 0,
+          })
+        } else {
+          missingToCreate.push(p)
+        }
+      }
+
+      // Pass 3: If preset needs more tables than exist in DB, create them
+      if (missingToCreate.length > 0) {
+        const startNum = Math.max(0, ...currentTables.map((t) => t.TABLE_NUM)) + 1
+        const capacities = missingToCreate.map((p: any) => p.capacity ?? 4)
+        const res = await batchCreateTables(startNum, capacities, 4, 0)
+        if (res.created.length > 0) {
+          currentTables = [...currentTables, ...res.created].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
+          setTables(currentTables)
+          res.created.forEach((newT, i) => {
+            const p = missingToCreate[i]
+            assignedPositions.push({
+              tableId: newT.TABLE_ID,
+              x: p.x,
+              y: p.y,
+              widthBlocks: (p as any).widthBlocks,
+              heightBlocks: (p as any).heightBlocks,
+              rotation: (p as any).rotation ?? 0,
+            })
+          })
+        }
+      }
+
+      floorPlan.setPositions(assignedPositions)
+
+      // Save positions to DB
+      await batchUpdateTablePositions(
+        assignedPositions.map((p) => ({ tableId: p.tableId, x: p.x, y: p.y })),
+      )
+
+      // Calculate merge groups from newly assigned positions and sync to Restaurant_Tables
+      const newMergeGroups = calculateMergeGroups(
+        assignedPositions,
+        preset.TABLE_SIZE_BLOCKS ?? floorPlan.config.tableSizeBlocks,
+      )
+      const updatedTables = await syncTableMergeGroups(
+        newMergeGroups,
+        currentTables.map((t) => t.TABLE_ID),
+        currentTables,
+      )
+      setTables(updatedTables)
+      cacheTables(updatedTables)
+
+      // Save dimensions and rotation to localStorage
+      const dims = getStoredTableDimensions()
+      assignedPositions.forEach((p) => {
+        dims[p.tableId] = {
+          widthBlocks: p.widthBlocks ?? preset.TABLE_SIZE_BLOCKS,
+          heightBlocks: p.heightBlocks ?? preset.TABLE_SIZE_BLOCKS,
+          rotation: p.rotation ?? 0,
+        }
+      })
+      saveStoredTableDimensions(dims)
+
+      // Set as active
+      await setActivePreset(preset.PRESET_ID)
+      setActivePresetId(preset.PRESET_ID)
+      setPresets((prev) =>
+        prev.map((p) => ({ ...p, IS_ACTIVE: p.PRESET_ID === preset.PRESET_ID })),
+      )
+
+      floorPlan.markClean()
+      setConfirmLoadPreset(null)
+      showToast(`Layout "${preset.PRESET_NAME}" loaded successfully.`, 'success')
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+    }
+  }
+
+  // ── Grid settings ──
+
+  function handleGridSettingsSave(config: FloorConfig) {
+    floorPlan.setConfig(config)
+    setShowGridSettings(false)
+    showToast('Grid settings applied. Click "Save Layout" to persist.', 'info')
+  }
+
+  // ── Unmerge ──
+
+  async function handleUnmerge(anchorId: number) {
+    const group = floorPlan.mergeGroups.find(
+      (g) => g.anchorId === anchorId || g.memberIds.includes(anchorId),
     )
+    if (!group || group.memberIds.length <= 1) {
+      showToast('This table is not merged.', 'info')
+      return
+    }
+
+    // Move non-anchor tables to open spots
+    const nonAnchors = group.memberIds.filter((id) => id !== group.anchorId)
+    let updatedPositions = [...floorPlan.positions]
+
+    for (const id of nonAnchors) {
+      const currentPos = updatedPositions.find((p) => p.tableId === id)
+      const w = currentPos?.widthBlocks ?? floorPlan.config.tableSizeBlocks
+      const h = currentPos?.heightBlocks ?? floorPlan.config.tableSizeBlocks
+
+      const pos = findFirstAvailablePosition(
+        floorPlan.config.tableSizeBlocks,
+        floorPlan.config.widthBlocks,
+        floorPlan.config.heightBlocks,
+        updatedPositions.filter((p) => p.tableId !== id),
+        floorPlan.config.spacingBlocks,
+        w,
+        h,
+      )
+      if (pos) {
+        updatedPositions = updatedPositions.map((p) =>
+          p.tableId === id ? { ...p, x: pos.x, y: pos.y } : p,
+        )
+      }
+    }
+
+    floorPlan.setPositions(updatedPositions)
+    showToast('Tables unmerged.', 'success')
   }
 
-  // ── Delete target IDs for confirm dialog ──
-  const deleteTargetIds = sidebarTableId ? [sidebarTableId] : []
-  const deleteTargetTables = tables.filter(t => deleteTargetIds.includes(t.TABLE_ID))
+  // ── Auto-disbursement when unmerging at 50/50 capacity ──
+  const prevMergeGroupsRef = useRef<MergeGroup[]>([])
 
-  // ─── RENDER ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const prevGroups = prevMergeGroupsRef.current
+    const currGroups = floorPlan.mergeGroups
+    prevMergeGroupsRef.current = currGroups
+
+    if (prevGroups.length === 0) return
+
+    // Find tables that were grouped with 2+ members before, but separated
+    const unmergedTableIds = new Set<number>()
+    for (const oldGroup of prevGroups) {
+      for (const id of oldGroup.memberIds) {
+        const newGroup = currGroups.find((g) => g.memberIds.includes(id))
+        if (!newGroup || oldGroup.memberIds.some((formerId) => !newGroup.memberIds.includes(formerId))) {
+          unmergedTableIds.add(id)
+        }
+      }
+    }
+
+    if (unmergedTableIds.size === 0) return
+
+    // Calculate effective seating on floor
+    const floorSeats = tables.reduce((sum, t) => {
+      return sum + calculateEffectiveCapacity(
+        t,
+        floorPlan.positions,
+        floorPlan.config.tableSizeBlocks,
+        floorPlan.mergeGroups,
+      )
+    }, 0)
+
+    if (floorSeats > effectiveMaxPax) {
+      const unmergedTablesList = tables.filter((t) => unmergedTableIds.has(t.TABLE_ID))
+      const otherTablesPax = tables
+        .filter((t) => !unmergedTableIds.has(t.TABLE_ID))
+        .reduce((sum, t) => {
+          return sum + calculateEffectiveCapacity(
+            t,
+            floorPlan.positions,
+            floorPlan.config.tableSizeBlocks,
+            floorPlan.mergeGroups,
+          )
+        }, 0)
+
+      const availableBudget = Math.max(unmergedTablesList.length, effectiveMaxPax - otherTablesPax)
+      const disbursements = disburseCapacities(unmergedTablesList, availableBudget)
+
+      // Apply to React state immediately
+      setTables((prev) =>
+        prev.map((t) => {
+          const update = disbursements.find((d) => d.tableId === t.TABLE_ID)
+          return update ? { ...t, GUEST_CAPACITY: update.newCapacity } : t
+        }),
+      )
+
+      // Persist to database asynchronously
+      void Promise.all(
+        disbursements.map((d) => updateTable(d.tableId, { capacity: d.newCapacity })),
+      ).then(() => {
+        showToast(`Table capacities disbursed to maintain the ${effectiveMaxPax} Pax floor limit.`, 'info')
+      }).catch((e: Error) => {
+        console.error('Failed to update unmerged capacities:', e)
+      })
+    }
+  }, [floorPlan.positions, floorPlan.mergeGroups, tables, floorPlan.config.tableSizeBlocks, effectiveMaxPax])
+
+  // ── Totals ──
+  const totalSeats = useMemo(() => {
+    return tables.reduce((sum, t) => {
+      return sum + calculateEffectiveCapacity(
+        t,
+        floorPlan.positions,
+        floorPlan.config.tableSizeBlocks,
+        floorPlan.mergeGroups,
+      )
+    }, 0)
+  }, [tables, floorPlan.positions, floorPlan.config.tableSizeBlocks, floorPlan.mergeGroups])
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+
+
+
+
+  useEffect(() => {
+    if (!floorPlan.isDirty) return
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [floorPlan.isDirty])
 
   return (
-    <div className="table-manager-page-container staff-page">
+    <div className="table-manager-page-container staff-page fp-layout-root">
       {/* Toast */}
       {toast && (
         <div className={`tm-toast tm-toast-${toast.type}`}>
@@ -1410,221 +1460,103 @@ export default function TableManagerPage() {
         </div>
       )}
 
-      <div className="tm-layout">
-        <div className="inner-table-manager-container">
-          <header className="tm-inner-header">
-            <div className="tm-inner-actions">
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={mode === 'multi' ? exitMultiMode : enterMultiMode}
-                  disabled={mode === 'merge'}
-                  className={`tm-edit-tables-btn flex items-center gap-1.5 ${mode === 'multi' ? 'is-active' : ''}`}
-                >
-                  <CheckCheck className="w-3.5 h-3.5" />
-                  {mode === 'multi' ? 'Exit Edit Tables' : 'Edit Tables'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={mode === 'merge' ? exitMergeMode : enterMergeMode}
-                  className={`tm-merge-header-btn flex items-center gap-1.5 ${mode === 'merge' ? 'is-active' : ''}`}
-                >
-                  <GitMerge className="w-3.5 h-3.5" />
-                  {mode === 'merge' ? 'Exit Merge' : 'Merge'}
-                </Button>
+      {/* Alerts Banner */}
+      <TableAlertsBanner
+        tables={tables}
+        billRequests={billRequests}
+        onClearAssistance={handleClearAssistance}
+        onClearBillOut={handleClearBillOut}
+      />
+
+      {/* Toolbar */}
+      <FloorPlanToolbar
+        zoom={floorPlan.zoom}
+        canUndo={floorPlan.canUndo}
+        canRedo={floorPlan.canRedo}
+        snapEnabled={floorPlan.config.snapEnabled}
+        isDirty={floorPlan.isDirty}
+        saving={savingLayout}
+        activePresetName={activePreset?.PRESET_NAME}
+        onUndo={floorPlan.undo}
+        onRedo={floorPlan.redo}
+        onRotateSelected={floorPlan.selectedTableId !== null ? () => floorPlan.rotateTable(floorPlan.selectedTableId!) : undefined}
+        onZoomIn={floorPlan.zoomIn}
+        onZoomOut={floorPlan.zoomOut}
+        onResetZoom={floorPlan.resetZoom}
+        onToggleSnap={() => floorPlan.updateConfig({ snapEnabled: !floorPlan.config.snapEnabled })}
+        onOpenGridSettings={() => setShowGridSettings(true)}
+        onSavePreset={handleToolbarSave}
+        onPrintQr={() => {
+          if (tables.length > 0) void downloadBulkQrPdf(tables)
+        }}
+        onRemoveAll={() => {
+          if (tables.length > 0) setShowRemoveAllConfirm(true)
+        }}
+      />
+
+      {/* Three-panel layout */}
+      <div className="fp-three-panel">
+        {/* Left — Palette */}
+        <TablePalette
+          onAddTable={handleAddTable}
+          presets={presets}
+          activePresetId={activePresetId}
+          onLoadPreset={handleLoadPreset}
+          onSavePreset={() => setShowSavePreset(true)}
+          onRenamePreset={setRenamePreset}
+          onDeletePreset={setDeletePresetConfirm}
+          tableCount={floorPlan.positions.length}
+          totalSeats={totalSeats}
+          maxPax={effectiveMaxPax}
+          activeLinkedEvent={activeLinkedEvent}
+          hasActiveOrders={hasActiveOrders}
+        />
+
+        {/* Center — Floor Plan */}
+        <div className="fp-center-panel">
+          {tables.length === 0 ? (
+            <div className="fp-empty">
+              <div className="fp-empty-icon"><TableProperties className="w-7 h-7" /></div>
+              <div>
+                <p className="fp-empty-title">No tables yet</p>
+                <p className="fp-empty-desc">Add your first table to get started.</p>
               </div>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={toggleQrSelectionMode}
-                disabled={tables.length === 0 || mode === 'merge'}
-                className={`tm-qr-mode-btn ml-auto flex items-center gap-1.5 ${isQrSelectionMode ? 'is-enabled' : ''}`}
-              >
-                <Printer className="w-3.5 h-3.5" />
-                {isQrSelectionMode ? 'Exit QR Selection' : 'Print QR Codes'}
+              <Button variant="primary" size="sm" onClick={() => setShowAddModal(true)}>
+                <Plus className="w-3.5 h-3.5" /> Add Tables
               </Button>
             </div>
-            <TableAlertsBanner
+          ) : (
+            <FloorPlanEditor
+              floorPlan={floorPlan}
               tables={tables}
-              billRequests={billRequests}
-              onClearAssistance={handleClearAssistance}
-              onClearBillOut={handleClearBillOut}
+              onSelectTable={(id) => floorPlan.setSelectedTableId(id)}
             />
-          </header>
-
-          <div className="tm-inner-body">
-
-
-            {tables.length === 0 ? (
-              <div className="tm-empty">
-                <div className="tm-empty-icon"><TableProperties className="w-7 h-7" /></div>
-                <div>
-                  <p className="text-sm font-bold text-[#14274E]">No tables yet</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Add your first table to get started.</p>
-                </div>
-                <Button variant="primary" size="sm" onClick={() => setShowAddModal(true)}>
-                  <Plus className="w-3.5 h-3.5" /> Add Tables
-                </Button>
-              </div>
-            ) : (
-              <div className="tm-floor-grid">
-                {tables.map((table) => {
-                  const belongsToSelectedGroup = mergeCaptainId !== null && (
-                    table.TABLE_ID === mergeCaptainId || table.MERGE_GROUP_ID === mergeCaptainId
-                  )
-                  const isMergeDisabled = mode === 'merge' && mergeCaptainId !== null && !belongsToSelectedGroup && table.IS_MERGE_MEMBER
-                  const isRemovedSavedNode = isEditingSavedMerge &&
-                    table.MERGE_GROUP_ID === mergeCaptainId &&
-                    !mergeMemberIds.has(table.TABLE_ID)
-                  const mergeRole = mergeCaptainId === table.TABLE_ID
-                    ? 'core'
-                    : mergeMemberIds.has(table.TABLE_ID)
-                      ? 'node'
-                      : isRemovedSavedNode
-                        ? 'removed-node'
-                        : null
-                  const mergeLabelRole = mode === 'merge' && mergeRole === null
-                    ? table.IS_MERGE_CAPTAIN
-                      ? 'core'
-                      : table.IS_MERGE_MEMBER
-                        ? 'node'
-                        : null
-                    : null
-
-                  return (
-                  <TableCard
-                    key={table.TABLE_ID}
-                    table={table}
-                    mode={mode}
-                    isQrSelectionMode={isQrSelectionMode}
-                    isQrSelected={qrSelectedIds.has(table.TABLE_ID)}
-                    mergeRole={mergeRole}
-                    mergeLabelRole={mergeLabelRole}
-                    isActive={sidebarTableId === table.TABLE_ID}
-                    summary={orderSummaries.get(table.TABLE_ID)}
-                    onClick={() => handleCardClick(table)}
-                    onQrClick={() => setQrModalTable(table)}
-                    isMergeDisabled={isMergeDisabled}
-                  />
-                )
-                })}
-              </div>
-            )}
-          </div>
-
-          {mode === 'merge' ? (
-            <footer className="tm-inner-footer tm-merge-footer">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={selectNewMergeCaptain}
-                disabled={mergeCaptainId === null}
-                className="flex items-center gap-1.5"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                Select New Core
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={deselectMergeMembers}
-                disabled={mergeCaptainId === null || mergeMemberIds.size === 0}
-                className="flex items-center gap-1.5"
-              >
-                <X className="w-3.5 h-3.5" />
-                Deselect All Nodes
-              </Button>
-              {isEditingSavedMerge && (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => void deleteMergeGroup()}
-                  disabled={isSavingMerge || mergeCaptainId === null}
-                  className="tm-merge-delete-btn flex items-center gap-1.5"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Delete Merge Group
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => void completeMerge()}
-                disabled={isSavingMerge || mergeCaptainId === null || (!isEditingSavedMerge && mergeMemberIds.size === 0)}
-                className="tm-merge-complete-btn flex items-center gap-1.5"
-              >
-                <Check className="w-3.5 h-3.5" />
-                {isSavingMerge ? 'Saving…' : 'Complete Merge'}
-              </Button>
-            </footer>
-          ) : isQrSelectionMode && (
-            <footer className="tm-inner-footer">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={toggleAllQrTables}
-                disabled={tables.length === 0}
-                className={`tm-qr-select-all-btn flex items-center gap-1.5 ${qrSelectedIds.size === tables.length ? 'is-selected' : ''}`}
-              >
-                <CheckCheck className="w-3.5 h-3.5" />
-                {qrSelectedIds.size === tables.length ? 'Deselect All' : 'Select All'}
-              </Button>
-              <div className="tm-inner-footer-pdf-actions">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => void handleDownloadPdf()}
-                  disabled={isGeneratingPdf || selectedQrTables.length === 0}
-                  className="flex items-center gap-1.5"
-                >
-                  <FileDown className="w-3.5 h-3.5" />
-                  {isGeneratingPdf ? 'Generating…' : 'Download PDF'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => void handlePrint()}
-                  disabled={isPrinting || selectedQrTables.length === 0}
-                  className="flex items-center gap-1.5"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  {isPrinting ? 'Preparing…' : 'Print PDF'}
-                </Button>
-              </div>
-            </footer>
           )}
         </div>
 
-        <aside className="table-manager-sidebar">
-          <div className="tm-sidebar-shell-header">Table Manager</div>
-          <div className="tm-sidebar-shell-body">
-            <TableSidebar
-              mode={mode}
-              table={sidebarTable}
-              allTables={tables}
-              onClose={() => setSidebarTableId(null)}
-              onExitMultiMode={exitMultiMode}
-              onApplyTableSetup={applyTableSetup}
-              onTableUpdated={(row) => {
-                setTables((prev) => prev.map((t) => t.TABLE_ID === row.TABLE_ID ? row : t))
-                if (OCCUPIED_STATUSES.includes(row.STATUS)) {
-                  void fetchOrderSummariesForIds([row.TABLE_ID]).then(s => {
-                    setOrderSummaries(prev => new Map([...prev, ...s]))
-                  })
-                }
-              }}
-              onTablesPatched={(rows) => setTables((prev) => patchTables(prev, rows))}
-              showToast={showToast}
-              mergeCaptainId={mergeCaptainId}
-              mergeMemberIds={mergeMemberIds}
-              isEditingSavedMerge={isEditingSavedMerge}
-              onSelectNewMergeCaptain={selectNewMergeCaptain}
-              onDeselectMergeMembers={deselectMergeMembers}
-            />
-          </div>
-        </aside>
+        {/* Right — Inspector */}
+        <TableInspector
+          table={inspectorTable}
+          position={inspectorPosition}
+          tableSizeBlocks={floorPlan.config.tableSizeBlocks}
+          maxCapacity={inspectorTable ? Math.max(inspectorTable.GUEST_CAPACITY, effectiveMaxPax - (totalSeats - inspectorTable.GUEST_CAPACITY)) : effectiveMaxPax}
+          mergeGroup={inspectorMergeGroup}
+          allTables={tables}
+          allPositions={floorPlan.positions}
+          onClose={() => floorPlan.setSelectedTableId(null)}
+          onCapacityChange={handleCapacityChange}
+          onDimensionsChange={(id, w, h) => floorPlan.updateTableDimensions(id, w, h)}
+          onRotate={(id) => floorPlan.rotateTable(id)}
+          onStatusChange={handleStatusChange}
+          onDelete={(id) => setShowDeleteConfirm(id)}
+          onQrPrint={(id) => {
+            const t = tables.find((t) => t.TABLE_ID === id)
+            if (t) setQrModalTable(t)
+          }}
+          onUnmerge={handleUnmerge}
+          saving={savingCapacity}
+          orderSummary={inspectorOrderSummary}
+        />
       </div>
 
       {/* ── Modals ── */}
@@ -1632,38 +1564,109 @@ export default function TableManagerPage() {
         <AddTablesModal
           onClose={() => setShowAddModal(false)}
           existingNums={existingTableNums}
-          onCreated={(newTables) => {
+          maxCapacity={Math.max(0, effectiveMaxPax - totalSeats)}
+          currentEffectivePax={totalSeats}
+          effectiveMaxPax={effectiveMaxPax}
+          onCreated={(newTables, createdTemplates) => {
             setTables((prev) => [...prev, ...newTables].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM))
-            showToast(`${newTables.length} table(s) added.`, 'success')
+            newTables.forEach((t, i) => {
+              const tmpl = createdTemplates?.[i]
+              floorPlan.addTable(t, tmpl?.widthBlocks, tmpl?.heightBlocks)
+            })
+            const addedPax = newTables.reduce((s, t) => s + t.GUEST_CAPACITY, 0)
+            showToast(`${newTables.length} table(s) added (${addedPax} Pax).`, 'success')
           }}
         />
       )}
 
-      {showDeleteConfirm && (
+      {showDeleteConfirm !== null && (
         <ConfirmDialog
-          title="Delete Tables?"
+          title="Delete Table?"
           description="Tables with active orders cannot be deleted."
-          confirmLabel={`Delete ${deleteTargetIds.length} Table${deleteTargetIds.length !== 1 ? 's' : ''}`}
+          confirmLabel="Delete Table"
           confirmVariant="danger"
           loading={deleteLoading}
-          onConfirm={() => void handleDelete()}
-          onCancel={() => setShowDeleteConfirm(false)}
-        >
-          <div className="space-y-1">
-            {deleteTargetTables.map((t) => {
-              const summary = orderSummaries.get(t.TABLE_ID)
-              const blocked = (summary?.activeOrderCount ?? 0) > 0
-              return (
-                <div key={t.TABLE_ID} className={`tm-selected-list-item ${blocked ? 'bg-rose-50' : ''}`}>
-                  <span className="font-bold text-[#14274E]">Table {t.TABLE_NUM}</span>
-                  {blocked
-                    ? <span className="text-rose-600 text-xs font-semibold">Blocked</span>
-                    : <span className="text-emerald-600 text-xs font-semibold">Will delete</span>}
-                </div>
-              )
-            })}
-          </div>
-        </ConfirmDialog>
+          onConfirm={() => void handleDeleteTable(showDeleteConfirm)}
+          onCancel={() => setShowDeleteConfirm(null)}
+        />
+      )}
+
+      {showRemoveAllConfirm && (
+        <ConfirmDialog
+          title="Remove all tables?"
+          description="Tables with active orders are kept. This permanently removes every other table, including complete merge groups."
+          confirmLabel="Remove All Tables"
+          confirmVariant="danger"
+          loading={deleteLoading}
+          onConfirm={() => void handleRemoveAllTables()}
+          onCancel={() => setShowRemoveAllConfirm(false)}
+        />
+      )}
+
+      {showGridSettings && (
+        <GridSettingsModal
+          config={floorPlan.config}
+          activePresetName={activePreset?.PRESET_NAME}
+          onSave={handleGridSettingsSave}
+          onClose={() => setShowGridSettings(false)}
+        />
+      )}
+
+      {showSavePreset && (
+        <SavePresetModal
+          config={floorPlan.config}
+          events={events}
+          onSave={handleSavePreset}
+          onClose={() => setShowSavePreset(false)}
+          loading={savingPreset}
+        />
+      )}
+
+      {renamePreset && (
+        <SavePresetModal
+          initialName={renamePreset.PRESET_NAME}
+          initialDescription={renamePreset.DESCRIPTION ?? ''}
+          initialEventId={renamePreset.EVENT_ID ?? null}
+          events={events}
+          isUpdate
+          onSave={handleRenamePreset}
+          onClose={() => setRenamePreset(null)}
+          loading={savingPreset}
+        />
+      )}
+
+      {deletePresetConfirm && (
+        <ConfirmDeletePresetModal
+          presetName={deletePresetConfirm.PRESET_NAME}
+          onConfirm={() => void handleDeletePreset()}
+          onCancel={() => setDeletePresetConfirm(null)}
+          loading={savingPreset}
+        />
+      )}
+
+      {confirmLoadPreset && (
+        <ConfirmLoadModal
+          presetName={confirmLoadPreset.PRESET_NAME}
+          onConfirm={() => void doLoadPreset(confirmLoadPreset)}
+          onCancel={() => setConfirmLoadPreset(null)}
+          loading={false}
+        />
+      )}
+
+      {navigationBlocker.state === 'blocked' && (
+        <ConfirmDialog
+          title="Save layout before leaving?"
+          description="Your table layout changes have not been saved yet. Save them before continuing to the next page."
+          confirmLabel="Save and Leave"
+          confirmVariant="primary"
+          loading={savingLayout}
+          onConfirm={() => {
+            void handleSaveLayout().then((layoutSaved) => {
+              if (layoutSaved) navigationBlocker.proceed()
+            })
+          }}
+          onCancel={() => navigationBlocker.reset()}
+        />
       )}
 
       {qrModalTable && (

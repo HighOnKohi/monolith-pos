@@ -80,6 +80,10 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
     itemsByOrder.get(orderId)!.push(item)
   })
 
+  // Fetch tables to resolve merged display labels
+  const { data: tablesData } = await supabase.from('Restaurant_Tables').select('*')
+  const allTables = (tablesData as TableData[]) ?? []
+
   return orders
     .map((row: any) => {
       const orderId = Number(row.ORDER_ID)
@@ -88,18 +92,20 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
       if (!hasActiveItems) return null
 
       const tableId = Number(row.TABLE_ID)
+      const group = resolveTableGroupByList(tableId, allTables)
+
       return {
-      orderId,
-      tableId,
-      tableNum: tableId,
-      tableDisplay: `Table ${tableId}`,
-      orderStatus: String(row.ORDER_STATUS ?? '').toUpperCase() as OrderStatus,
-      orderType: row.ORDER_TYPE as Order['orderType'],
-      totalBill: Number(row.TOTAL_BILL ?? 0),
-      createdAt: row.TIME as string | undefined,
-      kitchenNote: (row.KITCHEN_NOTE as string | null) ?? undefined,
-      serverNote: (row.SERVER_NOTE as string | null) ?? undefined,
-      items: itemsByOrder.get(Number(row.ORDER_ID)) ?? [],
+        orderId,
+        tableId,
+        tableNum: group.anchorTableNum,
+        tableDisplay: group.displayLabel,
+        orderStatus: String(row.ORDER_STATUS ?? '').toUpperCase() as OrderStatus,
+        orderType: row.ORDER_TYPE as Order['orderType'],
+        totalBill: Number(row.TOTAL_BILL ?? 0),
+        createdAt: row.TIME as string | undefined,
+        kitchenNote: (row.KITCHEN_NOTE as string | null) ?? undefined,
+        serverNote: (row.SERVER_NOTE as string | null) ?? undefined,
+        items: itemsByOrder.get(Number(row.ORDER_ID)) ?? [],
       } as DispatcherOrder
     })
     .filter((order): order is DispatcherOrder => order !== null)

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   X, Save, CalendarDays, MapPin, User2, Users, Phone, Mail,
-  Clock, FileText, Pencil, Trash2, Tag, Palette, BanIcon,
+  Clock, FileText, Pencil, Trash2, Tag, Palette, BanIcon, Layout,
 } from 'lucide-react'
 import type { RestaurantEvent, EventFormData, EventConflict } from '@/types/event'
 import { EVENT_CATEGORIES, EVENT_FORM_DEFAULTS } from '@/types/event'
-import { checkEventConflicts } from '@/services/eventService'
+import { checkEventConflicts, checkDuplicateEventTitle } from '@/services/eventService'
+import { fetchAllPresets, type LayoutPreset } from '@/services/layoutService'
 import {
   deriveEventStatus,
   getEventStatusBadge,
@@ -26,6 +27,7 @@ interface EventDrawerProps {
   event: RestaurantEvent | null
   prefillDate?: Date | null
   canManageEvents: boolean
+  existingEvents?: RestaurantEvent[]
   submitting?: boolean
   onClose: () => void
   onSave: (data: EventFormData) => Promise<void>
@@ -52,6 +54,7 @@ interface FormErrors {
   startTime?: string
   endDate?: string
   endTime?: string
+  maxPax?: string
   expectedAttendees?: string
   contactEmail?: string
 }
@@ -65,6 +68,7 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
   event,
   prefillDate,
   canManageEvents,
+  existingEvents = [],
   submitting = false,
   onClose,
   onSave,
@@ -77,6 +81,15 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
   const [conflicts, setConflicts] = useState<EventConflict[]>([])
   const [conflictLoading, setConflictLoading] = useState(false)
   const [conflictChecked, setConflictChecked] = useState(false)
+  const [presets, setPresets] = useState<LayoutPreset[]>([])
+
+  // Load layout presets for linking
+  useEffect(() => {
+    if (!isOpen) return
+    fetchAllPresets()
+      .then(setPresets)
+      .catch(() => setPresets([]))
+  }, [isOpen])
 
   // ESC key
   useEffect(() => {
@@ -96,8 +109,15 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
     if (mode === 'create') {
       const d = prefillDate || new Date()
       const defaultDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      setForm({ ...EVENT_FORM_DEFAULTS, startDate: defaultDate, endDate: defaultDate })
+      setForm({
+        ...EVENT_FORM_DEFAULTS,
+        startDate: defaultDate,
+        endDate: defaultDate,
+        location: 'Bill Shaw Restaurant',
+        maxPax: '50',
+      })
     } else if ((mode === 'edit' || mode === 'view') && event) {
+      const pax = event.maxPax ?? event.expectedAttendees
       setForm({
         title: event.title,
         description: event.description ?? '',
@@ -107,9 +127,11 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
         startTime: isoToTimeInput(event.startAt),
         endDate: isoToDateInput(event.endAt),
         endTime: isoToTimeInput(event.endAt),
-        location: event.location ?? '',
+        location: event.location || 'Bill Shaw Restaurant',
         organizer: event.organizer ?? '',
-        expectedAttendees: event.expectedAttendees != null ? String(event.expectedAttendees) : '',
+        maxPax: pax != null ? String(pax) : '50',
+        expectedAttendees: pax != null ? String(pax) : '50',
+        presetId: event.presetId ?? null,
         contactName: event.contactName ?? '',
         contactPhone: event.contactPhone ?? '',
         contactEmail: event.contactEmail ?? '',
@@ -163,11 +185,31 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
       if (end < start) errs.endDate = 'End must be after start date/time'
     }
 
-    if (form.expectedAttendees && !/^\d+$/.test(form.expectedAttendees)) {
-      errs.expectedAttendees = 'Must be a whole number'
+    // 1. Prevention of multiple events at the same time
+    if (conflicts.length > 0) {
+      errs.startTime = 'Overlaps with another scheduled event. Simultaneous events are not permitted.'
     }
-    if (form.expectedAttendees && parseInt(form.expectedAttendees, 10) < 0) {
-      errs.expectedAttendees = 'Cannot be negative'
+
+    // 2. Duplication prevention: check for duplicate title on the same start date
+    if (form.title.trim() && form.startDate) {
+      const normTitle = form.title.trim().toLowerCase()
+      const hasDup = existingEvents.some((e) => {
+        if (e.deletedAt || e.isCancelled) return false
+        if (event && e.eventId === event.eventId) return false
+        const eDate = e.startAt.slice(0, 10)
+        return eDate === form.startDate && e.title.trim().toLowerCase() === normTitle
+      })
+      if (hasDup) {
+        errs.title = `An event titled "${form.title.trim()}" already exists on this date.`
+      }
+    }
+
+    // 3. Max Pax validation
+    const paxStr = form.maxPax || form.expectedAttendees
+    if (paxStr && !/^\d+$/.test(paxStr)) {
+      errs.maxPax = 'Must be a whole number'
+    } else if (paxStr && parseInt(paxStr, 10) <= 0) {
+      errs.maxPax = 'Max Pax must be at least 1'
     }
 
     if (form.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contactEmail)) {
@@ -180,6 +222,31 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
 
   const handleSubmit = async () => {
     if (!validate()) return
+
+    // Live conflict and duplicate verification right before saving
+    if (form.startDate && form.startTime && form.endDate && form.endTime) {
+      const startAt = new Date(`${form.startDate}T${form.startTime}`).toISOString()
+      const endAt = new Date(`${form.endDate}T${form.endTime}`).toISOString()
+      const liveConflicts = await checkEventConflicts(startAt, endAt, event?.eventId)
+      if (liveConflicts.length > 0) {
+        setConflicts(liveConflicts)
+        setErrors((prev) => ({
+          ...prev,
+          startTime: 'Overlaps with another scheduled event. Simultaneous events are not permitted.',
+        }))
+        return
+      }
+
+      const liveDuplicate = await checkDuplicateEventTitle(form.title, form.startDate, event?.eventId)
+      if (liveDuplicate) {
+        setErrors((prev) => ({
+          ...prev,
+          title: `An event titled "${form.title.trim()}" already exists on this date.`,
+        }))
+        return
+      }
+    }
+
     await onSave(form)
   }
 
@@ -299,11 +366,16 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                     value={event.organizer}
                   />
                 )}
-                {event.expectedAttendees != null && (
+                <DetailRow
+                  icon={<Users className="w-3.5 h-3.5" />}
+                  label="Max Pax"
+                  value={`${event.maxPax ?? event.expectedAttendees ?? 50} Pax`}
+                />
+                {event.presetId && (
                   <DetailRow
-                    icon={<Users className="w-3.5 h-3.5" />}
-                    label="Expected Attendees"
-                    value={`${event.expectedAttendees} people`}
+                    icon={<Layout className="w-3.5 h-3.5" />}
+                    label="Linked Table Layout"
+                    value={presets.find((p) => p.PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`}
                   />
                 )}
               </div>
@@ -521,7 +593,7 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                     type="text"
                     value={form.location}
                     onChange={(e) => setField('location', e.target.value)}
-                    placeholder="e.g. Function Hall A"
+                    placeholder="Bill Shaw Restaurant"
                     className={formInputClass(false)}
                   />
                 </div>
@@ -540,21 +612,41 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                 </div>
               </div>
 
-              {/* Attendees */}
-              <div className="space-y-1.5">
-                <label htmlFor="event-attendees" className={FORM_LABEL_CLASS}>
-                  <Users className="w-3 h-3 inline mr-1" />Expected Attendees
-                </label>
-                <input
-                  id="event-attendees"
-                  type="number"
-                  min={0}
-                  value={form.expectedAttendees}
-                  onChange={(e) => setField('expectedAttendees', e.target.value)}
-                  placeholder="e.g. 50"
-                  className={formInputClass(!!errors.expectedAttendees)}
-                />
-                {errors.expectedAttendees && <p className={FORM_ERROR_CLASS}>{errors.expectedAttendees}</p>}
+              {/* Max Pax & Linked Table Layout */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label htmlFor="event-max-pax" className={FORM_LABEL_CLASS}>
+                    <Users className="w-3 h-3 inline mr-1" />Max Pax (Seating Limit) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    id="event-max-pax"
+                    type="number"
+                    min={1}
+                    value={form.maxPax}
+                    onChange={(e) => setField('maxPax', e.target.value)}
+                    placeholder="e.g. 50"
+                    className={formInputClass(!!errors.maxPax)}
+                  />
+                  {errors.maxPax && <p className={FORM_ERROR_CLASS}>{errors.maxPax}</p>}
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="event-preset" className={FORM_LABEL_CLASS}>
+                    <Layout className="w-3 h-3 inline mr-1" />Linked Table Layout
+                  </label>
+                  <select
+                    id="event-preset"
+                    value={form.presetId ? String(form.presetId) : ''}
+                    onChange={(e) => setField('presetId', e.target.value ? Number(e.target.value) : null)}
+                    className={formInputClass(false)}
+                  >
+                    <option value="">None (Standard / Unlinked)</option>
+                    {presets.map((p) => (
+                      <option key={p.PRESET_ID} value={p.PRESET_ID}>
+                        {p.PRESET_NAME} {p.IS_ACTIVE ? '(Active)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {/* Contact */}
@@ -658,9 +750,9 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
               </button>
               <button
                 type="button"
-                disabled={submitting}
+                disabled={submitting || conflicts.length > 0}
                 onClick={handleSubmit}
-                className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? (
                   <>

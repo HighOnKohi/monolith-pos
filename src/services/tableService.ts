@@ -25,6 +25,8 @@ export interface TableData {
   RESERVATION_NAME: string | null
   RESERVATION_PAX: number | null
   RESERVATION_NOTES: string | null
+  LAYOUT_X?: number | null
+  LAYOUT_Y?: number | null
 }
 
 export interface TableWithOrders extends TableData {
@@ -54,6 +56,28 @@ export interface MergePreview {
 
 const ACTIVE_ORDER_STATUSES = ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED']
 const OCCUPIED_STATUSES: TableStatus[] = ['OCCUPIED', 'HAS_REQUEST']
+export const MAX_LAYOUT_PAX = 50
+
+export async function assertCapacityLimit(
+  additionalCapacity: number,
+  currentEffectivePax?: number,
+  maxPaxLimit: number = MAX_LAYOUT_PAX,
+): Promise<void> {
+  const limit = maxPaxLimit > 0 ? maxPaxLimit : MAX_LAYOUT_PAX
+  if (currentEffectivePax !== undefined) {
+    if (currentEffectivePax + additionalCapacity > limit) {
+      throw new Error(`Maximum seating capacity reached. The layout cannot exceed ${limit} Pax (currently at ${currentEffectivePax} Pax).`)
+    }
+    return
+  }
+
+  const { data, error } = await supabase.from('Restaurant_Tables').select('GUEST_CAPACITY')
+  if (error) throw error
+  const current = (data ?? []).reduce((sum, table) => sum + Number(table.GUEST_CAPACITY ?? 0), 0)
+  if (current + additionalCapacity > limit) {
+    throw new Error(`Maximum seating capacity reached. The layout cannot exceed ${limit} Pax.`)
+  }
+}
 
 let cachedTables: TableData[] | null = null
 
@@ -191,11 +215,18 @@ export async function createTable(tableNum: number, capacity: number): Promise<T
  */
 export async function batchCreateTables(
   startNum: number,
-  count: number,
-  capacity: number,
+  countOrCapacities: number | number[],
+  defaultCapacity = 4,
+  currentEffectivePax?: number,
+  maxPaxLimit?: number,
 ): Promise<BatchCreateResult> {
-  if (count < 1 || count > 50) throw new Error('Count must be between 1 and 50.')
-  if (capacity < 1) throw new Error('Capacity must be at least 1.')
+  const capacities = Array.isArray(countOrCapacities)
+    ? countOrCapacities
+    : Array.from({ length: countOrCapacities }, () => defaultCapacity)
+
+  const count = capacities.length
+  if (count < 1 || count > 50) throw new Error('Table count must be between 1 and 50.')
+  if (capacities.some((c) => c < 1)) throw new Error('Capacity must be at least 1.')
   if (startNum < 1) throw new Error('Starting table number must be at least 1.')
 
   const nums = Array.from({ length: count }, (_, i) => startNum + i)
@@ -207,12 +238,17 @@ export async function batchCreateTables(
     .in('TABLE_NUM', nums)
 
   const existingNums = new Set((existingData ?? []).map((r) => Number(r.TABLE_NUM)))
-  const toCreate = nums.filter((n) => !existingNums.has(n))
+  const toCreateItems = nums
+    .map((num, i) => ({ num, capacity: capacities[i] }))
+    .filter((item) => !existingNums.has(item.num))
   const skipped = nums.filter((n) => existingNums.has(n))
 
-  if (toCreate.length === 0) {
+  if (toCreateItems.length === 0) {
     return { created: [], skipped }
   }
+
+  const addedCapacity = toCreateItems.reduce((sum, item) => sum + item.capacity, 0)
+  await assertCapacityLimit(addedCapacity, currentEffectivePax, maxPaxLimit)
 
   const { data: lastTable } = await supabase
     .from('Restaurant_Tables')
@@ -222,11 +258,11 @@ export async function batchCreateTables(
     .maybeSingle()
   const nextTableId = Number(lastTable?.TABLE_ID ?? 0) + 1
 
-  const rows = toCreate.map((num, index) => ({
+  const rows = toCreateItems.map((item, index) => ({
     TABLE_ID: nextTableId + index,
-    TABLE_NUM: num,
+    TABLE_NUM: item.num,
     STATUS: 'AVAILABLE',
-    GUEST_CAPACITY: capacity,
+    GUEST_CAPACITY: item.capacity,
     CURRENT_GUEST_COUNT: 0,
     BILL_OUT_REQUESTED: false,
     MERGE_GROUP_ID: null,
@@ -883,6 +919,209 @@ export async function saveTableMerge(captainId: number, memberIds: number[]): Pr
   }
 
   return fetchTablesByIds(affectedIds)
+}
+
+/**
+ * Synchronize table merge groups (from Table Manager adjacency or layout presets)
+ * to Restaurant_Tables in Supabase.
+ *
+ * Compares the desired state against current database rows and performs minimal
+ * batched updates to avoid unnecessary network egress.
+ */
+export async function syncTableMergeGroups(
+  mergeGroups: Array<{ anchorId: number; memberIds: number[] }>,
+  allTableIds: number[],
+  currentTables?: TableData[],
+): Promise<TableData[]> {
+  const existingTables = currentTables && currentTables.length > 0
+    ? currentTables
+    : await fetchTablesByIds(allTableIds)
+
+  const existingMap = new Map<number, TableData>(existingTables.map((t) => [t.TABLE_ID, t]))
+
+  // Only groups with 2+ members are considered active merge groups
+  const validGroups = mergeGroups.filter((g) => g.memberIds && g.memberIds.length > 1)
+
+  // Map each tableId to desired state: { mergeGroupId, isCaptain, isMember }
+  const desiredState = new Map<number, {
+    mergeGroupId: number | null
+    isCaptain: boolean
+    isMember: boolean
+  }>()
+
+  // Default: standalone table
+  for (const id of allTableIds) {
+    desiredState.set(id, {
+      mergeGroupId: null,
+      isCaptain: false,
+      isMember: false,
+    })
+  }
+
+  // Populate merge group participants
+  for (const group of validGroups) {
+    const anchorId = group.anchorId
+    desiredState.set(anchorId, {
+      mergeGroupId: null,
+      isCaptain: true,
+      isMember: false,
+    })
+    for (const memberId of group.memberIds) {
+      if (memberId !== anchorId) {
+        desiredState.set(memberId, {
+          mergeGroupId: anchorId,
+          isCaptain: false,
+          isMember: true,
+        })
+      }
+    }
+  }
+
+  // Diff with existing table records
+  const toMakeStandalone: number[] = []
+  const toMakeCaptain: number[] = []
+  const toMakeMemberByAnchor = new Map<number, number[]>() // anchorId -> memberIds[]
+
+  for (const [id, desired] of desiredState.entries()) {
+    const cur = existingMap.get(id)
+    if (!cur) continue
+
+    const curGroupId = cur.MERGE_GROUP_ID ?? null
+    const curCaptain = Boolean(cur.IS_MERGE_CAPTAIN)
+    const curMember = Boolean(cur.IS_MERGE_MEMBER)
+
+    const needsUpdate =
+      curGroupId !== desired.mergeGroupId ||
+      curCaptain !== desired.isCaptain ||
+      curMember !== desired.isMember
+
+    if (needsUpdate) {
+      if (desired.isCaptain) {
+        toMakeCaptain.push(id)
+      } else if (desired.isMember && desired.mergeGroupId !== null) {
+        const list = toMakeMemberByAnchor.get(desired.mergeGroupId) || []
+        list.push(id)
+        toMakeMemberByAnchor.set(desired.mergeGroupId, list)
+      } else {
+        toMakeStandalone.push(id)
+      }
+    }
+  }
+
+  const updatedTableIds: number[] = []
+
+  // 1. Reset standalone tables
+  if (toMakeStandalone.length > 0) {
+    const { error } = await supabase
+      .from('Restaurant_Tables')
+      .update({
+        MERGE_GROUP_ID: null,
+        IS_MERGE_CAPTAIN: false,
+        IS_MERGE_MEMBER: false,
+      })
+      .in('TABLE_ID', toMakeStandalone)
+
+    if (error) {
+      console.error('[tableService] Failed to reset standalone tables:', error)
+      throw error
+    }
+    updatedTableIds.push(...toMakeStandalone)
+  }
+
+  // 2. Set captain tables
+  if (toMakeCaptain.length > 0) {
+    const { error } = await supabase
+      .from('Restaurant_Tables')
+      .update({
+        MERGE_GROUP_ID: null,
+        IS_MERGE_CAPTAIN: true,
+        IS_MERGE_MEMBER: false,
+      })
+      .in('TABLE_ID', toMakeCaptain)
+
+    if (error) {
+      console.error('[tableService] Failed to set captain tables:', error)
+      throw error
+    }
+    updatedTableIds.push(...toMakeCaptain)
+  }
+
+  // 3. Set member tables for each anchor
+  for (const [anchorId, memberIds] of toMakeMemberByAnchor.entries()) {
+    if (memberIds.length > 0) {
+      const { error } = await supabase
+        .from('Restaurant_Tables')
+        .update({
+          MERGE_GROUP_ID: anchorId,
+          IS_MERGE_CAPTAIN: false,
+          IS_MERGE_MEMBER: true,
+        })
+        .in('TABLE_ID', memberIds)
+
+      if (error) {
+        console.error(`[tableService] Failed to set members for anchor ${anchorId}:`, error)
+        throw error
+      }
+      updatedTableIds.push(...memberIds)
+    }
+  }
+
+  if (updatedTableIds.length === 0) {
+    return existingTables
+  }
+
+  // Fetch updated rows for targeted update
+  const freshlyUpdated = await fetchTablesByIds(updatedTableIds)
+  const freshMap = new Map(freshlyUpdated.map((t) => [t.TABLE_ID, t]))
+
+  return existingTables.map((t) => freshMap.get(t.TABLE_ID) ?? t)
+}
+
+/**
+ * Pure helper to immediately project merge groups onto in-memory TableData[]
+ * without awaiting network fetches.
+ */
+export function applyMergeGroupsToTableList(
+  tables: TableData[],
+  mergeGroups: Array<{ anchorId: number; memberIds: number[] }>,
+): TableData[] {
+  const validGroups = mergeGroups.filter((g) => g.memberIds && g.memberIds.length > 1)
+  const groupMap = new Map<number, { anchorId: number; isCaptain: boolean }>()
+
+  for (const group of validGroups) {
+    groupMap.set(group.anchorId, { anchorId: group.anchorId, isCaptain: true })
+    for (const mid of group.memberIds) {
+      if (mid !== group.anchorId) {
+        groupMap.set(mid, { anchorId: group.anchorId, isCaptain: false })
+      }
+    }
+  }
+
+  return tables.map((t) => {
+    const info = groupMap.get(t.TABLE_ID)
+    if (!info) {
+      return {
+        ...t,
+        MERGE_GROUP_ID: null,
+        IS_MERGE_CAPTAIN: false,
+        IS_MERGE_MEMBER: false,
+      }
+    }
+    if (info.isCaptain) {
+      return {
+        ...t,
+        MERGE_GROUP_ID: null,
+        IS_MERGE_CAPTAIN: true,
+        IS_MERGE_MEMBER: false,
+      }
+    }
+    return {
+      ...t,
+      MERGE_GROUP_ID: info.anchorId,
+      IS_MERGE_CAPTAIN: false,
+      IS_MERGE_MEMBER: true,
+    }
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
