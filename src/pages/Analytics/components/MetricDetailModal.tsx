@@ -381,8 +381,10 @@ function getMetricConfig(metricKey: KpiMetricType, summary: AnalyticsSummary) {
     case 'orders': {
       const dineIn = summary.orderTypeBreakdown.find((b) => b.label.toLowerCase().includes('dine'))
       const takeout = summary.orderTypeBreakdown.find((b) => b.label.toLowerCase().includes('take'))
-      const dineInPct = dineIn?.percentage ?? 70
-      const takeoutPct = takeout?.percentage ?? 30
+      const ticket = summary.orderTypeBreakdown.find((b) => b.label.toLowerCase().includes('ticket'))
+      const dineInPct = dineIn?.percentage ?? (summary.completedOrders > 0 ? 0 : 70)
+      const takeoutPct = takeout?.percentage ?? (summary.completedOrders > 0 ? 0 : 30)
+      const ticketPct = ticket?.percentage ?? 0
       const cancelRate =
         summary.completedOrders + summary.cancelledOrders > 0
           ? (summary.cancelledOrders / (summary.completedOrders + summary.cancelledOrders)) * 100
@@ -393,10 +395,10 @@ function getMetricConfig(metricKey: KpiMetricType, summary: AnalyticsSummary) {
         Icon: ShoppingBag,
         themeColor: '#2A9D8F',
         displayValue: `${summary.completedOrders} orders`,
-        subtitle: `Total successfully fulfilled dining checks in period`,
+        subtitle: `Total successfully fulfilled dining checks & ticket orders in period`,
         changePercent: summary.ordersChangePercent,
-        formula: 'Completed Orders = Total Placed Orders - Cancelled Orders',
-        meaning: `Completed orders measure your kitchen fulfillment and floor throughput. Currently, ${dineInPct}% of your volume is Dine-In table service, and ${takeoutPct}% is Takeout.`,
+        formula: 'Completed Orders = Table Orders (Dine-in + Takeout) + Ticket Orders',
+        meaning: `Completed orders measure total fulfillment and throughput. Breakdown: ${dineInPct}% Dine-In table service, ${takeoutPct}% Takeout${ticketPct > 0 ? `, and ${ticketPct}% Ticketing Interface` : ''}.`,
         subMetrics: [
           {
             label: 'Dine-In Orders',
@@ -408,6 +410,11 @@ function getMetricConfig(metricKey: KpiMetricType, summary: AnalyticsSummary) {
             value: takeout ? `${takeout.count} (${takeout.percentage}%)` : '—',
             subtext: 'Carry-out volume',
           },
+          ...(ticket && ticket.count > 0 ? [{
+            label: 'Ticket Sales',
+            value: `${ticket.count} (${ticket.percentage}%)`,
+            subtext: 'Ticketing interface orders',
+          }] : []),
           {
             label: 'Cancelled Orders',
             value: `${summary.cancelledOrders} (${cancelRate.toFixed(1)}%)`,

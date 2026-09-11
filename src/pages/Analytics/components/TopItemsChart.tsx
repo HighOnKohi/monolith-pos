@@ -505,7 +505,7 @@ export function TopItemsChart({
                               Dining Mode
                             </span>
                             <span className="text-slate-500 text-[10px]">
-                              {item.dineInCount} Dine-in · {item.takeoutCount} Takeout
+                              {item.dineInCount} Dine-in · {item.takeoutCount} Takeout{item.ticketCount ? ` · ${item.ticketCount} Ticket` : ''}
                             </span>
                           </div>
                           {/* Segmented bar */}
@@ -528,6 +528,15 @@ export function TopItemsChart({
                                 title={`Takeout: ${item.takeoutCount}`}
                               />
                             )}
+                            {item.ticketCount !== undefined && item.ticketCount > 0 && (
+                              <div
+                                style={{
+                                  width: `${Math.round((item.ticketCount / item.quantity) * 100)}%`,
+                                }}
+                                className="bg-[#2A9D8F] h-full"
+                                title={`Ticket: ${item.ticketCount}`}
+                              />
+                            )}
                           </div>
                           <div className="flex justify-between text-[9px] font-bold text-slate-400">
                             <span className="text-[#14274E]">
@@ -536,6 +545,11 @@ export function TopItemsChart({
                             <span className="text-amber-800">
                               Takeout: {Math.round((item.takeoutCount / item.quantity) * 100)}%
                             </span>
+                            {item.ticketCount !== undefined && item.ticketCount > 0 && (
+                              <span className="text-[#2A9D8F]">
+                                Ticket: {Math.round((item.ticketCount / item.quantity) * 100)}%
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -547,7 +561,7 @@ export function TopItemsChart({
                               Order Channel
                             </span>
                             <span className="text-slate-500 text-[10px]">
-                              {item.cashierCount} Cashier · {item.customerAppCount} Customer App
+                              {item.cashierCount} Cashier · {item.customerAppCount} Customer App{item.ticketCount ? ` · ${item.ticketCount} Ticketing` : ''}
                             </span>
                           </div>
                           {/* Segmented bar */}
@@ -570,14 +584,28 @@ export function TopItemsChart({
                                 title={`Customer App: ${item.customerAppCount}`}
                               />
                             )}
+                            {item.ticketCount !== undefined && item.ticketCount > 0 && (
+                              <div
+                                style={{
+                                  width: `${Math.round((item.ticketCount / item.quantity) * 100)}%`,
+                                }}
+                                className="bg-[#14274E] h-full"
+                                title={`Ticketing Interface: ${item.ticketCount}`}
+                              />
+                            )}
                           </div>
                           <div className="flex justify-between text-[9px] font-bold text-slate-400">
                             <span className="text-sky-700">
-                              Cashier POS: {Math.round((item.cashierCount / item.quantity) * 100)}%
+                              Cashier: {Math.round((item.cashierCount / item.quantity) * 100)}%
                             </span>
                             <span className="text-emerald-700">
                               Customer App: {Math.round((item.customerAppCount / item.quantity) * 100)}%
                             </span>
+                            {item.ticketCount !== undefined && item.ticketCount > 0 && (
+                              <span className="text-[#14274E]">
+                                Ticketing: {Math.round((item.ticketCount / item.quantity) * 100)}%
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -775,6 +803,14 @@ export function TopItemsChart({
                             <span className="text-amber-700 font-bold">
                               {item.takeoutCount} Take
                             </span>
+                            {item.ticketCount !== undefined && item.ticketCount > 0 && (
+                              <>
+                                <span>/</span>
+                                <span className="text-[#2A9D8F] font-bold">
+                                  {item.ticketCount} Ticket
+                                </span>
+                              </>
+                            )}
                           </div>
                         ) : (
                           <span className="text-[10px] text-rose-500 font-semibold">

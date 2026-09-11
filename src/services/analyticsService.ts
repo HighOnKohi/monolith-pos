@@ -38,6 +38,7 @@ export interface ItemSalesStat {
   takeoutCount: number // units sold via Takeout
   customerAppCount: number // units ordered via Customer app
   cashierCount: number // units ordered via Cashier station 
+  ticketCount?: number // units ordered via Ticketing
   isAvailable?: boolean
 }
 
@@ -138,6 +139,28 @@ export function parseDbTimestamp(timeVal: unknown): Date | null {
 }
 
 /**
+ * Resolves timestamp for a Ticket_Orders record.
+ * Uses CREATED_AT, created_at, or TIME if available.
+ * Otherwise maps REGISTERED_TIME_OF_ARRIVAL to the current calendar date.
+ */
+export function parseTicketOrderTimestamp(ticket: Record<string, unknown>): Date | null {
+  const explicit = ticket['CREATED_AT'] || ticket['created_at'] || ticket['TIME'] || ticket['COMPLETED_AT']
+  if (explicit) {
+    const d = parseDbTimestamp(explicit)
+    if (d) return d
+  }
+
+  const arrival = ticket['REGISTERED_TIME_OF_ARRIVAL']
+  if (typeof arrival === 'string' && arrival.includes(':')) {
+    const parts = arrival.split(':').map((p) => parseInt(p, 10))
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), parts[0] || 0, parts[1] || 0, parts[2] || 0)
+  }
+
+  return null
+}
+
+/**
  * Calculates start and end Date objects for preset date ranges.
  */
 export function getDateRangeFromPreset(preset: DateRangePreset, customStart?: Date, customEnd?: Date): DateRange {
@@ -211,7 +234,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   const { startDate, endDate } = range
   const { prevStart, prevEnd } = getPreviousPeriod(startDate, endDate)
 
-  // 1. Fetch orders in the selected period
+  // 1. Fetch table orders in the selected period
   const { data: currentOrders, error: ordersError } = await supabase
     .from('Restaurant_Orders')
     .select('*')
@@ -224,7 +247,153 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     throw ordersError
   }
 
-  // 2. Fetch orders in the previous equivalent period for % comparison
+  // 1b. Fetch ticket orders with items, menu items, and meal packages
+  const { data: rawTicketOrders, error: ticketOrdersError } = await supabase
+    .from('Ticket_Orders')
+    .select(`
+      *,
+      Ticket_Order_Items (
+        TICKET_ORDER_ITEM_ID,
+        TICKET_ORDER_ID,
+        ITEM_ID,
+        ITEM_GROUP_ID,
+        DISCOUNT_ID,
+        TICKET_ORDER_ITEM_STATUS,
+        Menu_Items (
+          ITEM_ID,
+          ITEM_NAME,
+          ITEM_PRICE,
+          CATEGORY_ID,
+          Menu_Categories (
+            CATEGORY_ID,
+            CATEGORY_NAME
+          )
+        ),
+        Menu_Item_Groups (
+          MENU_GROUP_ID,
+          GROUP_NAME,
+          GROUP_PRICE,
+          GROUP_IMAGE_URL,
+          GROUP_DESCRIPTION,
+          CATEGORY_ID,
+          Menu_Categories (
+            CATEGORY_ID,
+            CATEGORY_NAME
+          ),
+          Item_Groups (
+            ITEM_ID,
+            Menu_Items (
+              ITEM_ID,
+              ITEM_NAME,
+              ITEM_PRICE,
+              CATEGORY_ID
+            )
+          )
+        )
+      )
+    `)
+
+  if (ticketOrdersError) {
+    console.warn('[analyticsService] Error fetching ticket orders:', ticketOrdersError)
+  }
+
+  // Process ticket orders into normalized items and calculate untaxed order totals
+  interface ProcessedTicketItem {
+    ticketOrderItemId: number
+    ticketOrderId: number
+    itemId: number | null
+    itemGroupId: number | null
+    name: string
+    price: number
+    categoryName: string
+    categoryId: number
+    status: string
+    isGroup: boolean
+  }
+
+  interface ProcessedTicketOrder {
+    ticketId: number
+    status: string
+    date: Date
+    registeredName: string | null
+    registeredContactInfo: number | null
+    totalBill: number
+    items: ProcessedTicketItem[]
+  }
+
+  const allProcessedTickets: ProcessedTicketOrder[] = (rawTicketOrders ?? []).map((tRow: any) => {
+    const rawItems = (tRow['Ticket_Order_Items'] as Array<Record<string, unknown>> | undefined) ?? []
+    let totalBill = 0
+    const items: ProcessedTicketItem[] = rawItems.map((oi) => {
+      const menuItem = oi['Menu_Items'] as Record<string, unknown> | undefined
+      const groupItem = oi['Menu_Item_Groups'] as Record<string, unknown> | undefined
+      const isGroup = Boolean(oi['ITEM_GROUP_ID'])
+
+      let name = 'Unknown Item'
+      let price = 0
+      let categoryName = 'Uncategorized'
+      let categoryId = 0
+
+      if (isGroup && groupItem) {
+        name = String(groupItem['GROUP_NAME'] ?? 'Group Combo')
+        price = Number(groupItem['GROUP_PRICE'] ?? 0)
+        const catObj = groupItem['Menu_Categories'] as Record<string, unknown> | undefined
+        categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'Meal Packages'
+        categoryId = Number(groupItem['CATEGORY_ID'] ?? 0)
+      } else if (menuItem) {
+        name = String(menuItem['ITEM_NAME'] ?? 'Dish')
+        price = Number(menuItem['ITEM_PRICE'] ?? 0)
+        const catObj = menuItem['Menu_Categories'] as Record<string, unknown> | undefined
+        categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'Uncategorized'
+        categoryId = Number(menuItem['CATEGORY_ID'] ?? 0)
+      }
+
+      totalBill += price
+
+      return {
+        ticketOrderItemId: Number(oi['TICKET_ORDER_ITEM_ID']),
+        ticketOrderId: Number(oi['TICKET_ORDER_ID']),
+        itemId: oi['ITEM_ID'] ? Number(oi['ITEM_ID']) : null,
+        itemGroupId: oi['ITEM_GROUP_ID'] ? Number(oi['ITEM_GROUP_ID']) : null,
+        name,
+        price,
+        categoryName,
+        categoryId,
+        status: String(oi['TICKET_ORDER_ITEM_STATUS'] ?? 'REQUESTED'),
+        isGroup,
+      }
+    })
+
+    const date = parseTicketOrderTimestamp(tRow) ?? new Date()
+    const rawStatus = String(tRow['TICKET_STATUS'] ?? 'REQUESTED').toUpperCase().trim()
+    const status = (rawStatus === 'COMPLETED' || rawStatus === 'DONE' || rawStatus === 'SERVED')
+      ? 'COMPLETED'
+      : (rawStatus === 'PREPARING' || rawStatus === 'COOKING')
+        ? 'PREPARING'
+        : (rawStatus === 'CANCELLED')
+          ? 'CANCELLED'
+          : 'REQUESTED'
+
+    return {
+      ticketId: Number(tRow['TICKET_ID']),
+      status,
+      date,
+      registeredName: (tRow['REGISTERED_NAME'] as string | null) ?? null,
+      registeredContactInfo: tRow['REGISTERED_CONTACT_INFO'] ? Number(tRow['REGISTERED_CONTACT_INFO']) : null,
+      totalBill,
+      items,
+    }
+  })
+
+  // Filter current vs previous period tickets
+  const currentTickets = allProcessedTickets.filter((t) => t.date >= startDate && t.date <= endDate)
+  const prevTickets = allProcessedTickets.filter((t) => t.date >= prevStart && t.date <= prevEnd)
+
+  const completedTicketsList = currentTickets.filter((t) => t.status === 'COMPLETED')
+  const prevCompletedTicketsList = prevTickets.filter((t) => t.status === 'COMPLETED')
+  const completedTicketItems = completedTicketsList.flatMap((t) => t.items)
+
+  // 2. Fetch table orders in the previous equivalent period for % comparison
   const { data: previousOrders, error: prevOrdersError } = await supabase
     .from('Restaurant_Orders')
     .select('ORDER_STATUS, TOTAL_BILL, GUEST_COUNT')
@@ -238,12 +407,12 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   const allOrders = currentOrders ?? []
   const prevOrders = previousOrders ?? []
 
-  // Filter completed and cancelled orders
+  // Filter completed and cancelled restaurant orders
   const completedOrdersList = allOrders.filter((o) => o['ORDER_STATUS'] === 'COMPLETED')
   const cancelledOrdersList = allOrders.filter((o) => o['ORDER_STATUS'] === 'CANCELLED')
   const completedOrderIds = completedOrdersList.map((o) => Number(o['ORDER_ID']))
 
-  // 3. Fetch Order_Items joined with Menu_Items and Menu_Categories for completed orders
+  // 3. Fetch Order_Items joined with Menu_Items and Menu_Categories for completed table orders
   let orderItemsData: Array<Record<string, unknown>> = []
   if (completedOrderIds.length > 0) {
     const { data: itemsData, error: itemsError } = await supabase
@@ -273,7 +442,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     orderItemsData = (itemsData ?? []) as Array<Record<string, unknown>>
   }
 
-  // 3b. Fetch full menu catalog to track zero-sales and underperforming items
+  // 3b. Fetch full menu catalog (items + groups) to track zero-sales and underperforming items
   const { data: catalogItemsData, error: catalogError } = await supabase
     .from('Menu_Items')
     .select(`
@@ -292,21 +461,47 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     console.warn('[analyticsService] Warning fetching menu items catalog:', catalogError)
   }
 
-  // 4. Calculate Core KPIs using TOTAL_BILL and SUBTOTAL_BILL from Restaurant_Orders
-  const totalRevenue = completedOrdersList.reduce((sum, o) => sum + (Number(o['TOTAL_BILL']) || 0), 0)
-  const subtotalRevenue = completedOrdersList.reduce(
+  const { data: catalogGroupsData, error: catalogGroupsError } = await supabase
+    .from('Menu_Item_Groups')
+    .select(`
+      MENU_GROUP_ID,
+      GROUP_NAME,
+      GROUP_PRICE,
+      CATEGORY_ID,
+      GROUP_STATUS,
+      Menu_Categories (
+        CATEGORY_ID,
+        CATEGORY_NAME
+      )
+    `)
+
+  if (catalogGroupsError) {
+    console.warn('[analyticsService] Warning fetching menu item groups catalog:', catalogGroupsError)
+  }
+
+  // 4. Calculate Core KPIs combining table orders and ticket sales
+  const restaurantRevenue = completedOrdersList.reduce((sum, o) => sum + (Number(o['TOTAL_BILL']) || 0), 0)
+  const ticketRevenue = completedTicketsList.reduce((sum, t) => sum + t.totalBill, 0)
+  const totalRevenue = restaurantRevenue + ticketRevenue
+
+  const restaurantSubtotal = completedOrdersList.reduce(
     (sum, o) => sum + (Number(o['SUBTOTAL_BILL']) || Number(o['TOTAL_BILL']) || 0),
     0,
   )
+  // Ticket sales are untaxed; subtotal equals item total
+  const subtotalRevenue = restaurantSubtotal + ticketRevenue
   const totalDiscounts = Math.max(subtotalRevenue - totalRevenue, 0)
-  const completedCount = completedOrdersList.length
+
+  const completedCount = completedOrdersList.length + completedTicketsList.length
   const aov = completedCount > 0 ? totalRevenue / completedCount : 0
-  const itemsSoldCount = orderItemsData.length
+  const itemsSoldCount = orderItemsData.length + completedTicketItems.length
 
   // Previous period KPIs for % delta
   const prevCompletedOrders = prevOrders.filter((o) => o['ORDER_STATUS'] === 'COMPLETED')
-  const prevRevenue = prevCompletedOrders.reduce((sum, o) => sum + (Number(o['TOTAL_BILL']) || 0), 0)
-  const prevCompletedCount = prevCompletedOrders.length
+  const prevRestaurantRevenue = prevCompletedOrders.reduce((sum, o) => sum + (Number(o['TOTAL_BILL']) || 0), 0)
+  const prevTicketRevenue = prevCompletedTicketsList.reduce((sum, t) => sum + t.totalBill, 0)
+  const prevRevenue = prevRestaurantRevenue + prevTicketRevenue
+  const prevCompletedCount = prevCompletedOrders.length + prevCompletedTicketsList.length
 
   const revenueChangePercent =
     prevRevenue > 0
@@ -322,14 +517,16 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         ? 100
         : null
 
-  // Customer metrics calculation (using GUEST_COUNT)
+  // Customer metrics calculation (using table GUEST_COUNT + 1 diner per completed ticket)
   const ordersWithGuests = completedOrdersList.filter(
     (o) => o['GUEST_COUNT'] !== null && o['GUEST_COUNT'] !== undefined && Number(o['GUEST_COUNT']) > 0,
   )
-  const hasCustomerData = ordersWithGuests.length > 0
-  const customersServed = hasCustomerData
+  const restaurantGuests = ordersWithGuests.length > 0
     ? ordersWithGuests.reduce((sum, o) => sum + Number(o['GUEST_COUNT']), 0)
     : null
+  const ticketGuests = completedTicketsList.length
+  const hasCustomerData = restaurantGuests !== null || ticketGuests > 0
+  const customersServed = hasCustomerData ? (restaurantGuests || 0) + ticketGuests : null
 
   const averageSpendPerCustomer =
     customersServed !== null && customersServed > 0
@@ -344,9 +541,14 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   const prevOrdersWithGuests = prevCompletedOrders.filter(
     (o) => o['GUEST_COUNT'] !== null && o['GUEST_COUNT'] !== undefined && Number(o['GUEST_COUNT']) > 0,
   )
-  const prevCustomersServed =
+  const prevRestaurantGuests =
     prevOrdersWithGuests.length > 0
       ? prevOrdersWithGuests.reduce((sum, o) => sum + Number(o['GUEST_COUNT']), 0)
+      : null
+  const prevTicketGuests = prevCompletedTicketsList.length
+  const prevCustomersServed =
+    (prevRestaurantGuests !== null || prevTicketGuests > 0)
+      ? (prevRestaurantGuests || 0) + prevTicketGuests
       : null
 
   const customersChangePercent =
@@ -356,7 +558,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         ? 100
         : null
 
-  // Kitchen & Serving times analysis (using TIME, READY_AT, SERVED_AT, COMPLETED_AT)
+  // Kitchen & Serving times analysis (using TIME, READY_AT, SERVED_AT, COMPLETED_AT from table orders)
   const prepDurations: number[] = []
   const deliveryDurations: number[] = []
   const servingDurations: number[] = []
@@ -469,11 +671,12 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     takeoutCount: number
     customerAppCount: number
     cashierCount: number
+    ticketCount: number
   }
 
   const itemAggMap = new Map<number, ItemAgg>()
 
-  // 5a. Seed with catalog items so zero-sales / underperforming items are tracked
+  // 5a. Seed with standalone catalog items
   if (catalogItemsData && catalogItemsData.length > 0) {
     for (const raw of catalogItemsData as Array<Record<string, unknown>>) {
       const id = Number(raw['ITEM_ID'])
@@ -496,11 +699,41 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         takeoutCount: 0,
         customerAppCount: 0,
         cashierCount: 0,
+        ticketCount: 0,
       })
     }
   }
 
-  // 5b. Accumulate sold items and link to order metadata
+  // 5b. Seed with menu group packages/combos (offset ID by 100000 to prevent collisions)
+  if (catalogGroupsData && catalogGroupsData.length > 0) {
+    for (const raw of catalogGroupsData as Array<Record<string, unknown>>) {
+      const gid = Number(raw['MENU_GROUP_ID'])
+      const id = 100000 + gid
+      const name = String(raw['GROUP_NAME'] || 'Group Combo')
+      const price = Number(raw['GROUP_PRICE'] || 0)
+      const isAvail = raw['GROUP_STATUS'] !== 'UNAVAILABLE'
+      const catObj = raw['Menu_Categories'] as Record<string, unknown> | null
+      const catName = catObj ? String(catObj['CATEGORY_NAME']) : 'Meal Packages'
+
+      itemAggMap.set(id, {
+        id,
+        name,
+        category: catName,
+        unitPrice: price,
+        isAvailable: isAvail,
+        qty: 0,
+        revenue: 0,
+        orderIds: new Set<number>(),
+        dineInCount: 0,
+        takeoutCount: 0,
+        customerAppCount: 0,
+        cashierCount: 0,
+        ticketCount: 0,
+      })
+    }
+  }
+
+  // 5c. Accumulate sold items from table orders
   for (const oi of orderItemsData) {
     const menuItem = oi['Menu_Items'] as Record<string, unknown> | null
     const itemId = Number(oi['ITEM_ID'] || (menuItem ? menuItem['ITEM_ID'] : 0))
@@ -529,6 +762,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         takeoutCount: 0,
         customerAppCount: 0,
         cashierCount: 0,
+        ticketCount: 0,
       }
       itemAggMap.set(itemId, existing)
     }
@@ -540,6 +774,40 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     else existing.takeoutCount += 1
     if (orderMeta.isCustomerApp) existing.customerAppCount += 1
     else existing.cashierCount += 1
+  }
+
+  // 5d. Accumulate sold items and packages from completed ticket orders
+  for (const t of completedTicketsList) {
+    for (const item of t.items) {
+      const isGroup = item.isGroup
+      const aggId = isGroup ? 100000 + (item.itemGroupId || 0) : (item.itemId || 0)
+      if (!aggId) continue
+
+      let existing = itemAggMap.get(aggId)
+      if (!existing) {
+        existing = {
+          id: aggId,
+          name: item.name,
+          category: item.categoryName,
+          unitPrice: item.price,
+          isAvailable: true,
+          qty: 0,
+          revenue: 0,
+          orderIds: new Set<number>(),
+          dineInCount: 0,
+          takeoutCount: 0,
+          customerAppCount: 0,
+          cashierCount: 0,
+          ticketCount: 0,
+        }
+        itemAggMap.set(aggId, existing)
+      }
+
+      existing.qty += 1
+      existing.revenue += item.price
+      if (t.ticketId) existing.orderIds.add(t.ticketId)
+      existing.ticketCount += 1
+    }
   }
 
   const allRankedItems: ItemSalesStat[] = Array.from(itemAggMap.values()).map((val) => ({
@@ -556,6 +824,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     takeoutCount: val.takeoutCount,
     customerAppCount: val.customerAppCount,
     cashierCount: val.cashierCount,
+    ticketCount: val.ticketCount,
     isAvailable: val.isAvailable,
   }))
 
@@ -591,6 +860,15 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     categoryMap.set(categoryName, current)
   }
 
+  for (const t of completedTicketsList) {
+    for (const item of t.items) {
+      const current = categoryMap.get(item.categoryName) ?? { id: item.categoryId, qty: 0, revenue: 0 }
+      current.qty += 1
+      current.revenue += item.price
+      categoryMap.set(item.categoryName, current)
+    }
+  }
+
   const categoryStats: CategoryStat[] = Array.from(categoryMap.entries())
     .map(([catName, val]) => ({
       categoryId: val.id,
@@ -607,11 +885,16 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   validStatuses.forEach((st) => statusCounts.set(st, 0))
 
   for (const o of allOrders) {
-    const st = String(o['ORDER_STATUS'] || 'REQUESTED')
+    const st = String(o['ORDER_STATUS'] || 'REQUESTED').toUpperCase()
     statusCounts.set(st, (statusCounts.get(st) || 0) + 1)
   }
 
-  const totalAllOrders = allOrders.length
+  for (const t of currentTickets) {
+    const st = t.status
+    statusCounts.set(st, (statusCounts.get(st) || 0) + 1)
+  }
+
+  const totalAllOrders = allOrders.length + currentTickets.length
   const statusBreakdown: StatusStat[] = Array.from(statusCounts.entries())
     .map(([status, count]) => ({
       status,
@@ -620,7 +903,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     }))
     .sort((a, b) => b.count - a.count)
 
-  // 8. Order Type Breakdown (DINE-IN vs TAKEOUT from Restaurant_Orders)
+  // 8. Order Type Breakdown (DINE-IN vs TAKEOUT from Restaurant_Orders + TICKET from Ticket_Orders)
   const orderTypeMap = new Map<string, { count: number; revenue: number }>()
   for (const o of completedOrdersList) {
     const rawType = String(o['ORDER_TYPE'] || 'DINE-IN').toUpperCase()
@@ -631,6 +914,11 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     orderTypeMap.set(typeLabel, cur)
   }
 
+  if (completedTicketsList.length > 0) {
+    const tRev = completedTicketsList.reduce((sum, t) => sum + t.totalBill, 0)
+    orderTypeMap.set('Ticket', { count: completedTicketsList.length, revenue: tRev })
+  }
+
   const orderTypeBreakdown: BreakdownStat[] = Array.from(orderTypeMap.entries()).map(([label, data]) => ({
     label,
     count: data.count,
@@ -638,7 +926,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     percentage: completedCount > 0 ? Math.round((data.count / completedCount) * 1000) / 10 : 0,
   }))
 
-  // 9. Channel Breakdown (Cashier vs Customer from REQUESTED_FROM)
+  // 9. Channel Breakdown (Cashier vs Customer from REQUESTED_FROM + Ticketing Interface)
   const channelMap = new Map<string, { count: number; revenue: number }>()
   for (const o of completedOrdersList) {
     const rawChan = String(o['REQUESTED_FROM'] || 'Cashier').toLowerCase()
@@ -647,6 +935,11 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     cur.count += 1
     cur.revenue += Number(o['TOTAL_BILL']) || 0
     channelMap.set(channelLabel, cur)
+  }
+
+  if (completedTicketsList.length > 0) {
+    const tRev = completedTicketsList.reduce((sum, t) => sum + t.totalBill, 0)
+    channelMap.set('Ticketing Interface', { count: completedTicketsList.length, revenue: tRev })
   }
 
   const channelBreakdown: BreakdownStat[] = Array.from(channelMap.entries()).map(([label, data]) => ({
@@ -690,6 +983,18 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         }
       }
     }
+
+    for (const t of completedTicketsList) {
+      const hStr = `${t.date.getHours().toString().padStart(2, '0')}:00`
+      const point = timeSeriesMap.get(hStr)
+      if (point) {
+        point.revenue += t.totalBill
+        point.orderCount += 1
+        if (hasCustomerData) {
+          point.customerCount = (point.customerCount || 0) + 1
+        }
+      }
+    }
   } else {
     // Generate day buckets across the range
     const cursor = new Date(startDate)
@@ -722,6 +1027,18 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         point.orderCount += 1
         if (hasCustomerData) {
           point.customerCount = (point.customerCount || 0) + (Number(o['GUEST_COUNT']) || 1)
+        }
+      }
+    }
+
+    for (const t of completedTicketsList) {
+      const key = t.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      const point = timeSeriesMap.get(key)
+      if (point) {
+        point.revenue += t.totalBill
+        point.orderCount += 1
+        if (hasCustomerData) {
+          point.customerCount = (point.customerCount || 0) + 1
         }
       }
     }
@@ -759,6 +1076,17 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     }
   }
 
+  for (const t of completedTicketsList) {
+    const hr = t.date.getHours()
+    const label = `${hr === 0 ? '12 AM' : hr < 12 ? `${hr} AM` : hr === 12 ? '12 PM' : `${hr - 12} PM`}`
+    const c = (hourlyCount.get(label) || 0) + 1
+    hourlyCount.set(label, c)
+    if (c > maxHourOrders) {
+      maxHourOrders = c
+      peakHour = label
+    }
+  }
+
   let peakDay: string | null = null
   let maxDayOrders = 0
   const dailyCount = new Map<string, number>()
@@ -767,6 +1095,16 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     const d = parseDbTimestamp(o['TIME'])
     if (!d) continue
     const dayLabel = d.toLocaleDateString('en-US', { weekday: 'long' })
+    const c = (dailyCount.get(dayLabel) || 0) + 1
+    dailyCount.set(dayLabel, c)
+    if (c > maxDayOrders) {
+      maxDayOrders = c
+      peakDay = dayLabel
+    }
+  }
+
+  for (const t of completedTicketsList) {
+    const dayLabel = t.date.toLocaleDateString('en-US', { weekday: 'long' })
     const c = (dailyCount.get(dayLabel) || 0) + 1
     dailyCount.set(dayLabel, c)
     if (c > maxDayOrders) {
@@ -870,5 +1208,19 @@ export async function clearAnalyticsData(adminEmail: string, adminPassword: stri
     throw ordersDelErr
   }
 
-  return { success: true, deletedOrdersCount: orderIds.length }
+  // 5. Also purge completed and cancelled Ticket_Orders and their items
+  const { data: targetTickets } = await supabase
+    .from('Ticket_Orders')
+    .select('TICKET_ID')
+    .in('TICKET_STATUS', ['COMPLETED', 'CANCELLED'])
+
+  let deletedTicketsCount = 0
+  if (targetTickets && targetTickets.length > 0) {
+    const ticketIds = targetTickets.map((t) => Number(t['TICKET_ID']))
+    await supabase.from('Ticket_Order_Items').delete().in('TICKET_ORDER_ID', ticketIds)
+    await supabase.from('Ticket_Orders').delete().in('TICKET_ID', ticketIds)
+    deletedTicketsCount = ticketIds.length
+  }
+
+  return { success: true, deletedOrdersCount: orderIds.length + deletedTicketsCount }
 }
