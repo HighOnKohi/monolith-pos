@@ -878,7 +878,7 @@ export async function markTicketDishDone(
 }
 
 export async function updateTicketItemCookingCount(
-  ticketId: number,
+  _ticketId: number,
   ticketOrderItemIds: number[],
   completedCount: number,
 ): Promise<void> {

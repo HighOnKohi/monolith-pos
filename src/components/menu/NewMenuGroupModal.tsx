@@ -37,7 +37,7 @@ export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items
 
   useEffect(() => {
     if (!isOpen) return
-    setForm(editGroup ? { name: editGroup.name, description: editGroup.description, price: String(editGroup.price), imageUrl: editGroup.imageUrl, status: editGroup.status, orderLimit: String(editGroup.orderLimit), categoryId: editGroup.categoryId, itemIds: editGroup.itemIds } : { name: '', description: '', price: '', imageUrl: '', status: 'AVAILABLE', orderLimit: '0', categoryId: categories.find((category) => category.id !== 'all')?.id ?? '', itemIds: [] })
+    setForm(editGroup ? { name: editGroup.name, description: editGroup.description, price: String(editGroup.price), imageUrl: editGroup.imageUrl ?? '', status: editGroup.status, orderLimit: String(editGroup.orderLimit), categoryId: editGroup.categoryId, itemIds: editGroup.itemIds } : { name: '', description: '', price: '', imageUrl: '', status: 'AVAILABLE', orderLimit: '0', categoryId: categories.find((category) => category.id !== 'all')?.id ?? '', itemIds: [] })
     setImageFile(null)
     setError(null)
     setUploadError(null)

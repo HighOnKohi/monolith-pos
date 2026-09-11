@@ -156,7 +156,13 @@ export default function CashierInterface() {
     : null
 
   // Active items in current view (tables or tickets)
-  const activeItems = useMemo(() => {
+  const activeItems = useMemo<Array<{
+    orderItemId: string
+    orderId: number
+    name: string
+    price: number
+    orderType: string
+  }>>(() => {
     if (mode === 'tables') {
       return orders
         .filter((order) => ACTIVE_STATUSES.includes(order.orderStatus as typeof ACTIVE_STATUSES[number]))
@@ -168,7 +174,7 @@ export default function CashierInterface() {
               orderId: order.orderId,
               name: item.name ?? `Item #${item.itemId}`,
               price: item.price ?? 0,
-              orderType: order.orderType,
+              orderType: String(order.orderType),
             })),
         )
     } else {
@@ -176,9 +182,9 @@ export default function CashierInterface() {
       return (selectedTicket.items ?? []).map((item) => ({
         orderItemId: String(item.ticketOrderItemId),
         orderId: selectedTicket.ticketId,
-        name: item.name,
-        price: item.price,
-        orderType: 'TICKET' as const,
+        name: item.name ?? `Item #${item.ticketOrderItemId}`,
+        price: item.price ?? 0,
+        orderType: 'TICKET',
       }))
     }
   }, [mode, orders, selectedTicket])
@@ -538,8 +544,8 @@ export default function CashierInterface() {
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs font-bold text-slate-500">
-                      <span>{tk.items.length} items</span>
-                      <span className="text-base font-black text-[#14274E]">{money(tk.totalAmount)}</span>
+                      <span>{(tk.items ?? []).length} items</span>
+                      <span className="text-base font-black text-[#14274E]">{money(tk.totalAmount ?? 0)}</span>
                     </div>
                   </button>
                 )

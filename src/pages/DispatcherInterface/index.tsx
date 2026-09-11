@@ -823,18 +823,7 @@ export default function DispatcherInterface() {
   const ticketPreparingDishesCount = tickets
     .reduce((sum, t) => sum + t.items.filter((i) => i.status === 'PREPARING').length, 0)
 
-  const formatArrivalDisplay = (timeStr: string | null) => {
-    if (!timeStr) return null
-    const parts = timeStr.split(':')
-    if (parts.length >= 2) {
-      let hh = parseInt(parts[0], 10)
-      const mm = parts[1]
-      const ampm = hh >= 12 ? 'PM' : 'AM'
-      hh = hh % 12 || 12
-      return `${hh}:${mm} ${ampm}`
-    }
-    return timeStr
-  }
+
 
   return (
     <div className="dispatcher-interface-container">

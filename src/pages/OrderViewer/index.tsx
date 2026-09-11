@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useMemo } from 'react'
-import { LayoutGrid, Ticket, ListFilter, RefreshCw, ChefHat, User } from 'lucide-react'
+import { LayoutGrid, Ticket, ListFilter, RefreshCw, ChefHat } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fetchOrderViewerData, fetchTicketOrderViewerData, subscribeToOrderUpdates } from '@/services/dispatcherService'
 

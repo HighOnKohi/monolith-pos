@@ -18,8 +18,6 @@ export const TicketCustomerInfoModal: React.FC<TicketCustomerInfoModalProps> = (
   isOpen,
   ticketId,
   cartItems,
-  subtotal,
-  tax,
   total,
   onClose,
   onSubmit,
