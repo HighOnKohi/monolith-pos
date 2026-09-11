@@ -25,6 +25,10 @@ const OrderLogsPage = lazy(() => import('@/pages/OrderLogs'))
 const EventsPage = lazy(() => import('@/pages/Events'))
 const TicketingInterface = lazy(() => import('@/pages/TicketingInterface'))
 
+import { LocationVerificationProvider } from '@/contexts/LocationVerificationContext'
+import { CustomerLocationGuard } from '@/components/customer/CustomerLocationGuard'
+import { useParams } from 'react-router-dom'
+
 function wrap(Component: React.ComponentType) {
   return (
     <Suspense fallback={<PageLoader />}>
@@ -54,10 +58,19 @@ function CustomerRouteWrapper() {
   }, [location])
 
   return (
-    <Suspense fallback={<PageLoader />}>
-      <CustomerPage />
-    </Suspense>
+    <LocationVerificationProvider>
+      <CustomerLocationGuard>
+        <Suspense fallback={<PageLoader />}>
+          <CustomerPage />
+        </Suspense>
+      </CustomerLocationGuard>
+    </LocationVerificationProvider>
   )
+}
+
+function TableRouteRedirect() {
+  const { tableId } = useParams<{ tableId: string }>()
+  return <Navigate to={`/customer/${tableId || 'table-1'}`} replace />
 }
 
 function CustomerRootRedirect() {
@@ -96,6 +109,10 @@ export const router = createBrowserRouter([
       {
         path: 'customer/:tableId',
         element: <CustomerRouteWrapper />,
+      },
+      {
+        path: 'table/:tableId',
+        element: <TableRouteRedirect />,
       },
       {
         path: 'advance-order',
