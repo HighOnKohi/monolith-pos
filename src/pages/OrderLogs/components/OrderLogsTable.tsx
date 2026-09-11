@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Smartphone,
   Store,
+  Ticket,
 } from 'lucide-react'
 import type { OrderLogRow, SortField, SortOrder } from '@/services/orderLogsService'
 import type { OrderStatus } from '@/types/order'
@@ -255,7 +256,12 @@ export const OrderLogsTable: React.FC<OrderLogsTableProps> = ({
 
                   {/* Table */}
                   <td className="py-3 px-4">
-                    {order.isMerged ? (
+                    {order.orderType === 'TICKET' ? (
+                      <span className="inline-flex items-center gap-1 font-bold text-amber-900 bg-amber-50 px-2 py-0.5 rounded-md text-[11px] border border-amber-200/80 w-fit">
+                        <Ticket className="w-3 h-3 text-amber-600 shrink-0" />
+                        <span>Ticket #{order.orderId}</span>
+                      </span>
+                    ) : order.isMerged ? (
                       <div className="flex flex-col">
                         <span className="inline-flex items-center gap-1 font-bold text-indigo-900 bg-indigo-50 px-2 py-0.5 rounded-md text-[11px] border border-indigo-100 w-fit">
                           {order.mergedGroupLabel || `Table ${order.tableNum} (Merged)`}
@@ -271,25 +277,41 @@ export const OrderLogsTable: React.FC<OrderLogsTableProps> = ({
                   {/* Type & Source */}
                   <td className="py-3 px-4 whitespace-nowrap">
                     <div className="flex items-center gap-1.5">
-                      {order.requestedFrom === 'Customer' ? (
-                        <span
-                          className="p-1 rounded-md bg-emerald-50 text-emerald-600"
-                          title="Ordered via Customer App"
-                        >
-                          <Smartphone className="w-3 h-3" />
-                        </span>
+                      {order.orderType === 'TICKET' ? (
+                        <>
+                          <span
+                            className="p-1 rounded-md bg-amber-50 text-amber-600"
+                            title="Ticketing Interface"
+                          >
+                            <Ticket className="w-3 h-3" />
+                          </span>
+                          <span className="text-[11px] text-slate-600 font-medium">
+                            Ticket · Ticketing
+                          </span>
+                        </>
                       ) : (
-                        <span
-                          className="p-1 rounded-md bg-slate-100 text-slate-600"
-                          title="Punched via Cashier Station"
-                        >
-                          <Store className="w-3 h-3" />
-                        </span>
+                        <>
+                          {order.requestedFrom === 'Customer' ? (
+                            <span
+                              className="p-1 rounded-md bg-emerald-50 text-emerald-600"
+                              title="Ordered via Customer App"
+                            >
+                              <Smartphone className="w-3 h-3" />
+                            </span>
+                          ) : (
+                            <span
+                              className="p-1 rounded-md bg-slate-100 text-slate-600"
+                              title="Punched via Cashier Station"
+                            >
+                              <Store className="w-3 h-3" />
+                            </span>
+                          )}
+                          <span className="text-[11px] text-slate-600 font-medium">
+                            {order.orderType === 'TAKEOUT' ? 'Takeout' : 'Dine-in'} ·{' '}
+                            {order.requestedFrom}
+                          </span>
+                        </>
                       )}
-                      <span className="text-[11px] text-slate-600 font-medium">
-                        {order.orderType === 'TAKEOUT' ? 'Takeout' : 'Dine-in'} ·{' '}
-                        {order.requestedFrom}
-                      </span>
                     </div>
                   </td>
 

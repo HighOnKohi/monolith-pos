@@ -1217,6 +1217,18 @@ export async function clearAnalyticsData(adminEmail: string, adminPassword: stri
   let deletedTicketsCount = 0
   if (targetTickets && targetTickets.length > 0) {
     const ticketIds = targetTickets.map((t) => Number(t['TICKET_ID']))
+
+    // First fetch child item IDs to clear linked group items safely
+    const { data: childItems } = await supabase
+      .from('Ticket_Order_Items')
+      .select('TICKET_ORDER_ITEM_ID')
+      .in('TICKET_ORDER_ID', ticketIds)
+
+    const itemIds = (childItems ?? []).map((i: any) => Number(i.TICKET_ORDER_ITEM_ID))
+    if (itemIds.length > 0) {
+      await supabase.from('Ticket_Order_Group_Items').delete().in('TICKET_GROUP_ID', itemIds)
+    }
+
     await supabase.from('Ticket_Order_Items').delete().in('TICKET_ORDER_ID', ticketIds)
     await supabase.from('Ticket_Orders').delete().in('TICKET_ID', ticketIds)
     deletedTicketsCount = ticketIds.length

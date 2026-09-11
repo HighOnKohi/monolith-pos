@@ -19,6 +19,7 @@ import { OrderLogsPagination } from './components/OrderLogsPagination'
 import { OrderDetailsDrawer } from './components/OrderDetailsDrawer'
 import { exportOrderLogsToCsv } from './utils/orderLogsCsv'
 import { exportOrderLogsPdf } from './utils/orderLogsPdf'
+import { subscribeToOrderUpdates } from '@/services/dispatcherService'
 
 export default function OrderLogsPage() {
   // ── Filter & Search State ──
@@ -153,6 +154,10 @@ export default function OrderLogsPage() {
 
   // ── Realtime Subscriptions ──
   useEffect(() => {
+    const unsubscribeBus = subscribeToOrderUpdates(() => {
+      loadOrderLogs()
+    })
+
     const channel = supabase
       .channel('order_logs_realtime')
       .on(
@@ -169,9 +174,24 @@ export default function OrderLogsPage() {
           loadOrderLogs()
         },
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Ticket_Orders' },
+        () => {
+          loadOrderLogs()
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Ticket_Order_Items' },
+        () => {
+          loadOrderLogs()
+        },
+      )
       .subscribe()
 
     return () => {
+      unsubscribeBus()
       supabase.removeChannel(channel)
     }
   }, [loadOrderLogs])

@@ -39,8 +39,8 @@ export function exportOrderLogsToCsv(orders: OrderLogRow[], filterLabel?: string
   const rows = orders.map((o) => [
     escapeCsv(`#${o.orderId}`),
     escapeCsv(o.createdAt),
-    escapeCsv(`Table ${o.tableNum}`),
-    escapeCsv(o.mergedGroupLabel || 'Single Table'),
+    escapeCsv(o.orderType === 'TICKET' ? `Ticket #${o.orderId}` : `Table ${o.tableNum}`),
+    escapeCsv(o.orderType === 'TICKET' ? 'N/A' : (o.mergedGroupLabel || 'Single Table')),
     escapeCsv(o.guestCount),
     escapeCsv(o.orderType),
     escapeCsv(o.requestedFrom),

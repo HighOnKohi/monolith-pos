@@ -174,6 +174,8 @@ export async function fetchTicketOrders(): Promise<TicketOrder[]> {
       REGISTERED_CONTACT_INFO,
       REGISTERED_TIME_OF_ARRIVAL,
       TICKET_STATUS,
+      CREATED_AT,
+      COMPLETED_AT,
       Ticket_Order_Items (
         TICKET_ORDER_ITEM_ID,
         TICKET_ORDER_ID,
@@ -260,6 +262,8 @@ export async function fetchTicketOrders(): Promise<TicketOrder[]> {
       registeredContactInfo: row['REGISTERED_CONTACT_INFO'] ? Number(row['REGISTERED_CONTACT_INFO']) : null,
       registeredTimeOfArrival: (row['REGISTERED_TIME_OF_ARRIVAL'] as string | null) ?? null,
       ticketStatus: (row['TICKET_STATUS'] as TicketStatus) || 'REQUESTED',
+      createdAt: (row['CREATED_AT'] as string | null) ?? undefined,
+      completedAt: (row['COMPLETED_AT'] as string | null) ?? null,
       items,
       totalAmount: calculatedTotal,
     }
@@ -284,13 +288,66 @@ export async function updateTicketOrderStatus(ticketId: number, status: TicketSt
 }
 
 /**
- * Deletes/Cancels a ticket order and its items.
+ * Settles/Bills out a ticket order at the cashier station.
+ * Marks the ticket COMPLETED and records COMPLETED_AT timestamp so it
+ * clears from the Cashier's pending billing list and persists into logs & analytics.
+ */
+export async function settleTicketOrder(ticketId: number): Promise<void> {
+  const { error } = await supabase
+    .from('Ticket_Orders')
+    .update({
+      TICKET_STATUS: 'COMPLETED',
+      COMPLETED_AT: new Date().toISOString(),
+    })
+    .eq('TICKET_ID', ticketId)
+
+  if (error) {
+    console.error('[ticketService] Failed to settle ticket order:', error)
+    throw error
+  }
+
+  // Also ensure child item statuses are marked COMPLETED
+  await supabase
+    .from('Ticket_Order_Items')
+    .update({ TICKET_ORDER_ITEM_STATUS: 'COMPLETED' })
+    .eq('TICKET_ORDER_ID', ticketId)
+
+  broadcastOrderUpdate({ type: 'tickets' })
+}
+
+/**
+ * Deletes/Cancels a ticket order and its items safely without foreign key conflicts.
  */
 export async function deleteTicketOrder(ticketId: number): Promise<void> {
-  // First delete items
-  await supabase.from('Ticket_Order_Items').delete().eq('TICKET_ORDER_ID', ticketId)
+  // 1. Fetch child item IDs to clear linked group items first
+  const { data: childItems } = await supabase
+    .from('Ticket_Order_Items')
+    .select('TICKET_ORDER_ITEM_ID')
+    .eq('TICKET_ORDER_ID', ticketId)
 
-  // Then delete order
+  const itemIds = (childItems ?? []).map((i: any) => Number(i.TICKET_ORDER_ITEM_ID))
+  if (itemIds.length > 0) {
+    const { error: groupItemsErr } = await supabase
+      .from('Ticket_Order_Group_Items')
+      .delete()
+      .in('TICKET_GROUP_ID', itemIds)
+    if (groupItemsErr) {
+      console.warn('[ticketService] Warning deleting Ticket_Order_Group_Items:', groupItemsErr)
+    }
+  }
+
+  // 2. Delete child items
+  const { error: itemsErr } = await supabase
+    .from('Ticket_Order_Items')
+    .delete()
+    .eq('TICKET_ORDER_ID', ticketId)
+
+  if (itemsErr) {
+    console.error('[ticketService] Failed to delete ticket order items:', itemsErr)
+    throw itemsErr
+  }
+
+  // 3. Delete order
   const { error } = await supabase.from('Ticket_Orders').delete().eq('TICKET_ID', ticketId)
   if (error) {
     console.error('[ticketService] Failed to delete ticket order:', error)

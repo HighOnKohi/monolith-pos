@@ -26,6 +26,7 @@ export interface TicketOrder {
   registeredTimeOfArrival: string | null
   ticketStatus: TicketStatus
   createdAt?: string
+  completedAt?: string | null
   items?: TicketOrderItem[]
   totalAmount?: number
 }

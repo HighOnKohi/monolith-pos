@@ -10,23 +10,33 @@ import {
   Clock,
   Phone,
   User,
+  Trash2,
+  AlertTriangle,
+  X,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllTables, fetchOrderSummariesForIds, type TableData } from '@/services/tableService'
-import { fetchOrdersByTable, settleTableOrders } from '@/services/orderService'
+import { fetchOrdersByTable, settleTableOrders, deleteOrder } from '@/services/orderService'
 import { fetchAllBillRequests, resolveBillOutRequest, updateBillRequestStatus } from '@/services/billService'
-import { fetchTicketOrders, deleteTicketOrder } from '@/services/ticketService'
-import { subscribeToOrderUpdates } from '@/services/dispatcherService'
+import { fetchTicketOrders, settleTicketOrder, deleteTicketOrder } from '@/services/ticketService'
+import { subscribeToOrderUpdates, broadcastOrderUpdate } from '@/services/dispatcherService'
 import type { BillRequest } from '@/types/bill'
-import type { Order } from '@/types/order'
+import type { Order, OrderStatus } from '@/types/order'
 import type { TicketOrder } from '@/types/ticket'
 import { resolveTableGroupByList } from '@/services/tableGroupService'
 import { buildReceiptSnapshot, buildTicketReceiptSnapshot } from '@/components/receipt/buildReceipt'
 import { ReceiptPreviewModal } from '@/components/receipt/ReceiptPreviewModal'
 import type { ReceiptSnapshot } from '@/components/receipt/types'
 
-// Strict cashier visibility: Only COMPLETED orders appear in cashier
-const ACTIVE_STATUSES = ['COMPLETED'] as const
+// Active order statuses displayed in cashier
+const ALL_ACTIVE_ORDER_STATUSES: OrderStatus[] = [
+  'REQUESTED',
+  'VERIFIED',
+  'PREPARING',
+  'READY',
+  'SERVED',
+  'COMPLETED',
+]
 const money = (value: number) => `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 interface ItemDiscount {
@@ -60,6 +70,8 @@ export default function CashierInterface() {
   const [applyAllCustom, setApplyAllCustom] = useState(0)
   const [receipt, setReceipt] = useState<ReceiptSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
+  const [removeBusy, setRemoveBusy] = useState(false)
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
@@ -71,18 +83,27 @@ export default function CashierInterface() {
       ])
       const nextSummaries = await fetchOrderSummariesForIds(
         nextTables.map((table) => table.TABLE_ID),
-        ['COMPLETED'],
+        ALL_ACTIVE_ORDER_STATUSES,
       )
       setTables(nextTables)
       setSummaries(nextSummaries)
       setBillRequests(nextRequests)
       setTickets(nextTickets)
 
-      setSelectedId((current) =>
-        current && nextTables.some((table) => table.TABLE_ID === current) ? current : null,
-      )
+      setSelectedId((current) => {
+        const valid = current && nextTables.some((table) => table.TABLE_ID === current) ? current : null
+        if (valid) {
+          const group = resolveTableGroupByList(valid, nextTables)
+          void fetchOrdersByTable(group.anchorTableId, ALL_ACTIVE_ORDER_STATUSES, group.memberTableIds)
+            .then((updated) => setOrders(updated))
+            .catch(() => {})
+        } else {
+          setOrders([])
+        }
+        return valid
+      })
       setSelectedTicketId((current) =>
-        current && nextTickets.some((t) => t.ticketId === current && t.ticketStatus === 'COMPLETED')
+        current && nextTickets.some((t) => t.ticketId === current && !t.completedAt)
           ? current
           : null,
       )
@@ -144,16 +165,27 @@ export default function CashierInterface() {
     })
   }, [tables, summaries])
 
-  // Completed Tickets List
-  const completedTickets = useMemo(() => {
-    return tickets.filter((t) => t.ticketStatus === 'COMPLETED')
+  // Active Tickets List (all active tickets not yet billed out / settled)
+  const activeTickets = useMemo(() => {
+    return tickets.filter((t) => !t.completedAt)
   }, [tickets])
 
   const selectedTableGroup = groups.find(({ group }) => group.anchorTableId === selectedId) ?? null
-  const selectedTicket = completedTickets.find((t) => t.ticketId === selectedTicketId) ?? null
+  const selectedTicket = activeTickets.find((t) => t.ticketId === selectedTicketId) ?? null
   const activeBillRequest = selectedTableGroup
     ? billRequests.find((request) => selectedTableGroup.group.memberTableIds.includes(request.tableId)) ?? null
     : null
+
+  // Dispatcher completion check: tickets and table orders must be COMPLETED in Dispatcher to bill out
+  const isTableDispatcherDone = useMemo(() => {
+    if (orders.length === 0) return false
+    return orders.every((o) => o.orderStatus === 'COMPLETED')
+  }, [orders])
+
+  const isTicketDispatcherDone = useMemo(() => {
+    if (!selectedTicket) return false
+    return selectedTicket.ticketStatus === 'COMPLETED'
+  }, [selectedTicket])
 
   // Active items in current view (tables or tickets)
   const activeItems = useMemo<Array<{
@@ -165,10 +197,10 @@ export default function CashierInterface() {
   }>>(() => {
     if (mode === 'tables') {
       return orders
-        .filter((order) => ACTIVE_STATUSES.includes(order.orderStatus as typeof ACTIVE_STATUSES[number]))
+        .filter((order) => order.orderStatus !== 'CANCELLED')
         .flatMap((order) =>
           (order.items ?? [])
-            .filter((item) => item.status === 'DONE')
+            .filter((item) => item.status !== 'CANCELLED')
             .map((item) => ({
               orderItemId: String(item.orderItemId),
               orderId: order.orderId,
@@ -259,11 +291,11 @@ export default function CashierInterface() {
     setItemDiscounts(new Map())
     const group = resolveTableGroupByList(tableId, tables)
     try {
-      setOrders(await fetchOrdersByTable(group.anchorTableId, ['COMPLETED'], group.memberTableIds))
+      setOrders(await fetchOrdersByTable(group.anchorTableId, ALL_ACTIVE_ORDER_STATUSES, group.memberTableIds))
     } catch (err) {
       console.error('[CashierInterface] Failed to fetch orders:', err)
       setOrders([])
-      setError("Unable to load this table's completed order.")
+      setError("Unable to load this table's orders.")
     }
   }
 
@@ -332,7 +364,7 @@ export default function CashierInterface() {
     setBusy(true)
     setError('')
     const snapshot = buildReceiptSnapshot({
-      tableOrders: orders.filter((order) => ACTIVE_STATUSES.includes(order.orderStatus as typeof ACTIVE_STATUSES[number])),
+      tableOrders: orders.filter((order) => order.orderStatus !== 'CANCELLED'),
       discountType: 'none',
       customPercent: 0,
       activeBillRequest,
@@ -387,6 +419,27 @@ export default function CashierInterface() {
     setBusy(true)
     setError('')
 
+    const discounts: Array<{ label: string; amount: number }> = []
+    if (pwdCount > 0) {
+      discounts.push({
+        label: `PWD Discount (${pwdCount} items)`,
+        amount: (subtotal * 0.2 * pwdCount) / Math.max(1, activeItems.length),
+      })
+    }
+    if (seniorCount > 0) {
+      discounts.push({
+        label: `Senior Citizen Discount (${seniorCount} items)`,
+        amount: (subtotal * 0.2 * seniorCount) / Math.max(1, activeItems.length),
+      })
+    }
+    if (customTotal > 0) {
+      discounts.push({
+        label: 'Custom Discount',
+        amount: customTotal,
+      })
+    }
+    const totalDiscountAmount = discounts.reduce((sum, d) => sum + d.amount, 0)
+
     const snapshot = buildTicketReceiptSnapshot({
       ticketId: selectedTicket.ticketId,
       registeredName: selectedTicket.registeredName,
@@ -396,15 +449,15 @@ export default function CashierInterface() {
         quantity: g.items.length,
       })),
       baseSubtotal: subtotal,
-      discounts: [],
-      totalDiscount: 0,
+      discounts,
+      totalDiscount: totalDiscountAmount,
       taxAmount: taxableSubtotal * 0.05,
       grandTotal: total,
       paymentMethod: 'Cash',
     })
 
     try {
-      await deleteTicketOrder(selectedTicket.ticketId)
+      await settleTicketOrder(selectedTicket.ticketId)
       setReceipt(snapshot)
       setSelectedTicketId(null)
       setItemDiscounts(new Map())
@@ -414,6 +467,61 @@ export default function CashierInterface() {
       setError(err instanceof Error ? err.message : 'Unable to complete ticket bill-out.')
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function handleRemoveOrder() {
+    if (mode === 'tickets') {
+      if (!selectedTicket) return
+      setRemoveBusy(true)
+      setError('')
+      try {
+        await deleteTicketOrder(selectedTicket.ticketId)
+        broadcastOrderUpdate({ type: 'all' })
+        setSelectedTicketId(null)
+        setShowRemoveConfirm(false)
+        await load()
+      } catch (err) {
+        console.error('[CashierInterface] Failed to remove ticket order:', err)
+        setError(err instanceof Error ? err.message : 'Failed to remove ticket order.')
+      } finally {
+        setRemoveBusy(false)
+      }
+    } else {
+      if (!selectedTableGroup || orders.length === 0) return
+      setRemoveBusy(true)
+      setError('')
+      try {
+        const memberIds = selectedTableGroup.group.memberTableIds
+        for (const order of orders) {
+          await deleteOrder(order.orderId)
+        }
+        if (activeBillRequest) {
+          await updateBillRequestStatus(activeBillRequest.requestId, 'CANCELLED')
+        }
+        await resolveBillOutRequest(selectedTableGroup.group.anchorTableId)
+
+        await supabase
+          .from('Restaurant_Tables')
+          .update({
+            STATUS: 'AVAILABLE',
+            BILL_OUT_REQUESTED: false,
+            CURRENT_GUEST_COUNT: 0,
+            RESERVED_SINCE: null,
+          })
+          .in('TABLE_ID', memberIds)
+
+        broadcastOrderUpdate({ type: 'all' })
+        setSelectedId(null)
+        setOrders([])
+        setShowRemoveConfirm(false)
+        await load()
+      } catch (err) {
+        console.error('[CashierInterface] Failed to remove table order:', err)
+        setError(err instanceof Error ? err.message : 'Failed to remove table order.')
+      } finally {
+        setRemoveBusy(false)
+      }
     }
   }
 
@@ -467,12 +575,12 @@ export default function CashierInterface() {
                 ].join(' ')}
               >
                 <Ticket className="w-3.5 h-3.5 text-[#E9C46A]" />
-                <span>Tickets ({completedTickets.length})</span>
+                <span>Tickets ({activeTickets.length})</span>
               </button>
             </div>
 
             <span className="text-xs font-bold text-slate-400">
-              {mode === 'tables' ? 'Showing completed dine-in/takeout tables' : 'Showing ready ticket orders'}
+              {mode === 'tables' ? 'Showing dine-in/takeout tables' : 'Showing active ticket orders'}
             </span>
           </div>
 
@@ -508,9 +616,11 @@ export default function CashierInterface() {
           ) : (
             /* Tickets Cards Grid */
             <div className="ci-table-grid">
-              {completedTickets.map((tk) => {
+              {activeTickets.map((tk) => {
                 const isSelected = selectedTicketId === tk.ticketId
                 const displayName = tk.registeredName || 'Guest Order'
+                const isDone = tk.ticketStatus === 'COMPLETED'
+                const isCooking = tk.ticketStatus === 'PREPARING'
                 return (
                   <button
                     key={tk.ticketId}
@@ -525,7 +635,13 @@ export default function CashierInterface() {
                           {displayName}
                         </span>
                       </span>
-                      <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 shrink-0">READY</span>
+                      {isDone ? (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 shrink-0">READY</span>
+                      ) : isCooking ? (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 shrink-0">COOKING</span>
+                      ) : (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 shrink-0">REQUESTED</span>
+                      )}
                     </div>
 
                     <div className="text-left space-y-1.5 py-1">
@@ -550,8 +666,8 @@ export default function CashierInterface() {
                   </button>
                 )
               })}
-              {completedTickets.length === 0 && (
-                <div className="ci-empty">No completed ticket orders ready for billing.</div>
+              {activeTickets.length === 0 && (
+                <div className="ci-empty">No active ticket orders.</div>
               )}
             </div>
           )}
@@ -924,30 +1040,160 @@ export default function CashierInterface() {
               <strong>{money(total)}</strong>
             </div>
 
-            {mode === 'tables' ? (
-              <button
-                type="button"
-                className="ci-settle-button"
-                disabled={!selectedTableGroup || orders.length === 0 || busy}
-                onClick={() => void settleTable()}
-              >
-                <CreditCard className="ci-icon" />
-                {busy ? 'Processing...' : 'Bill Out Customer'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="ci-settle-button"
-                disabled={!selectedTicket || activeItems.length === 0 || busy}
-                onClick={() => void settleTicket()}
-              >
-                <CreditCard className="ci-icon" />
-                {busy ? 'Processing...' : 'Bill Out Ticket'}
-              </button>
+            {/* Warning banner if not completed in Dispatcher */}
+            {((mode === 'tables' && selectedTableGroup && orders.length > 0 && !isTableDispatcherDone) ||
+              (mode === 'tickets' && selectedTicket && !isTicketDispatcherDone)) && (
+              <div className="ci-dispatcher-warning">
+                <Clock className="w-4 h-4 shrink-0 text-amber-600" />
+                <span>Awaiting Dispatcher completion. Cannot be billed out yet.</span>
+              </div>
             )}
+
+            <div className="ci-action-buttons">
+              <button
+                type="button"
+                className="ci-remove-button"
+                disabled={
+                  busy ||
+                  removeBusy ||
+                  (mode === 'tables' ? !selectedTableGroup || orders.length === 0 : !selectedTicket)
+                }
+                onClick={() => setShowRemoveConfirm(true)}
+                title="Remove and cancel this order"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Remove Order</span>
+              </button>
+
+              {mode === 'tables' ? (
+                <button
+                  type="button"
+                  className="ci-settle-button"
+                  disabled={!selectedTableGroup || orders.length === 0 || !isTableDispatcherDone || busy || removeBusy}
+                  onClick={() => void settleTable()}
+                >
+                  <CreditCard className="ci-icon" />
+                  {busy ? 'Processing...' : !isTableDispatcherDone ? 'Awaiting Dispatcher' : 'Bill Out Customer'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="ci-settle-button"
+                  disabled={!selectedTicket || activeItems.length === 0 || !isTicketDispatcherDone || busy || removeBusy}
+                  onClick={() => void settleTicket()}
+                >
+                  <CreditCard className="ci-icon" />
+                  {busy ? 'Processing...' : !isTicketDispatcherDone ? 'Awaiting Dispatcher' : 'Bill Out Ticket'}
+                </button>
+              )}
+            </div>
           </footer>
         </aside>
       </div>
+
+      {/* Remove Order Confirmation Modal */}
+      {showRemoveConfirm && (
+        <div className="ci-modal-overlay" onClick={() => !removeBusy && setShowRemoveConfirm(false)}>
+          <div className="ci-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="ci-modal-header">
+              <span className="ci-modal-title">
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <span>{mode === 'tickets' ? 'Remove Ticket Order' : 'Remove Table Order'}</span>
+              </span>
+              <button
+                type="button"
+                className="text-slate-400 hover:text-slate-600 cursor-pointer p-1 rounded-md"
+                disabled={removeBusy}
+                onClick={() => setShowRemoveConfirm(false)}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="ci-modal-body">
+              {mode === 'tickets' && selectedTicket && (
+                <>
+                  <p className="mb-3 text-slate-700 font-medium">
+                    Are you sure you want to remove <strong>Ticket #{selectedTicket.ticketId}</strong> ({selectedTicket.registeredName || 'Guest Order'})?
+                  </p>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-bold">Dispatcher Status:</span>
+                      <span className={`font-black ${selectedTicket.ticketStatus === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {selectedTicket.ticketStatus === 'COMPLETED' ? 'Ready for Billing' : selectedTicket.ticketStatus === 'PREPARING' ? 'Cooking in Dispatcher' : 'Requested'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-bold">Line Items:</span>
+                      <span className="font-extrabold text-[#14274E]">{(selectedTicket.items ?? []).length} item(s)</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-bold">Order Total:</span>
+                      <span className="font-black text-[#14274E]">{money(total)}</span>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs text-rose-600 font-bold flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>This will permanently cancel and remove the ticket from all stations.</span>
+                  </p>
+                </>
+              )}
+
+              {mode === 'tables' && selectedTableGroup && (
+                <>
+                  <p className="mb-3 text-slate-700 font-medium">
+                    Are you sure you want to remove active order(s) for <strong>Table {selectedTableGroup.group.memberTableNums.join(' + ')}</strong>?
+                  </p>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-bold">Dispatcher Status:</span>
+                      <span className={`font-black ${isTableDispatcherDone ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {isTableDispatcherDone ? 'Ready for Billing' : 'In Preparation / Dispatcher'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-bold">Orders:</span>
+                      <span className="font-extrabold text-[#14274E]">#{orders.map((o) => o.orderId).join(', #')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-bold">Active Items:</span>
+                      <span className="font-extrabold text-[#14274E]">{activeItems.length} item(s)</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-bold">Order Total:</span>
+                      <span className="font-black text-[#14274E]">{money(total)}</span>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs text-rose-600 font-bold flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>This will cancel the active order(s) and reset the table to Available.</span>
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div className="ci-modal-footer">
+              <button
+                type="button"
+                className="ci-modal-btn-cancel"
+                disabled={removeBusy}
+                onClick={() => setShowRemoveConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ci-modal-btn-danger"
+                disabled={removeBusy}
+                onClick={() => void handleRemoveOrder()}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{removeBusy ? 'Removing...' : 'Confirm Remove'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {receipt && <ReceiptPreviewModal receipt={receipt} onClose={() => setReceipt(null)} />}
       {!receipt && selectedTableGroup && activeBillRequest && (

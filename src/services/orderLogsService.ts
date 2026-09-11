@@ -1,11 +1,11 @@
 import { supabase } from '@/lib/supabase'
 import type { OrderStatus, OrderType, OrderTimelineEvent } from '@/types/order'
-import { parseDbTimestamp } from './analyticsService'
+import { parseDbTimestamp, parseTicketOrderTimestamp } from './analyticsService'
 import { getActiveStaffSession } from './staffCodeService'
 
 export type PaymentStatusFilter = 'ALL' | 'PAID' | 'UNPAID'
 export type PaymentMethodFilter = 'ALL' | 'CASH' | 'CREDIT_CARD' | 'INSTAPAY_QR'
-export type OrderSourceFilter = 'ALL' | 'Cashier' | 'Customer'
+export type OrderSourceFilter = 'ALL' | 'Cashier' | 'Customer' | 'Ticketing'
 export type SortField = 'TIME' | 'ORDER_ID' | 'TOTAL_BILL' | 'ORDER_STATUS'
 export type SortOrder = 'asc' | 'desc'
 
@@ -32,7 +32,7 @@ export interface OrderLogRow {
   isMerged: boolean
   orderStatus: OrderStatus
   orderType: OrderType
-  requestedFrom: 'Cashier' | 'Customer'
+  requestedFrom: 'Cashier' | 'Customer' | 'Ticketing'
   totalBill: number
   subtotalBill: number
   paymentStatus: 'PAID' | 'UNPAID'
@@ -195,107 +195,215 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
   // 1. Resolve table metadata map
   const tableMap = await getTableDisplayMap()
 
-  // 2. Build Supabase query for Restaurant_Orders
-  let query = supabase.from('Restaurant_Orders').select('*')
+  // 2. Fetch Restaurant_Orders (unless filtered strictly to Ticketing)
+  let tableRows: OrderLogRow[] = []
+  if (orderSource !== 'Ticketing') {
+    let query = supabase.from('Restaurant_Orders').select('*')
 
-  if (startDate) {
-    query = query.gte('TIME', toIsoDate(startDate))
-  }
-  if (endDate) {
-    query = query.lte('TIME', toIsoDate(endDate))
-  }
-  if (orderStatus && orderStatus !== 'ALL') {
-    query = query.eq('ORDER_STATUS', orderStatus)
-  }
-  if (orderSource && orderSource !== 'ALL') {
-    query = query.eq('REQUESTED_FROM', orderSource)
-  }
-  if (tableId && tableId !== 'ALL') {
-    query = query.eq('TABLE_ID', tableId)
-  }
+    if (startDate) {
+      query = query.gte('TIME', toIsoDate(startDate))
+    }
+    if (endDate) {
+      query = query.lte('TIME', toIsoDate(endDate))
+    }
+    if (orderStatus && orderStatus !== 'ALL') {
+      query = query.eq('ORDER_STATUS', orderStatus)
+    }
+    if (orderSource && orderSource !== 'ALL') {
+      query = query.eq('REQUESTED_FROM', orderSource)
+    }
+    if (tableId && tableId !== 'ALL') {
+      query = query.eq('TABLE_ID', tableId)
+    }
 
-  // Sort
-  query = query.order(sortBy, { ascending: sortOrder === 'asc' })
+    const { data: rawOrders, error } = await query
 
-  const { data: rawOrders, error } = await query
+    if (error) {
+      console.error('[orderLogsService] Error fetching table orders:', error)
+      throw error
+    }
 
-  if (error) {
-    console.error('[orderLogsService] Error fetching orders:', error)
-    throw error
-  }
+    tableRows = (rawOrders ?? []).map((o) => {
+      const oId = Number(o['ORDER_ID'])
+      const tId = Number(o['TABLE_ID'])
+      const tInfo = tableMap.get(tId) || { tableNum: tId, displayLabel: `Table ${tId}`, isMerged: false }
+      const st = String(o['ORDER_STATUS'] || 'REQUESTED') as OrderStatus
+      const reqFrom = String(o['REQUESTED_FROM'] || 'Cashier') === 'Customer' ? 'Customer' : 'Cashier'
+      const ordType = String(o['ORDER_TYPE'] || 'DINE-IN').toUpperCase().includes('TAKEOUT')
+        ? 'TAKEOUT'
+        : 'DINE-IN'
+      const total = Number(o['TOTAL_BILL']) || 0
+      const subtotal = Number(o['SUBTOTAL_BILL']) || total
+      const guests = Math.max(Number(o['GUEST_COUNT']) || 1, 1)
 
-  const allOrders = rawOrders ?? []
+      const timeStr = String(o['TIME'] || '')
+      const readyStr = o['READY_AT'] ? String(o['READY_AT']) : null
+      const servedStr = o['SERVED_AT'] ? String(o['SERVED_AT']) : null
+      const compStr = o['COMPLETED_AT'] ? String(o['COMPLETED_AT']) : null
 
-  // 3. Process orders into OrderLogRow objects
-  const processedRows: OrderLogRow[] = allOrders.map((o) => {
-    const oId = Number(o['ORDER_ID'])
-    const tId = Number(o['TABLE_ID'])
-    const tInfo = tableMap.get(tId) || { tableNum: tId, displayLabel: `Table ${tId}`, isMerged: false }
-    const st = String(o['ORDER_STATUS'] || 'REQUESTED') as OrderStatus
-    const reqFrom = String(o['REQUESTED_FROM'] || 'Cashier') === 'Customer' ? 'Customer' : 'Cashier'
-    const ordType = String(o['ORDER_TYPE'] || 'DINE-IN').toUpperCase().includes('TAKEOUT')
-      ? 'TAKEOUT'
-      : 'DINE-IN'
-    const total = Number(o['TOTAL_BILL']) || 0
-    const subtotal = Number(o['SUBTOTAL_BILL']) || total
-    const guests = Math.max(Number(o['GUEST_COUNT']) || 1, 1)
+      let servingDurationMinutes: number | null = null
+      const timeDate = parseDbTimestamp(timeStr)
+      const servedDate = parseDbTimestamp(servedStr)
+      const readyDate = parseDbTimestamp(readyStr)
 
-    const timeStr = String(o['TIME'] || '')
-    const readyStr = o['READY_AT'] ? String(o['READY_AT']) : null
-    const servedStr = o['SERVED_AT'] ? String(o['SERVED_AT']) : null
-    const compStr = o['COMPLETED_AT'] ? String(o['COMPLETED_AT']) : null
-
-    // Serving Duration (TIME -> SERVED_AT)
-    let servingDurationMinutes: number | null = null
-    const timeDate = parseDbTimestamp(timeStr)
-    const servedDate = parseDbTimestamp(servedStr)
-    const readyDate = parseDbTimestamp(readyStr)
-
-    if (timeDate && servedDate) {
-      const diff = (servedDate.getTime() - timeDate.getTime()) / 60000
-      if (diff >= 0 && diff < 1440) {
-        servingDurationMinutes = Math.round(diff * 10) / 10
+      if (timeDate && servedDate) {
+        const diff = (servedDate.getTime() - timeDate.getTime()) / 60000
+        if (diff >= 0 && diff < 1440) {
+          servingDurationMinutes = Math.round(diff * 10) / 10
+        }
       }
-    }
 
-    // Kitchen Prep Duration (TIME -> READY_AT)
-    let prepDurationMinutes: number | null = null
-    if (timeDate && readyDate) {
-      const diff = (readyDate.getTime() - timeDate.getTime()) / 60000
-      if (diff >= 0 && diff < 1440) {
-        prepDurationMinutes = Math.round(diff * 10) / 10
+      let prepDurationMinutes: number | null = null
+      if (timeDate && readyDate) {
+        const diff = (readyDate.getTime() - timeDate.getTime()) / 60000
+        if (diff >= 0 && diff < 1440) {
+          prepDurationMinutes = Math.round(diff * 10) / 10
+        }
       }
-    }
 
-    // Payment Status & Method
-    const isPaid = st === 'COMPLETED'
-    const pMethod = String(o['PAYMENT_METHOD'] || 'CASH').toUpperCase()
+      const isPaid = st === 'COMPLETED'
+      const pMethod = String(o['PAYMENT_METHOD'] || 'CASH').toUpperCase()
 
-    return {
-      orderId: oId,
-      tableId: tId,
-      tableNum: tInfo.tableNum,
-      mergedGroupLabel: tInfo.isMerged ? tInfo.displayLabel : null,
-      isMerged: tInfo.isMerged,
-      orderStatus: st,
-      orderType: ordType,
-      requestedFrom: reqFrom,
-      totalBill: total,
-      subtotalBill: subtotal,
-      paymentStatus: isPaid ? 'PAID' : 'UNPAID',
-      paymentMethod: pMethod,
-      guestCount: guests,
-      createdAt: timeStr,
-      readyAt: readyStr,
-      servedAt: servedStr,
-      completedAt: compStr,
-      servingDurationMinutes,
-      prepDurationMinutes,
-      itemCount: 0, // populated below for the current page
-      kitchenNote: o['KITCHEN_NOTE'] ? String(o['KITCHEN_NOTE']) : null,
-      serverNote: o['SERVER_NOTE'] ? String(o['SERVER_NOTE']) : null,
+      return {
+        orderId: oId,
+        tableId: tId,
+        tableNum: tInfo.tableNum,
+        mergedGroupLabel: tInfo.isMerged ? tInfo.displayLabel : null,
+        isMerged: tInfo.isMerged,
+        orderStatus: st,
+        orderType: ordType,
+        requestedFrom: reqFrom,
+        totalBill: total,
+        subtotalBill: subtotal,
+        paymentStatus: isPaid ? 'PAID' : 'UNPAID',
+        paymentMethod: pMethod,
+        guestCount: guests,
+        createdAt: timeStr,
+        readyAt: readyStr,
+        servedAt: servedStr,
+        completedAt: compStr,
+        servingDurationMinutes,
+        prepDurationMinutes,
+        itemCount: 0,
+        kitchenNote: o['KITCHEN_NOTE'] ? String(o['KITCHEN_NOTE']) : null,
+        serverNote: o['SERVER_NOTE'] ? String(o['SERVER_NOTE']) : null,
+      }
+    })
+  }
+
+  // 2b. Fetch Ticket_Orders (when not filtering by a specific table or strictly Cashier/Customer)
+  let ticketRows: OrderLogRow[] = []
+  if ((tableId === 'ALL' || tableId === undefined) && orderSource !== 'Cashier' && orderSource !== 'Customer') {
+    const { data: rawTickets, error: ticketsErr } = await supabase
+      .from('Ticket_Orders')
+      .select(`
+        TICKET_ID,
+        REGISTERED_NAME,
+        REGISTERED_CONTACT_INFO,
+        REGISTERED_TIME_OF_ARRIVAL,
+        TICKET_STATUS,
+        CREATED_AT,
+        COMPLETED_AT,
+        Ticket_Order_Items (
+          TICKET_ORDER_ITEM_ID,
+          ITEM_ID,
+          ITEM_GROUP_ID,
+          Menu_Items (
+            ITEM_PRICE
+          ),
+          Menu_Item_Groups (
+            GROUP_PRICE
+          )
+        )
+      `)
+
+    if (ticketsErr) {
+      console.warn('[orderLogsService] Error fetching ticket orders:', ticketsErr)
+    } else {
+      ticketRows = (rawTickets ?? [])
+        .map((t: any) => {
+          const tId = Number(t['TICKET_ID'])
+          const rawItems = (t['Ticket_Order_Items'] as Array<Record<string, unknown>> | undefined) ?? []
+          let total = 0
+          rawItems.forEach((oi) => {
+            const isGroup = Boolean(oi['ITEM_GROUP_ID'])
+            const grp = oi['Menu_Item_Groups'] as Record<string, unknown> | undefined
+            const itm = oi['Menu_Items'] as Record<string, unknown> | undefined
+            if (isGroup && grp) {
+              total += Number(grp['GROUP_PRICE'] ?? 0)
+            } else if (itm) {
+              total += Number(itm['ITEM_PRICE'] ?? 0)
+            }
+          })
+          const subtotal = total > 0 ? total / 1.05 : 0
+
+          const date = parseTicketOrderTimestamp(t) ?? new Date()
+          const timeStr = (t['CREATED_AT'] as string) || date.toISOString()
+          const compStr = (t['COMPLETED_AT'] as string | null) ?? null
+
+          // Apply date filter
+          if (startDate && date < startDate) return null
+          if (endDate && date > endDate) return null
+
+          const rawStatus = String(t['TICKET_STATUS'] || 'REQUESTED').toUpperCase().trim()
+          const st: OrderStatus =
+            rawStatus === 'COMPLETED'
+              ? 'COMPLETED'
+              : rawStatus === 'PREPARING'
+                ? 'PREPARING'
+                : rawStatus === 'CANCELLED'
+                  ? 'CANCELLED'
+                  : 'REQUESTED'
+
+          // Apply status filter
+          if (orderStatus && orderStatus !== 'ALL' && st !== orderStatus) return null
+
+          const isPaid = Boolean(compStr)
+          const regName = (t['REGISTERED_NAME'] as string | null)?.trim() || null
+          const contactInfo = t['REGISTERED_CONTACT_INFO'] ? String(t['REGISTERED_CONTACT_INFO']) : null
+
+          let servingDurationMinutes: number | null = null
+          const timeDate = parseDbTimestamp(timeStr)
+          const compDate = parseDbTimestamp(compStr)
+          if (timeDate && compDate) {
+            const diff = (compDate.getTime() - timeDate.getTime()) / 60000
+            if (diff >= 0 && diff < 1440) {
+              servingDurationMinutes = Math.round(diff * 10) / 10
+            }
+          }
+
+          const row: OrderLogRow = {
+            orderId: tId,
+            tableId: 0,
+            tableNum: tId,
+            mergedGroupLabel: null,
+            isMerged: false,
+            orderStatus: st,
+            orderType: 'TICKET',
+            requestedFrom: 'Ticketing',
+            totalBill: total,
+            subtotalBill: subtotal,
+            paymentStatus: isPaid ? 'PAID' : 'UNPAID',
+            paymentMethod: 'CASH',
+            guestCount: 1,
+            createdAt: timeStr,
+            readyAt: st === 'COMPLETED' ? (compStr || timeStr) : null,
+            servedAt: st === 'COMPLETED' ? (compStr || timeStr) : null,
+            completedAt: compStr,
+            servingDurationMinutes,
+            prepDurationMinutes: servingDurationMinutes,
+            itemCount: rawItems.length,
+            kitchenNote: null,
+            serverNote: regName ? `Customer: ${regName}${contactInfo ? ` (${contactInfo})` : ''}` : null,
+          }
+          return row
+        })
+        .filter((r): r is OrderLogRow => r !== null)
     }
-  })
+  }
+
+  // 3. Merge table orders and ticket orders
+  const processedRows: OrderLogRow[] = [...tableRows, ...ticketRows]
 
   // 4. Apply client-side filters for search, paymentStatus, and paymentMethod
   let filteredRows = processedRows
@@ -313,9 +421,11 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
     filteredRows = filteredRows.filter((r) => {
       const matchId = String(r.orderId).includes(q) || `#${r.orderId}`.includes(q)
       const matchTable =
-        String(r.tableNum).includes(q) ||
-        `table ${r.tableNum}`.includes(q) ||
-        (r.mergedGroupLabel && r.mergedGroupLabel.toLowerCase().includes(q))
+        r.orderType === 'TICKET'
+          ? `ticket #${r.orderId}`.includes(q) || `ticket ${r.orderId}`.includes(q) || 'ticket'.includes(q)
+          : String(r.tableNum).includes(q) ||
+            `table ${r.tableNum}`.includes(q) ||
+            (r.mergedGroupLabel && r.mergedGroupLabel.toLowerCase().includes(q))
       const matchSource = r.requestedFrom.toLowerCase().includes(q)
       const matchNotes =
         (r.kitchenNote && r.kitchenNote.toLowerCase().includes(q)) ||
@@ -324,6 +434,23 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
       return Boolean(matchId || matchTable || matchSource || matchNotes || matchStatus)
     })
   }
+
+  // Sort merged rows
+  filteredRows.sort((a, b) => {
+    let cmp = 0
+    if (sortBy === 'TIME') {
+      const aTime = new Date(a.createdAt).getTime() || 0
+      const bTime = new Date(b.createdAt).getTime() || 0
+      cmp = aTime - bTime
+    } else if (sortBy === 'ORDER_ID') {
+      cmp = a.orderId - b.orderId
+    } else if (sortBy === 'TOTAL_BILL') {
+      cmp = a.totalBill - b.totalBill
+    } else if (sortBy === 'ORDER_STATUS') {
+      cmp = a.orderStatus.localeCompare(b.orderStatus)
+    }
+    return sortOrder === 'asc' ? cmp : -cmp
+  })
 
   // 5. Compute summary metrics over ENTIRE filtered result set
   const totalOrders = filteredRows.length
@@ -374,13 +501,13 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
   const startIndex = (currentPage - 1) * pageSize
   const pageRows = filteredRows.slice(startIndex, startIndex + pageSize)
 
-  // 7. Efficiently fetch item counts for the visible page
-  if (pageRows.length > 0) {
-    const pageOrderIds = pageRows.map((r) => r.orderId)
+  // 7. Efficiently fetch item counts for table orders on the visible page (tickets already have itemCount)
+  const tableOrderIds = pageRows.filter((r) => r.orderType !== 'TICKET').map((r) => r.orderId)
+  if (tableOrderIds.length > 0) {
     const { data: itemCounts, error: countErr } = await supabase
       .from('Order_Items')
       .select('ORDER_ID')
-      .in('ORDER_ID', pageOrderIds)
+      .in('ORDER_ID', tableOrderIds)
 
     if (!countErr && itemCounts) {
       const countMap = new Map<number, number>()
@@ -389,7 +516,9 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
         countMap.set(oid, (countMap.get(oid) || 0) + 1)
       }
       for (const row of pageRows) {
-        row.itemCount = countMap.get(row.orderId) || 0
+        if (row.orderType !== 'TICKET') {
+          row.itemCount = countMap.get(row.orderId) || 0
+        }
       }
     }
   }
@@ -408,15 +537,16 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
  * Fetches complete details for an order to show in the side drawer.
  */
 export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetails> {
-  // 1. Fetch order row
-  const { data: orderData, error: orderErr } = await supabase
+  // 1. Fetch order row from Restaurant_Orders
+  const { data: orderData } = await supabase
     .from('Restaurant_Orders')
     .select('*')
     .eq('ORDER_ID', orderId)
-    .single()
+    .maybeSingle()
 
-  if (orderErr || !orderData) {
-    throw new Error(`Order #${orderId} could not be found: ${orderErr?.message || 'Not found'}`)
+  if (!orderData) {
+    // If not found in Restaurant_Orders, check Ticket_Orders
+    return fetchTicketOrderDetails(orderId)
   }
 
   const tableMap = await getTableDisplayMap()
@@ -589,6 +719,250 @@ export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetail
     items,
     discounts,
     billRequest,
+    timeline,
+  }
+}
+
+/**
+ * Fetches complete details for a ticket order to show in the side drawer.
+ */
+export async function fetchTicketOrderDetails(ticketId: number): Promise<OrderLogDetails> {
+  const { data: tRow, error: ticketErr } = await supabase
+    .from('Ticket_Orders')
+    .select(`
+      TICKET_ID,
+      REGISTERED_NAME,
+      REGISTERED_CONTACT_INFO,
+      REGISTERED_TIME_OF_ARRIVAL,
+      TICKET_STATUS,
+      CREATED_AT,
+      COMPLETED_AT,
+      Ticket_Order_Items (
+        TICKET_ORDER_ITEM_ID,
+        TICKET_ORDER_ID,
+        ITEM_ID,
+        ITEM_GROUP_ID,
+        DISCOUNT_ID,
+        TICKET_ORDER_ITEM_STATUS,
+        Menu_Items (
+          ITEM_ID,
+          ITEM_NAME,
+          ITEM_PRICE,
+          CATEGORY_ID,
+          Menu_Categories (
+            CATEGORY_ID,
+            CATEGORY_NAME
+          )
+        ),
+        Menu_Item_Groups (
+          MENU_GROUP_ID,
+          GROUP_NAME,
+          GROUP_PRICE,
+          GROUP_DESCRIPTION,
+          CATEGORY_ID,
+          Menu_Categories (
+            CATEGORY_ID,
+            CATEGORY_NAME
+          ),
+          Item_Groups (
+            ITEM_ID,
+            Menu_Items (
+              ITEM_ID,
+              ITEM_NAME
+            )
+          )
+        )
+      )
+    `)
+    .eq('TICKET_ID', ticketId)
+    .maybeSingle()
+
+  if (ticketErr || !tRow) {
+    throw new Error(`Order #${ticketId} could not be found: ${ticketErr?.message || 'Not found'}`)
+  }
+
+  const date = parseTicketOrderTimestamp(tRow) ?? new Date()
+  const timeStr = (tRow['CREATED_AT'] as string) || date.toISOString()
+  const compStr = (tRow['COMPLETED_AT'] as string | null) ?? null
+
+  const rawStatus = String(tRow['TICKET_STATUS'] || 'REQUESTED').toUpperCase().trim()
+  const st: OrderStatus =
+    rawStatus === 'COMPLETED'
+      ? 'COMPLETED'
+      : rawStatus === 'PREPARING'
+        ? 'PREPARING'
+        : rawStatus === 'CANCELLED'
+          ? 'CANCELLED'
+          : 'REQUESTED'
+
+  const isPaid = Boolean(compStr)
+  const regName = (tRow['REGISTERED_NAME'] as string | null)?.trim() || null
+  const contactInfo = tRow['REGISTERED_CONTACT_INFO'] ? String(tRow['REGISTERED_CONTACT_INFO']) : null
+
+  let servingDurationMinutes: number | null = null
+  const timeDate = parseDbTimestamp(timeStr)
+  const compDate = parseDbTimestamp(compStr)
+  if (timeDate && compDate) {
+    const diff = (compDate.getTime() - timeDate.getTime()) / 60000
+    if (diff >= 0 && diff < 1440) {
+      servingDurationMinutes = Math.round(diff * 10) / 10
+    }
+  }
+
+  // Parse items
+  const rawItems = (tRow['Ticket_Order_Items'] as Array<Record<string, unknown>> | undefined) ?? []
+  let calculatedTotal = 0
+  const itemMap = new Map<string, OrderLogItemDetail>()
+
+  for (const oi of rawItems) {
+    const isGroup = Boolean(oi['ITEM_GROUP_ID'])
+    const groupItem = oi['Menu_Item_Groups'] as Record<string, unknown> | undefined
+    const menuItem = oi['Menu_Items'] as Record<string, unknown> | undefined
+
+    let name = 'Unknown Dish'
+    let price = 0
+    let categoryName = 'General'
+    let notes: string | null = null
+    let key = ''
+    let itemId = 0
+
+    if (isGroup && groupItem) {
+      name = String(groupItem['GROUP_NAME'] ?? 'Group Combo')
+      price = Number(groupItem['GROUP_PRICE'] ?? 0)
+      const catObj = groupItem['Menu_Categories'] as Record<string, unknown> | undefined
+      categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'Meal Packages'
+      itemId = 100000 + Number(groupItem['MENU_GROUP_ID'] ?? 0)
+      key = `group-${itemId}`
+
+      const links = (groupItem['Item_Groups'] as Array<Record<string, unknown>> | undefined) ?? []
+      const included = links.map((il) => {
+        const mi = il['Menu_Items'] as Record<string, unknown> | undefined
+        return mi ? String(mi['ITEM_NAME']) : `Dish #${il['ITEM_ID']}`
+      })
+      if (included.length > 0) {
+        notes = `Includes: ${included.join(', ')}`
+      }
+    } else if (menuItem) {
+      name = String(menuItem['ITEM_NAME'] ?? 'Dish')
+      price = Number(menuItem['ITEM_PRICE'] ?? 0)
+      const catObj = menuItem['Menu_Categories'] as Record<string, unknown> | undefined
+      categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'General'
+      itemId = Number(menuItem['ITEM_ID'] ?? 0)
+      key = `item-${itemId}`
+    }
+
+    calculatedTotal += price
+
+    const existing = itemMap.get(key)
+    if (existing) {
+      existing.quantity += 1
+    } else {
+      itemMap.set(key, {
+        orderItemId: Number(oi['TICKET_ORDER_ITEM_ID']),
+        orderId: ticketId,
+        itemId,
+        itemName: name,
+        categoryName,
+        price,
+        quantity: 1,
+        itemStatus: String(oi['TICKET_ORDER_ITEM_STATUS'] ?? 'REQUESTED'),
+        notes,
+      })
+    }
+  }
+
+  const items = Array.from(itemMap.values())
+
+  const orderRow: OrderLogRow = {
+    orderId: ticketId,
+    tableId: 0,
+    tableNum: ticketId,
+    mergedGroupLabel: null,
+    isMerged: false,
+    orderStatus: st,
+    orderType: 'TICKET',
+    requestedFrom: 'Ticketing',
+    totalBill: calculatedTotal,
+    subtotalBill: calculatedTotal > 0 ? calculatedTotal / 1.05 : 0,
+    paymentStatus: isPaid ? 'PAID' : 'UNPAID',
+    paymentMethod: 'CASH',
+    guestCount: 1,
+    createdAt: timeStr,
+    readyAt: st === 'COMPLETED' ? (compStr || timeStr) : null,
+    servedAt: st === 'COMPLETED' ? (compStr || timeStr) : null,
+    completedAt: compStr,
+    servingDurationMinutes,
+    prepDurationMinutes: servingDurationMinutes,
+    itemCount: rawItems.length,
+    kitchenNote: null,
+    serverNote: regName ? `Customer: ${regName}${contactInfo ? ` (${contactInfo})` : ''}` : null,
+  }
+
+  // Synthesize timeline for ticket order
+  const timeline: OrderTimelineEvent[] = [
+    {
+      orderId: ticketId,
+      eventType: 'ORDER_PLACED',
+      newStatus: 'REQUESTED',
+      timestamp: timeStr,
+      actor: 'Ticketing Interface',
+      reason: regName
+        ? `Ticket #${ticketId} created for ${regName}${contactInfo ? ` (${contactInfo})` : ''}`
+        : `Ticket #${ticketId} generated by walk-in customer`,
+    },
+  ]
+
+  if (st !== 'REQUESTED') {
+    timeline.push({
+      orderId: ticketId,
+      eventType: 'ORDER_VERIFIED',
+      previousStatus: 'REQUESTED',
+      newStatus: 'VERIFIED',
+      timestamp: timeStr,
+      actor: 'Kitchen Display System',
+      reason: 'Ticket verified and scheduled for preparation',
+    })
+
+    timeline.push({
+      orderId: ticketId,
+      eventType: 'PREPARATION_STARTED',
+      previousStatus: 'VERIFIED',
+      newStatus: 'PREPARING',
+      timestamp: timeStr,
+      actor: 'Kitchen Line',
+      reason: 'Line cooks started preparing ticket dishes',
+    })
+  }
+
+  if (st === 'COMPLETED') {
+    timeline.push({
+      orderId: ticketId,
+      eventType: 'FOOD_READY',
+      previousStatus: 'PREPARING',
+      newStatus: 'READY',
+      timestamp: compStr || timeStr,
+      actor: 'Kitchen Expediter',
+      reason: 'All dishes prepared and ready for customer pickup / serving',
+    })
+  }
+
+  if (compStr) {
+    timeline.push({
+      orderId: ticketId,
+      eventType: 'ORDER_COMPLETED',
+      previousStatus: 'READY',
+      newStatus: 'COMPLETED',
+      timestamp: compStr,
+      actor: 'Cashier Station',
+      reason: 'Ticket bill settled and payment processed via Cash',
+    })
+  }
+
+  return {
+    order: orderRow,
+    items,
+    discounts: [],
+    billRequest: null,
     timeline,
   }
 }

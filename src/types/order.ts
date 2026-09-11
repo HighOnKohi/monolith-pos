@@ -21,7 +21,7 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   COMPLETED: 'Completed',
 }
 
-export type OrderType = 'DINE-IN' | 'TAKEOUT'
+export type OrderType = 'DINE-IN' | 'TAKEOUT' | 'TICKET'
 
 export interface OrderItem {
   orderItemId: number
