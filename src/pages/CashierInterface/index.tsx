@@ -381,26 +381,6 @@ export default function CashierInterface() {
     setBusy(true)
     setError('')
 
-    const discountsList = []
-    if (pwdCount > 0) {
-      discountsList.push({
-        label: `PWD Discount (${pwdCount})`,
-        amount: (subtotal * 0.2 * pwdCount) / Math.max(1, activeItems.length),
-      })
-    }
-    if (seniorCount > 0) {
-      discountsList.push({
-        label: `Senior Discount (${seniorCount})`,
-        amount: (subtotal * 0.2 * seniorCount) / Math.max(1, activeItems.length),
-      })
-    }
-    if (customTotal > 0) {
-      discountsList.push({
-        label: 'Custom Discount',
-        amount: customTotal,
-      })
-    }
-
     const snapshot = buildTicketReceiptSnapshot({
       ticketId: selectedTicket.ticketId,
       registeredName: selectedTicket.registeredName,
@@ -410,10 +390,8 @@ export default function CashierInterface() {
         quantity: g.items.length,
       })),
       baseSubtotal: subtotal,
-      discounts: discountsList,
-      totalDiscount: (pwdCount > 0 ? (subtotal * 0.2 * pwdCount) / activeItems.length : 0) +
-        (seniorCount > 0 ? (subtotal * 0.2 * seniorCount) / activeItems.length : 0) +
-        customTotal,
+      discounts: [],
+      totalDiscount: 0,
       taxAmount: taxableSubtotal * 0.05,
       grandTotal: total,
       paymentMethod: 'Cash',
@@ -526,6 +504,7 @@ export default function CashierInterface() {
             <div className="ci-table-grid">
               {completedTickets.map((tk) => {
                 const isSelected = selectedTicketId === tk.ticketId
+                const displayName = tk.registeredName || 'Guest Order'
                 return (
                   <button
                     key={tk.ticketId}
@@ -534,37 +513,33 @@ export default function CashierInterface() {
                     onClick={() => selectTicket(tk.ticketId)}
                   >
                     <div className="ci-table-top">
-                      <span className="flex items-center gap-1">
-                        <Ticket className="w-3.5 h-3.5 text-[#E9C46A]" />
-                        <span>Ticket #{tk.ticketId}</span>
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <Ticket className="w-4 h-4 text-[#E9C46A] shrink-0" />
+                        <span className="text-base font-black text-[#14274E] truncate">
+                          {displayName}
+                        </span>
                       </span>
-                      <span className="text-[10px] font-bold text-emerald-600">READY</span>
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 shrink-0">READY</span>
                     </div>
 
-                    <div className="text-left space-y-0.5 text-xs text-slate-600">
-                      {tk.registeredName && (
-                        <div className="font-bold text-[#14274E] truncate flex items-center gap-1">
-                          <User className="w-3 h-3 text-slate-400" />
-                          <span>{tk.registeredName}</span>
-                        </div>
-                      )}
+                    <div className="text-left space-y-1.5 py-1">
                       {tk.registeredContactInfo && (
-                        <div className="text-[11px] text-slate-500 flex items-center gap-1">
-                          <Phone className="w-3 h-3 text-slate-400" />
+                        <div className="text-xs sm:text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                          <Phone className="w-4 h-4 text-slate-500 shrink-0" />
                           <span>{tk.registeredContactInfo}</span>
                         </div>
                       )}
                       {tk.registeredTimeOfArrival && (
-                        <div className="text-[10px] font-semibold text-amber-700 flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-amber-500" />
-                          <span>{formatArrivalDisplay(tk.registeredTimeOfArrival)}</span>
+                        <div className="text-xs sm:text-sm font-black text-amber-900 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 flex items-center gap-1.5">
+                          <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span>ETA: {formatArrivalDisplay(tk.registeredTimeOfArrival)}</span>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px] font-bold text-slate-500">
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs font-bold text-slate-500">
                       <span>{tk.items.length} items</span>
-                      <span className="text-sm font-black text-[#14274E]">{money(tk.totalAmount)}</span>
+                      <span className="text-base font-black text-[#14274E]">{money(tk.totalAmount)}</span>
                     </div>
                   </button>
                 )
@@ -589,9 +564,7 @@ export default function CashierInterface() {
                     ? selectedTableGroup.group.displayLabel
                     : 'Select a table'
                   : selectedTicket
-                  ? `Ticket #${selectedTicket.ticketId}${
-                      selectedTicket.registeredName ? ` - ${selectedTicket.registeredName}` : ''
-                    }`
+                  ? (selectedTicket.registeredName || 'Guest Order')
                   : 'Select a ticket'}
               </h2>
             </div>
@@ -620,17 +593,22 @@ export default function CashierInterface() {
                     </>
                   ) : selectedTicket ? (
                     <>
-                      <div className="ci-guest-info text-xs">
-                        <User className="ci-icon" />
+                      <div className="ci-guest-info text-sm font-bold text-[#14274E] flex items-center gap-2">
+                        <User className="w-4 h-4 text-slate-400" />
                         <span>{selectedTicket.registeredName || 'Guest'}</span>
                         {selectedTicket.registeredContactInfo && (
-                          <span className="text-slate-400">({selectedTicket.registeredContactInfo})</span>
+                          <span className="text-sm font-bold text-slate-500">
+                            • {selectedTicket.registeredContactInfo}
+                          </span>
                         )}
                       </div>
-                      <div className="ci-order-type font-black text-amber-600">
-                        {selectedTicket.registeredTimeOfArrival
-                          ? `ETA: ${formatArrivalDisplay(selectedTicket.registeredTimeOfArrival)}`
-                          : 'TICKET'}
+                      <div className="ci-order-type font-black text-amber-700 text-xs sm:text-sm bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-amber-600" />
+                        <span>
+                          {selectedTicket.registeredTimeOfArrival
+                            ? `ETA: ${formatArrivalDisplay(selectedTicket.registeredTimeOfArrival)}`
+                            : 'TICKET'}
+                        </span>
                       </div>
                     </>
                   ) : null}
@@ -638,7 +616,8 @@ export default function CashierInterface() {
 
                 {activeItems.length === 0 ? (
                   <div className="ci-sidebar-empty">No completed items to bill.</div>
-                ) : (
+                ) : mode === 'tables' ? (
+                  /* ── Table Mode with Discount Controls ── */
                   <div className="ci-items-table">
                     <div className="ci-items-header">
                       <span>Name</span>
@@ -865,6 +844,39 @@ export default function CashierInterface() {
                       })}
                     </div>
                   </div>
+                ) : (
+                  /* ── Ticket Mode Clean Items Breakdown (No Discounts) ── */
+                  <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white shadow-2xs">
+                    <div className="grid grid-cols-[1fr_auto] gap-3 px-4 py-2.5 bg-slate-50 border-b border-slate-200 text-xs font-black text-[#14274E]">
+                      <span>Item Description</span>
+                      <span>Price</span>
+                    </div>
+                    <div className="divide-y divide-slate-100 max-h-[340px] overflow-y-auto">
+                      {groupedItems.map((group) => {
+                        const qty = group.items.length
+                        const itemBasePrice = (group.items[0]?.price ?? 0) / 1.05
+                        const totalGroupPrice = group.items.reduce((sum, it) => sum + it.price, 0) / 1.05
+                        return (
+                          <div
+                            key={group.name}
+                            className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50/60 transition-colors"
+                          >
+                            <div>
+                              <span className="font-extrabold text-sm text-[#14274E]">{group.name}</span>
+                              {qty > 1 && (
+                                <span className="ml-2 text-xs font-bold text-slate-500">
+                                  ({money(itemBasePrice)} × {qty})
+                                </span>
+                              )}
+                            </div>
+                            <span className="font-black text-sm text-[#14274E] shrink-0">
+                              {money(totalGroupPrice)}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -875,23 +887,27 @@ export default function CashierInterface() {
               <span>Subtotal</span>
               <span>{money(subtotal)}</span>
             </div>
-            {pwdCount > 0 && (
-              <div className="ci-total-row ci-discount-total">
-                <span>PWD Discounts ({pwdCount})</span>
-                <span>-{money((subtotal * 0.2 * pwdCount) / Math.max(1, activeItems.length))}</span>
-              </div>
-            )}
-            {seniorCount > 0 && (
-              <div className="ci-total-row ci-discount-total">
-                <span>Senior Discounts ({seniorCount})</span>
-                <span>-{money((subtotal * 0.2 * seniorCount) / Math.max(1, activeItems.length))}</span>
-              </div>
-            )}
-            {customTotal > 0 && (
-              <div className="ci-total-row ci-discount-total">
-                <span>Custom Discounts</span>
-                <span>-{money(customTotal)}</span>
-              </div>
+            {mode === 'tables' && (
+              <>
+                {pwdCount > 0 && (
+                  <div className="ci-total-row ci-discount-total">
+                    <span>PWD Discounts ({pwdCount})</span>
+                    <span>-{money((subtotal * 0.2 * pwdCount) / Math.max(1, activeItems.length))}</span>
+                  </div>
+                )}
+                {seniorCount > 0 && (
+                  <div className="ci-total-row ci-discount-total">
+                    <span>Senior Discounts ({seniorCount})</span>
+                    <span>-{money((subtotal * 0.2 * seniorCount) / Math.max(1, activeItems.length))}</span>
+                  </div>
+                )}
+                {customTotal > 0 && (
+                  <div className="ci-total-row ci-discount-total">
+                    <span>Custom Discounts</span>
+                    <span>-{money(customTotal)}</span>
+                  </div>
+                )}
+              </>
             )}
             <div className="ci-total-row">
               <span>VAT (5%)</span>

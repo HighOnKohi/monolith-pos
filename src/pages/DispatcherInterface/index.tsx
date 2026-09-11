@@ -23,6 +23,7 @@ import {
   startCookingTicketDish,
   cookAllRequestedTickets,
   updateTicketDishCookingCount,
+  updateTicketGroupSubItemCookingCount,
   markTicketDishDone,
   subscribeToOrderUpdates,
   type DispatcherOrder,
@@ -369,17 +370,43 @@ export default function DispatcherInterface() {
 
     return Array.from(map.values())
       .map((entry) => {
+        // Collect DB status counts for constituent sub-items across all tickets for this dish
+        const subMap = new Map<number, { id: number; name: string; total: number; cooking: number; done: number }>()
+
+        if (entry.isGroup) {
+          tickets.forEach((t) => {
+            t.items.forEach((it) => {
+              if (it.name === entry.name && it.status === 'PREPARING' && it.includedItems) {
+                it.includedItems.forEach((sub) => {
+                  if (!subMap.has(sub.id)) {
+                    subMap.set(sub.id, { id: sub.id, name: sub.name, total: 0, cooking: 0, done: 0 })
+                  }
+                  const rec = subMap.get(sub.id)!
+                  rec.total += 1
+                  if (sub.status === 'COMPLETED') {
+                    rec.done += 1
+                  } else {
+                    rec.cooking += 1
+                  }
+                })
+              }
+            })
+          })
+        }
+
         const subItems =
           entry.isGroup && entry.includedItems && entry.includedItems.length > 0
             ? entry.includedItems.map((inc) => {
                 const key = `${entry.name}:${inc.name}`
                 const localSubCooking = localGroupSubItemCookingCounts.get(key)
-                const subCooking = localSubCooking !== undefined ? localSubCooking : entry.totalQuantity
-                const subDone = entry.totalQuantity - subCooking
+                const dbRec = subMap.get(inc.id)
+                const subTotal = dbRec?.total ?? entry.totalQuantity
+                const subCooking = localSubCooking !== undefined ? localSubCooking : (dbRec?.cooking ?? subTotal)
+                const subDone = subTotal - subCooking
                 return {
                   id: inc.id,
                   name: inc.name,
-                  totalQuantity: entry.totalQuantity,
+                  totalQuantity: subTotal,
                   cookingCount: subCooking,
                   doneCount: subDone,
                 }
@@ -659,13 +686,15 @@ export default function DispatcherInterface() {
 
   function handleGroupSubItemCookingCountChange(
     dish: AggregatedTicketDish,
+    subItemId: number,
     subItemName: string,
     subTotalQty: number,
     delta: number,
     event?: React.MouseEvent,
   ) {
     const key = `${dish.name}:${subItemName}`
-    const currentCooking = localGroupSubItemCookingCounts.get(key) ?? subTotalQty
+    const currentSub = dish.subItems?.find((s) => s.id === subItemId || s.name === subItemName)
+    const currentCooking = localGroupSubItemCookingCounts.get(key) ?? currentSub?.cookingCount ?? subTotalQty
     let newCooking: number
 
     if (event?.shiftKey) {
@@ -681,6 +710,40 @@ export default function DispatcherInterface() {
       next.set(key, newCooking)
       return next
     })
+
+    // Optimistically update tickets state
+    const completedCount = Math.max(0, subTotalQty - newCooking)
+    setTickets((currentTickets) => {
+      let doneRemaining = completedCount
+      return currentTickets.map((t) => {
+        if (!dish.ticketIds.includes(t.ticketId)) return t
+        return {
+          ...t,
+          items: t.items.map((it) => {
+            if (it.name !== dish.name || !it.includedItems) return it
+            return {
+              ...it,
+              includedItems: it.includedItems.map((inc) => {
+                if (inc.id !== subItemId && inc.name !== subItemName) return inc
+                if (doneRemaining > 0) {
+                  doneRemaining--
+                  return { ...inc, status: 'COMPLETED' as const }
+                }
+                return { ...inc, status: 'PREPARING' as const }
+              }),
+            }
+          }),
+        }
+      })
+    })
+
+    // Persist to database asynchronously
+    void updateTicketGroupSubItemCookingCount(dish.orderItemIds, subItemId, newCooking)
+      .then(() => loadTickets(true))
+      .catch((err) => {
+        console.error('Failed to update group sub-item count:', err)
+        showToast('Failed to update sub-item count', 'error')
+      })
   }
 
   const handleCookAllRequestedTickets = async () => {
@@ -1190,6 +1253,7 @@ export default function DispatcherInterface() {
                                         onClick={(e) =>
                                           handleGroupSubItemCookingCountChange(
                                             dish,
+                                            sub.id || 0,
                                             sub.name,
                                             sub.totalQuantity,
                                             -1,
@@ -1209,6 +1273,7 @@ export default function DispatcherInterface() {
                                         onClick={(e) =>
                                           handleGroupSubItemCookingCountChange(
                                             dish,
+                                            sub.id || 0,
                                             sub.name,
                                             sub.totalQuantity,
                                             1,

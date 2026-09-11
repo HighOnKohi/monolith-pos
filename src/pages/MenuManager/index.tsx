@@ -11,6 +11,7 @@ import {
   createMenuItemGroup,
   fetchMenuItemGroups,
   updateMenuItemGroup,
+  deleteMenuItemGroup,
   type MenuItemGroup,
 } from '@/services/menuService'
 import type { MenuItem, Category } from '@/types/menu'
@@ -68,6 +69,26 @@ export default function MenuManagerPage() {
       }
     }
     setEditingGroup(null)
+  }
+
+  async function handleDeleteGroup(group: MenuItemGroup) {
+    setConfirmState({
+      title: `Delete Group "${group.name}"?`,
+      message: `Are you sure you want to remove the group item "${group.name}" from the menu? This cannot be undone.`,
+      onConfirm: async () => {
+        setConfirmState(null)
+        const previous = group
+        setGroups((current) => current.filter((g) => g.id !== previous.id))
+        handleClose()
+        try {
+          await deleteMenuItemGroup(previous.id)
+          showToast(`Deleted group "${previous.name}".`, 'info')
+        } catch (err: unknown) {
+          setGroups((current) => [...current, previous])
+          showToast(err instanceof Error ? err.message : 'Failed to delete group item.', 'error')
+        }
+      },
+    })
   }
 
   // ── Filtered items ─────────────────────────────────────────────────────────
@@ -421,7 +442,63 @@ export default function MenuManagerPage() {
 
       <aside className="menu-manager-sidebar">
         {selectedGroup ? (
-          <div className="menu-manager-sidebar-content"><div className="menu-manager-sidebar-heading"><h2>Group Details</h2></div><img className="menu-manager-sidebar-image" src={selectedGroup.imageUrl} alt={selectedGroup.name} /><h3>{selectedGroup.name}</h3><p className="menu-manager-sidebar-category">{categories.find(category => category.id === selectedGroup.categoryId)?.name ?? 'Uncategorized'}</p><p className="menu-manager-sidebar-price">₱{selectedGroup.price.toFixed(2)}</p><dl className="menu-manager-sidebar-details"><div><dt>Description</dt><dd>{selectedGroup.description || 'No description available.'}</dd></div><div><dt>Items</dt><dd>{selectedGroup.itemNames.join(' + ')}</dd></div><div><dt>Availability</dt><dd>{selectedGroup.status}</dd></div></dl><footer className="menu-manager-sidebar-footer"><div className="menu-manager-sidebar-actions"><button type="button" onClick={() => { setEditingGroup(selectedGroup); setGroupModalOpen(true) }}><Edit2 /> Edit</button></div></footer></div>
+          <div className="menu-manager-sidebar-content">
+            <div className="menu-manager-sidebar-heading">
+              <h2>Group Details</h2>
+            </div>
+            <img className="menu-manager-sidebar-image" src={selectedGroup.imageUrl} alt={selectedGroup.name} />
+            <h3>{selectedGroup.name}</h3>
+            <p className="menu-manager-sidebar-category">
+              {categories.find(category => category.id === selectedGroup.categoryId)?.name ?? 'Uncategorized'}
+            </p>
+            <p className="menu-manager-sidebar-price">₱{selectedGroup.price.toFixed(2)}</p>
+            <dl className="menu-manager-sidebar-details">
+              <div>
+                <dt>Description</dt>
+                <dd>{selectedGroup.description || 'No description available.'}</dd>
+              </div>
+              <div>
+                <dt>Items Included ({selectedGroup.itemNames.length})</dt>
+                <dd className="mt-1.5">
+                  <ul className="space-y-1.5">
+                    {selectedGroup.itemNames.map((name, idx) => (
+                      <li
+                        key={idx}
+                        className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200/80 text-xs font-bold text-[#14274E]"
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-[#14274E]/80 shrink-0" />
+                        <span className="truncate">{name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+              <div>
+                <dt>Availability</dt>
+                <dd>{selectedGroup.status}</dd>
+              </div>
+            </dl>
+            <footer className="menu-manager-sidebar-footer">
+              <div className="menu-manager-sidebar-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingGroup(selectedGroup)
+                    setGroupModalOpen(true)
+                  }}
+                >
+                  <Edit2 /> Edit
+                </button>
+                <button
+                  type="button"
+                  className="is-danger"
+                  onClick={() => handleDeleteGroup(selectedGroup)}
+                >
+                  <Trash2 /> Delete
+                </button>
+              </div>
+            </footer>
+          </div>
         ) : !selectedItem ? (
           <div className="menu-manager-sidebar-empty">
             <p>Select a menu item to view its details.</p>

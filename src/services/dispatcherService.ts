@@ -383,7 +383,7 @@ export interface DispatcherTicketItem {
   status: 'REQUESTED' | 'PREPARING' | 'COMPLETED'
   isGroup?: boolean
   groupName?: string
-  includedItems?: Array<{ id: number; name: string }>
+  includedItems?: Array<{ id: number; name: string; status: 'REQUESTED' | 'PREPARING' | 'COMPLETED' }>
 }
 
 export interface DispatcherTicketOrder {
@@ -515,7 +515,87 @@ export async function fetchDispatcherTicketOrders(): Promise<DispatcherTicketOrd
       }
     }
 
-    // 5. Group items by ticket and expand combos into individual items
+    // 4b. Fetch Ticket_Order_Group_Items for all group ticket items
+    const groupOrderItemIds = rawItems.filter((oi: any) => oi.ITEM_GROUP_ID).map((oi: any) => Number(oi.TICKET_ORDER_ITEM_ID))
+    const groupSubItemsByTicketGroupId = new Map<number, Array<{ id: number; name: string; status: 'REQUESTED' | 'PREPARING' | 'COMPLETED' }>>()
+
+    if (groupOrderItemIds.length > 0) {
+      try {
+        let { data: groupSubData } = await supabase
+          .from('Ticket_Order_Group_Items')
+          .select('TICKET_ORDER_GROUP_ITEM_ID, TICKET_GROUP_ID, ITEM_ID, ITEM_STATUS')
+          .in('TICKET_GROUP_ID', groupOrderItemIds)
+
+        // Check if any group ticket order item is missing rows in Ticket_Order_Group_Items
+        const existingTgIds = new Set((groupSubData ?? []).map((s: any) => Number(s.TICKET_GROUP_ID)))
+        const missingGroupItems = rawItems.filter((oi: any) => oi.ITEM_GROUP_ID && !existingTgIds.has(Number(oi.TICKET_ORDER_ITEM_ID)))
+
+        if (missingGroupItems.length > 0) {
+          const autoInsertRows: Array<{ TICKET_GROUP_ID: number; ITEM_ID: number; ITEM_STATUS: string }> = []
+          missingGroupItems.forEach((oi: any) => {
+            const gId = Number(oi.ITEM_GROUP_ID)
+            const tgId = Number(oi.TICKET_ORDER_ITEM_ID)
+            const rawStatus = String(oi.TICKET_ORDER_ITEM_STATUS ?? 'REQUESTED').toUpperCase().trim()
+            const itemStatus = (rawStatus === 'COMPLETED' || rawStatus === 'DONE') ? 'COMPLETED' : (rawStatus === 'PREPARING' || rawStatus === 'COOKING') ? 'PREPARING' : 'REQUESTED'
+            const grp = groupMap.get(gId)
+            if (grp && grp.childItems.length > 0) {
+              grp.childItems.forEach((c) => {
+                autoInsertRows.push({
+                  TICKET_GROUP_ID: tgId,
+                  ITEM_ID: c.id,
+                  ITEM_STATUS: itemStatus,
+                })
+              })
+            }
+          })
+
+          if (autoInsertRows.length > 0) {
+            const { error: autoInsertErr } = await supabase.from('Ticket_Order_Group_Items').insert(autoInsertRows)
+            if (autoInsertErr) {
+              for (const row of autoInsertRows) {
+                await supabase.from('Ticket_Order_Group_Items').insert(row)
+              }
+            }
+            const { data: refetched } = await supabase
+              .from('Ticket_Order_Group_Items')
+              .select('TICKET_ORDER_GROUP_ITEM_ID, TICKET_GROUP_ID, ITEM_ID, ITEM_STATUS')
+              .in('TICKET_GROUP_ID', groupOrderItemIds)
+            groupSubData = refetched ?? groupSubData
+          }
+        }
+
+        const subItemIds = [...new Set((groupSubData ?? []).map((s: any) => Number(s.ITEM_ID)).filter(Boolean))]
+        const subMenuMap = new Map<number, string>(menuItemMap)
+        const missingSubIds = subItemIds.filter((id) => !subMenuMap.has(id))
+        if (missingSubIds.length > 0) {
+          const { data: extraMenu } = await supabase
+            .from('Menu_Items')
+            .select('ITEM_ID, ITEM_NAME')
+            .in('ITEM_ID', missingSubIds)
+          ;(extraMenu ?? []).forEach((m: any) => subMenuMap.set(Number(m.ITEM_ID), String(m.ITEM_NAME)))
+        }
+
+        ;(groupSubData ?? []).forEach((sRow: any) => {
+          const tgId = Number(sRow.TICKET_GROUP_ID)
+          if (!groupSubItemsByTicketGroupId.has(tgId)) groupSubItemsByTicketGroupId.set(tgId, [])
+          const rawSubStatus = String(sRow.ITEM_STATUS ?? 'REQUESTED').toUpperCase().trim()
+          const normSubStatus: 'REQUESTED' | 'PREPARING' | 'COMPLETED' =
+            (rawSubStatus === 'COMPLETED' || rawSubStatus === 'DONE') ? 'COMPLETED'
+            : (rawSubStatus === 'PREPARING' || rawSubStatus === 'COOKING') ? 'PREPARING'
+            : 'REQUESTED'
+
+          groupSubItemsByTicketGroupId.get(tgId)!.push({
+            id: Number(sRow.ITEM_ID),
+            name: subMenuMap.get(Number(sRow.ITEM_ID)) || `Item #${sRow.ITEM_ID}`,
+            status: normSubStatus,
+          })
+        })
+      } catch (subErr) {
+        console.warn('[dispatcherService] Ticket_Order_Group_Items query failed:', subErr)
+      }
+    }
+
+    // 5. Group items by ticket
     const itemsByTicket = new Map<number, DispatcherTicketItem[]>()
 
     rawItems.forEach((oi: any) => {
@@ -533,11 +613,17 @@ export async function fetchDispatcherTicketOrders(): Promise<DispatcherTicketOrd
 
       const groupId = oi.ITEM_GROUP_ID ? Number(oi.ITEM_GROUP_ID) : null
       const itemId = oi.ITEM_ID ? Number(oi.ITEM_ID) : null
+      const orderItemId = Number(oi.TICKET_ORDER_ITEM_ID)
 
       if (groupId && groupMap.has(groupId)) {
         const grp = groupMap.get(groupId)!
+        const subItemsFromDb = groupSubItemsByTicketGroupId.get(orderItemId)
+        const includedItems = subItemsFromDb && subItemsFromDb.length > 0
+          ? subItemsFromDb
+          : grp.childItems.map((c) => ({ id: c.id, name: c.name, status: normalizedStatus }))
+
         list.push({
-          ticketOrderItemId: Number(oi.TICKET_ORDER_ITEM_ID),
+          ticketOrderItemId: orderItemId,
           ticketOrderId: ticketId,
           itemId: null,
           itemGroupId: groupId,
@@ -545,11 +631,11 @@ export async function fetchDispatcherTicketOrders(): Promise<DispatcherTicketOrd
           status: normalizedStatus,
           isGroup: true,
           groupName: grp.groupName,
-          includedItems: grp.childItems,
+          includedItems,
         })
       } else if (itemId) {
         list.push({
-          ticketOrderItemId: Number(oi.TICKET_ORDER_ITEM_ID),
+          ticketOrderItemId: orderItemId,
           ticketOrderId: ticketId,
           itemId,
           itemGroupId: null,
@@ -558,11 +644,11 @@ export async function fetchDispatcherTicketOrders(): Promise<DispatcherTicketOrd
         })
       } else {
         list.push({
-          ticketOrderItemId: Number(oi.TICKET_ORDER_ITEM_ID),
+          ticketOrderItemId: orderItemId,
           ticketOrderId: ticketId,
           itemId: null,
           itemGroupId: null,
-          name: `Ticket Item #${oi.TICKET_ORDER_ITEM_ID}`,
+          name: `Ticket Item #${orderItemId}`,
           status: normalizedStatus,
         })
       }
@@ -601,12 +687,21 @@ export async function startCookingTicket(ticketId: number): Promise<void> {
   if (error) throw error
 
   // Update item status in Ticket_Order_Items to PREPARING
-  const { error: itemErr } = await supabase
+  const { data: updatedItems, error: itemErr } = await supabase
     .from('Ticket_Order_Items')
     .update({ TICKET_ORDER_ITEM_STATUS: 'PREPARING' })
     .eq('TICKET_ORDER_ID', ticketId)
+    .select('TICKET_ORDER_ITEM_ID')
 
   if (itemErr) throw itemErr
+
+  const updatedItemIds = (updatedItems ?? []).map((i: any) => Number(i.TICKET_ORDER_ITEM_ID))
+  if (updatedItemIds.length > 0) {
+    await supabase
+      .from('Ticket_Order_Group_Items')
+      .update({ ITEM_STATUS: 'PREPARING' })
+      .in('TICKET_GROUP_ID', updatedItemIds)
+  }
 
   broadcastOrderUpdate({ type: 'tickets' })
 }
@@ -619,13 +714,22 @@ export async function cookAllRequestedTickets(): Promise<void> {
 
   if (error) throw error
 
-  const { error: itemErr } = await supabase
+  const { data: updatedItems, error: itemErr } = await supabase
     .from('Ticket_Order_Items')
     .update({ TICKET_ORDER_ITEM_STATUS: 'PREPARING' })
     .eq('TICKET_ORDER_ITEM_STATUS', 'REQUESTED')
+    .select('TICKET_ORDER_ITEM_ID')
 
   if (itemErr) {
     console.warn('[cookAllRequestedTickets] Item status update warning:', itemErr)
+  }
+
+  const updatedItemIds = (updatedItems ?? []).map((i: any) => Number(i.TICKET_ORDER_ITEM_ID))
+  if (updatedItemIds.length > 0) {
+    await supabase
+      .from('Ticket_Order_Group_Items')
+      .update({ ITEM_STATUS: 'PREPARING' })
+      .in('TICKET_GROUP_ID', updatedItemIds)
   }
 
   broadcastOrderUpdate({ type: 'tickets' })
@@ -647,6 +751,12 @@ export async function startCookingTicketDish(
     if (itemErr) {
       console.warn('[startCookingTicketDish] Failed to update item status to PREPARING:', itemErr)
     }
+
+    // Also update any linked rows in Ticket_Order_Group_Items to PREPARING
+    await supabase
+      .from('Ticket_Order_Group_Items')
+      .update({ ITEM_STATUS: 'PREPARING' })
+      .in('TICKET_GROUP_ID', uniqueItemIds)
   }
 
   if (uniqueTicketIds.length > 0) {
@@ -669,7 +779,7 @@ export async function updateTicketDishCookingCount(
     const isDone = i < completedCount
     const textStatus = isDone ? 'COMPLETED' : 'PREPARING'
 
-    // Only update standalone items (where ITEM_GROUP_ID is null) to avoid affecting other items in combo
+    // Only update standalone items (where ITEM_GROUP_ID is null)
     const { error } = await supabase
       .from('Ticket_Order_Items')
       .update({ TICKET_ORDER_ITEM_STATUS: textStatus })
@@ -682,6 +792,41 @@ export async function updateTicketDishCookingCount(
   }
 
   broadcastOrderUpdate({ type: 'tickets' })
+}
+
+export async function updateTicketGroupSubItemCookingCount(
+  ticketItemIds: number[],
+  subItemId: number,
+  remainingCookingCount: number,
+): Promise<void> {
+  const uniqueItemIds = [...new Set(ticketItemIds)]
+  if (uniqueItemIds.length === 0) return
+
+  // Fetch all Ticket_Order_Group_Items for these group items and this subItemId
+  const { data: subRows, error } = await supabase
+    .from('Ticket_Order_Group_Items')
+    .select('TICKET_ORDER_GROUP_ITEM_ID, ITEM_STATUS')
+    .in('TICKET_GROUP_ID', uniqueItemIds)
+    .eq('ITEM_ID', subItemId)
+
+  if (error || !subRows) {
+    console.error('[updateTicketGroupSubItemCookingCount] fetch error:', error)
+    return
+  }
+
+  const totalSubCount = subRows.length
+  const completedCount = Math.max(0, totalSubCount - remainingCookingCount)
+
+  for (let i = 0; i < subRows.length; i++) {
+    const isDone = i < completedCount
+    const newStatus = isDone ? 'COMPLETED' : 'PREPARING'
+    await supabase
+      .from('Ticket_Order_Group_Items')
+      .update({ ITEM_STATUS: newStatus })
+      .eq('TICKET_ORDER_GROUP_ITEM_ID', subRows[i].TICKET_ORDER_GROUP_ITEM_ID)
+  }
+
+  broadcastOrderUpdate({ type: 'all' })
 }
 
 export async function markTicketDishDone(
@@ -700,6 +845,12 @@ export async function markTicketDishDone(
     if (itemErr) {
       console.warn('[markTicketDishDone] Item update error:', itemErr)
     }
+
+    // Also update any linked rows in Ticket_Order_Group_Items to COMPLETED
+    await supabase
+      .from('Ticket_Order_Group_Items')
+      .update({ ITEM_STATUS: 'COMPLETED' })
+      .in('TICKET_GROUP_ID', uniqueItemIds)
   }
 
   // Check if any tickets have all their items COMPLETED now
@@ -723,7 +874,7 @@ export async function markTicketDishDone(
     }
   }
 
-  broadcastOrderUpdate({ type: 'tickets' })
+  broadcastOrderUpdate({ type: 'all' })
 }
 
 export async function updateTicketItemCookingCount(
@@ -764,24 +915,75 @@ export async function completeTicketOrder(ticketId: number): Promise<void> {
 
   if (itemErr) console.warn('[completeTicketOrder] error:', itemErr)
 
-  broadcastOrderUpdate({ type: 'tickets' })
+  // Also complete all sub items
+  const { data: items } = await supabase
+    .from('Ticket_Order_Items')
+    .select('TICKET_ORDER_ITEM_ID')
+    .eq('TICKET_ORDER_ID', ticketId)
+
+  const itemIds = (items ?? []).map((i: any) => Number(i.TICKET_ORDER_ITEM_ID))
+  if (itemIds.length > 0) {
+    await supabase
+      .from('Ticket_Order_Group_Items')
+      .update({ ITEM_STATUS: 'COMPLETED' })
+      .in('TICKET_GROUP_ID', itemIds)
+  }
+
+  broadcastOrderUpdate({ type: 'all' })
 }
 
 export async function fetchTicketOrderViewerData(): Promise<Array<{
   orderId: number
   tableDisplay: string
   registeredName?: string | null
-  items: Array<{ name: string; quantity: number }>
+  items: Array<{
+    name: string
+    quantity: number
+    isGroup?: boolean
+    includedItems?: Array<{ id: number; name: string; quantity: number }>
+  }>
 }>> {
   const tickets = await fetchDispatcherTicketOrders()
   const activeTickets = tickets.filter((t) => t.ticketStatus !== 'COMPLETED')
 
   return activeTickets.flatMap((ticket) => {
-    const itemMap = new Map<string, number>()
+    const itemMap = new Map<
+      string,
+      {
+        quantity: number
+        isGroup?: boolean
+        includedSubItemMap: Map<number, { id: number; name: string; quantity: number }>
+      }
+    >()
+
     // Only include items that are currently PREPARING
     ticket.items.forEach((item) => {
       if (item.status === 'PREPARING') {
-        itemMap.set(item.name, (itemMap.get(item.name) || 0) + 1)
+        if (!itemMap.has(item.name)) {
+          itemMap.set(item.name, {
+            quantity: 0,
+            isGroup: item.isGroup,
+            includedSubItemMap: new Map(),
+          })
+        }
+        const entry = itemMap.get(item.name)!
+        entry.quantity += 1
+
+        if (item.isGroup && item.includedItems) {
+          item.includedItems.forEach((sub) => {
+            if (!entry.includedSubItemMap.has(sub.id)) {
+              entry.includedSubItemMap.set(sub.id, {
+                id: sub.id,
+                name: sub.name,
+                quantity: 0,
+              })
+            }
+            // Count active preparing amount for each constituent sub-item
+            if (sub.status === 'PREPARING') {
+              entry.includedSubItemMap.get(sub.id)!.quantity += 1
+            }
+          })
+        }
       }
     })
 
@@ -791,7 +993,14 @@ export async function fetchTicketOrderViewerData(): Promise<Array<{
       orderId: ticket.ticketId,
       tableDisplay: `Ticket #${ticket.ticketId}`,
       registeredName: ticket.registeredName,
-      items: Array.from(itemMap.entries()).map(([name, quantity]) => ({ name, quantity })),
+      items: Array.from(itemMap.entries()).map(([name, data]) => ({
+        name,
+        quantity: data.quantity,
+        isGroup: data.isGroup,
+        includedItems: data.isGroup
+          ? Array.from(data.includedSubItemMap.values())
+          : undefined,
+      })),
     }]
   })
 }

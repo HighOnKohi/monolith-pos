@@ -7,7 +7,12 @@ interface ViewerOrder {
   orderId: number
   tableDisplay: string
   registeredName?: string | null
-  items: Array<{ name: string; quantity: number }>
+  items: Array<{
+    name: string
+    quantity: number
+    isGroup?: boolean
+    includedItems?: Array<{ id: number; name: string; quantity: number }>
+  }>
 }
 
 type ViewerMode = 'tables' | 'tickets'
@@ -64,6 +69,7 @@ export default function OrderViewer() {
       .channel('order-viewer-ticket-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Ticket_Orders' }, () => void loadData(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Ticket_Order_Items' }, () => void loadData(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Ticket_Order_Group_Items' }, () => void loadData(true))
       .subscribe()
 
     return () => {
@@ -77,11 +83,24 @@ export default function OrderViewer() {
 
   // Aggregate tickets dishes into item-centric list
   const ticketDishes = useMemo(() => {
-    const map = new Map<string, { total: number; tickets: Array<{ id: number; name?: string | null; qty: number }> }>()
+    const map = new Map<
+      string,
+      {
+        total: number
+        isGroup?: boolean
+        includedItemsMap: Map<number, { id: number; name: string; quantity: number }>
+        tickets: Array<{ id: number; name?: string | null; qty: number }>
+      }
+    >()
     ticketOrders.forEach((order) => {
       order.items.forEach((item) => {
         if (!map.has(item.name)) {
-          map.set(item.name, { total: 0, tickets: [] })
+          map.set(item.name, {
+            total: 0,
+            isGroup: item.isGroup,
+            includedItemsMap: new Map(),
+            tickets: [],
+          })
         }
         const entry = map.get(item.name)!
         entry.total += item.quantity
@@ -90,6 +109,14 @@ export default function OrderViewer() {
           name: order.registeredName,
           qty: item.quantity,
         })
+        if (item.includedItems) {
+          item.includedItems.forEach((inc) => {
+            if (!entry.includedItemsMap.has(inc.id)) {
+              entry.includedItemsMap.set(inc.id, { id: inc.id, name: inc.name, quantity: 0 })
+            }
+            entry.includedItemsMap.get(inc.id)!.quantity += inc.quantity
+          })
+        }
       })
     })
 
@@ -97,6 +124,8 @@ export default function OrderViewer() {
       .map(([name, data]) => ({
         name,
         totalQuantity: data.total,
+        isGroup: data.isGroup,
+        includedItems: Array.from(data.includedItemsMap.values()),
         tickets: data.tickets,
       }))
       .sort((a, b) => b.totalQuantity - a.totalQuantity)
@@ -222,13 +251,46 @@ export default function OrderViewer() {
                     key={dish.name}
                     className="p-4 rounded-2xl bg-[#F8FAFD] border border-slate-200/90 flex flex-col justify-between gap-3 shadow-2xs"
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-base font-extrabold text-[#14274E] leading-snug">
-                        {dish.name}
-                      </span>
-                      <strong className="text-xl font-black text-[#14274E] shrink-0 bg-white px-3 py-1 rounded-xl border border-slate-200 shadow-2xs">
-                        ×{dish.totalQuantity}
-                      </strong>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-base sm:text-lg font-black text-[#14274E] leading-snug">
+                            {dish.name}
+                          </span>
+                          {dish.isGroup && (
+                            <span className="px-2 py-0.5 rounded-md bg-[#14274E]/10 text-[#14274E] font-black text-[10px] uppercase">
+                              Group Meal
+                            </span>
+                          )}
+                        </div>
+                        <strong className="text-xl font-black text-[#14274E] shrink-0 bg-white px-3 py-1 rounded-xl border border-slate-200 shadow-2xs">
+                          ×{dish.totalQuantity}
+                        </strong>
+                      </div>
+
+                      {/* If group item, show constituent items individually under it with the same big name size */}
+                      {dish.isGroup && dish.includedItems && dish.includedItems.length > 0 && (
+                        <div className="space-y-2 pt-2 border-t border-slate-200/70">
+                          <div className="text-[11px] font-black text-slate-500 uppercase tracking-wider">
+                            Included Items
+                          </div>
+                          <div className="space-y-1.5">
+                            {dish.includedItems.map((inc) => (
+                              <div
+                                key={inc.id || inc.name}
+                                className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-white border border-slate-200 shadow-2xs"
+                              >
+                                <span className="text-base font-extrabold text-[#14274E] leading-snug">
+                                  {inc.name}
+                                </span>
+                                <strong className="text-lg font-black text-[#14274E] shrink-0">
+                                  ×{inc.quantity}
+                                </strong>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Source ticket badges */}
@@ -238,7 +300,7 @@ export default function OrderViewer() {
                           key={`${t.id}-${idx}`}
                           className="px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-700 font-semibold flex items-center gap-1"
                         >
-                          <span>Ticket #{t.id}{t.name ? ` (${t.name})` : ''}:</span>
+                          <span>{t.name ? t.name : `Ticket #${t.id}`}:</span>
                           <strong className="text-[#14274E]">×{t.qty}</strong>
                         </span>
                       ))}

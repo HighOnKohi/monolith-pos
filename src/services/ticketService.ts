@@ -66,23 +66,88 @@ export async function createTicketOrder(
   }
 
   // 2. Insert items into Ticket_Order_Items
-  const orderItemsToInsert = cartItems.flatMap((ci) =>
-    Array.from({ length: ci.quantity }, () => ({
+  const orderItemsToInsert = cartItems.flatMap((ci) => {
+    const rawId = String(ci.id).replace(/^group-/, '')
+    const idNum = Number(rawId)
+    return Array.from({ length: ci.quantity }, () => ({
       TICKET_ORDER_ID: ticketId,
-      ITEM_ID: ci.isGroup ? null : Number(ci.id),
-      ITEM_GROUP_ID: ci.isGroup ? Number(ci.id) : null,
+      ITEM_ID: ci.isGroup ? null : (isNaN(idNum) ? null : idNum),
+      ITEM_GROUP_ID: ci.isGroup ? (isNaN(idNum) ? null : idNum) : null,
       TICKET_ORDER_ITEM_STATUS: 'REQUESTED',
-    })),
-  )
+    }))
+  })
 
   if (orderItemsToInsert.length > 0) {
-    const { error: itemsError } = await supabase
+    const { data: insertedItems, error: itemsError } = await supabase
       .from('Ticket_Order_Items')
       .insert(orderItemsToInsert)
+      .select('TICKET_ORDER_ITEM_ID, ITEM_GROUP_ID')
 
     if (itemsError) {
       console.error('[ticketService] Failed to insert ticket order items:', itemsError)
       throw itemsError
+    }
+
+    // 3. For any inserted group items (where ITEM_GROUP_ID is not null), insert their constituent items into Ticket_Order_Group_Items
+    const groupRows = (insertedItems ?? []).filter((r: any) => r.ITEM_GROUP_ID)
+    if (groupRows.length > 0) {
+      const groupIds = [...new Set(groupRows.map((r: any) => Number(r.ITEM_GROUP_ID)))]
+      const { data: itemGroupLinks, error: linksError } = await supabase
+        .from('Item_Groups')
+        .select('MENU_GROUP_ID, ITEM_ID')
+        .in('MENU_GROUP_ID', groupIds)
+
+      const linksByGroup = new Map<number, number[]>()
+      if (!linksError && itemGroupLinks) {
+        itemGroupLinks.forEach((link: any) => {
+          const gid = Number(link.MENU_GROUP_ID)
+          if (!linksByGroup.has(gid)) linksByGroup.set(gid, [])
+          linksByGroup.get(gid)!.push(Number(link.ITEM_ID))
+        })
+      }
+
+      // Fallback to cart rawGroup itemIds if Item_Groups query had no results
+      cartItems.forEach((ci) => {
+        if (ci.isGroup && ci.rawGroup?.itemIds) {
+          const gid = Number(String(ci.id).replace(/^group-/, ''))
+          if (!linksByGroup.has(gid) || linksByGroup.get(gid)!.length === 0) {
+            linksByGroup.set(gid, ci.rawGroup.itemIds.map(Number).filter(Boolean))
+          }
+        }
+      })
+
+      const groupItemsToInsert: Array<{
+        TICKET_GROUP_ID: number
+        ITEM_ID: number
+        ITEM_STATUS: string
+      }> = []
+
+      groupRows.forEach((r: any) => {
+        const gid = Number(r.ITEM_GROUP_ID)
+        const ticketGroupId = Number(r.TICKET_ORDER_ITEM_ID)
+        const itemIds = linksByGroup.get(gid) ?? []
+        itemIds.forEach((childItemId) => {
+          groupItemsToInsert.push({
+            TICKET_GROUP_ID: ticketGroupId,
+            ITEM_ID: childItemId,
+            ITEM_STATUS: 'REQUESTED',
+          })
+        })
+      })
+
+      if (groupItemsToInsert.length > 0) {
+        const { error: groupItemsInsertErr } = await supabase
+          .from('Ticket_Order_Group_Items')
+          .insert(groupItemsToInsert)
+
+        if (groupItemsInsertErr) {
+          console.warn('[ticketService] Batch insert into Ticket_Order_Group_Items error (check unique constraint on TICKET_GROUP_ID):', groupItemsInsertErr)
+          // Attempt individual row inserts in case of partial constraint conflicts
+          for (const row of groupItemsToInsert) {
+            await supabase.from('Ticket_Order_Group_Items').insert(row)
+          }
+        }
+      }
     }
   }
 

@@ -271,6 +271,13 @@ export async function updateMenuItemGroup(id: string, payload: {
   if (linkError) throw linkError
 }
 
+export async function deleteMenuItemGroup(id: string): Promise<void> {
+  const { error: deleteLinksError } = await supabase.from('Item_Groups').delete().eq('MENU_GROUP_ID', Number(id))
+  if (deleteLinksError) throw deleteLinksError
+  const { error } = await supabase.from('Menu_Item_Groups').delete().eq('MENU_GROUP_ID', Number(id))
+  if (error) throw error
+}
+
 export async function deleteMenuItem(id: string): Promise<void> {
   const { error } = await supabase
     .from('Menu_Items').delete().eq('ITEM_ID', Number(id))
