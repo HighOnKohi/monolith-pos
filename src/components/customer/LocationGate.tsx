@@ -31,7 +31,7 @@ export function LocationGate() {
   const [showTroubleshooting, setShowTroubleshooting] = useState(false)
   const isChecking = status === 'checking_location' || status === 'requesting_permission'
 
-  const targetRadius = allowedRadiusMeters ?? 150
+  const targetRadius = allowedRadiusMeters ?? 200
   const venueName = closestLocation?.name ?? 'Siena College of Taytay'
 
   return (

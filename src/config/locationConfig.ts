@@ -24,18 +24,18 @@ export interface AllowedLocation {
 }
 
 /**
- * Default geofence radius: 150 meters.
+ * Default geofence radius: 200 meters.
  * Can be overridden per location or via VITE_LOCATION_CHECK_RADIUS_METERS env.
  */
-export const DEFAULT_RADIUS_METERS = Number(import.meta.env.VITE_LOCATION_CHECK_RADIUS_METERS) || 150
+export const DEFAULT_RADIUS_METERS = Number(import.meta.env.VITE_LOCATION_CHECK_RADIUS_METERS) || 200
 
 /**
  * Primary reference coordinates for Siena College of Taytay.
  * Can be overridden via environment variables if needed.
  */
 export const SIENA_COLLEGE_COORDINATES = {
-  latitude: Number(import.meta.env.VITE_LOCATION_CHECK_CENTER_LAT) || 14.568434,
-  longitude: Number(import.meta.env.VITE_LOCATION_CHECK_CENTER_LNG) || 121.135246,
+  latitude: Number(import.meta.env.VITE_LOCATION_CHECK_CENTER_LAT) || 14.578333,
+  longitude: Number(import.meta.env.VITE_LOCATION_CHECK_CENTER_LNG) || 121.132667,
 }
 
 /**
