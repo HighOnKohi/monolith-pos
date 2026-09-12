@@ -26,6 +26,7 @@ import {
   CheckCircle2,
   TableProperties,
   Minus,
+  Lock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { supabase } from '@/lib/supabase'
@@ -553,7 +554,27 @@ export default function TableManagerPage() {
   const [savingPreset, setSavingPreset] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [savingLayout, setSavingLayout] = useState(false)
+  const [isSwitchingLayout, setIsSwitchingLayout] = useState(false)
+  const [switchingLayoutName, setSwitchingLayoutName] = useState('')
+  const [switchingPresetId, setSwitchingPresetId] = useState<number | null>(null)
   const navigationBlocker = useBlocker(floorPlan.isDirty)
+
+  // Block all keyboard interaction across window while switching layouts
+  useEffect(() => {
+    if (!isSwitchingLayout) return
+    const blockKeyboard = (e: KeyboardEvent) => {
+      e.stopPropagation()
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', blockKeyboard, { capture: true })
+    window.addEventListener('keyup', blockKeyboard, { capture: true })
+    window.addEventListener('keypress', blockKeyboard, { capture: true })
+    return () => {
+      window.removeEventListener('keydown', blockKeyboard, { capture: true })
+      window.removeEventListener('keyup', blockKeyboard, { capture: true })
+      window.removeEventListener('keypress', blockKeyboard, { capture: true })
+    }
+  }, [isSwitchingLayout])
 
   // ── Toast ──
   const [toast, setToast] = useState<ToastMsg | null>(null)
@@ -1148,6 +1169,7 @@ export default function TableManagerPage() {
   }
 
   async function handleToolbarSave() {
+    if (isSwitchingLayout) return
     if (activePresetId !== null) {
       await handleSaveLayout()
     } else {
@@ -1255,6 +1277,7 @@ export default function TableManagerPage() {
       showToast('Cannot switch table layout while active orders are in progress.', 'error')
       return
     }
+    if (isSwitchingLayout) return
 
     const preset = presets.find((p) => p.PRESET_ID === presetId)
     if (!preset) return
@@ -1273,6 +1296,16 @@ export default function TableManagerPage() {
       showToast('Cannot switch table layout while active orders are in progress.', 'error')
       return
     }
+    if (isSwitchingLayout) return
+
+    setIsSwitchingLayout(true)
+    setSwitchingLayoutName(preset.PRESET_NAME)
+    setSwitchingPresetId(preset.PRESET_ID)
+    setConfirmLoadPreset(null)
+    isMutatingRef.current = true
+
+    const minDisplayDelay = new Promise((resolve) => setTimeout(resolve, 650))
+
     try {
       // Apply preset config
       floorPlan.setConfig({
@@ -1446,11 +1479,16 @@ export default function TableManagerPage() {
         prev.map((p) => ({ ...p, IS_ACTIVE: p.PRESET_ID === preset.PRESET_ID })),
       )
 
+      await minDisplayDelay
       floorPlan.markClean()
-      setConfirmLoadPreset(null)
       showToast(`Layout "${preset.PRESET_NAME}" loaded successfully.`, 'success')
     } catch (err: unknown) {
       showToast((err as Error).message, 'error')
+    } finally {
+      setIsSwitchingLayout(false)
+      setSwitchingLayoutName('')
+      setSwitchingPresetId(null)
+      isMutatingRef.current = false
     }
   }
 
@@ -1624,7 +1662,7 @@ export default function TableManagerPage() {
         canRedo={floorPlan.canRedo}
         snapEnabled={floorPlan.config.snapEnabled}
         isDirty={floorPlan.isDirty}
-        saving={savingLayout}
+        saving={savingLayout || isSwitchingLayout}
         activePresetName={activePreset?.PRESET_NAME}
         onUndo={floorPlan.undo}
         onRedo={floorPlan.redo}
@@ -1659,6 +1697,8 @@ export default function TableManagerPage() {
           maxPax={effectiveMaxPax}
           activeLinkedEvent={activeLinkedEvent}
           hasActiveOrders={hasActiveOrders}
+          isSwitchingLayout={isSwitchingLayout}
+          switchingPresetId={switchingPresetId}
         />
 
         {/* Center — Floor Plan */}
@@ -1800,8 +1840,8 @@ export default function TableManagerPage() {
         <ConfirmLoadModal
           presetName={confirmLoadPreset.PRESET_NAME}
           onConfirm={() => void doLoadPreset(confirmLoadPreset)}
-          onCancel={() => setConfirmLoadPreset(null)}
-          loading={false}
+          onCancel={() => !isSwitchingLayout && setConfirmLoadPreset(null)}
+          loading={isSwitchingLayout}
         />
       )}
 
@@ -1828,6 +1868,60 @@ export default function TableManagerPage() {
           guestCapacity={qrModalTable.GUEST_CAPACITY}
           onClose={() => setQrModalTable(null)}
         />
+      )}
+
+      {/* ── Layout Switching Loading Animation & Interaction Lock Overlay ── */}
+      {isSwitchingLayout && (
+        <div
+          className="fp-layout-switching-overlay"
+          role="alertdialog"
+          aria-modal="true"
+          aria-busy="true"
+          aria-label="Switching layout"
+          onClick={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+          }}
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+          }}
+        >
+          <div className="fp-layout-switching-card">
+            {/* Animated mini floor-plan rearrangement */}
+            <div className="fp-layout-anim-stage" aria-hidden="true">
+              <div className="fp-layout-orbit-ring" />
+              <div className="fp-mini-table fp-mini-table-1">1</div>
+              <div className="fp-mini-table fp-mini-table-2">2</div>
+              <div className="fp-mini-table fp-mini-table-3">3</div>
+              <div className="fp-mini-table fp-mini-table-4">4</div>
+            </div>
+
+            <h3 className="fp-layout-switching-title">Switching Layout</h3>
+
+            {switchingLayoutName && (
+              <div className="fp-layout-switching-badge">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                <span className="fp-layout-switching-badge-text">{switchingLayoutName}</span>
+              </div>
+            )}
+
+            <p className="fp-layout-switching-desc">
+              Synchronizing table arrangement, grid spacing, and floor plan dimensions...
+            </p>
+
+            {/* Shimmering progress track */}
+            <div className="fp-layout-progress-track">
+              <div className="fp-layout-progress-bar" />
+            </div>
+
+            {/* Locked interactions indicator */}
+            <div className="fp-layout-locked-pill">
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Interactions locked during update</span>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
