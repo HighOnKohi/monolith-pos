@@ -67,6 +67,7 @@ import { FloorPlanToolbar } from './FloorPlanToolbar'
 import { TablePalette } from './TablePalette'
 import { TableInspector } from './TableInspector'
 import { GridSettingsModal } from './GridSettingsModal'
+import { SavedLayoutsModal } from './SavedLayoutsModal'
 import { SavePresetModal, ConfirmLoadModal, ConfirmDeletePresetModal } from './PresetModal'
 import { findGroupForTable, calculateEffectiveCapacity, disburseCapacities, calculateMergeGroups, type MergeGroup } from '@/utils/floorPlan/adjacency'
 import { findFirstAvailablePosition } from '@/utils/floorPlan/collision'
@@ -543,6 +544,7 @@ export default function TableManagerPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null) // table ID to delete
   const [showRemoveAllConfirm, setShowRemoveAllConfirm] = useState(false)
   const [showGridSettings, setShowGridSettings] = useState(false)
+  const [showSavedLayoutsModal, setShowSavedLayoutsModal] = useState(false)
   const [showSavePreset, setShowSavePreset] = useState(false)
   const [confirmLoadPreset, setConfirmLoadPreset] = useState<LayoutPreset | null>(null)
   const [renamePreset, setRenamePreset] = useState<LayoutPreset | null>(null)
@@ -937,6 +939,23 @@ export default function TableManagerPage() {
       const updated = await updateTable(tableId, { capacity })
       setTables((prev) => patchTables(prev, updated))
       showToast('Capacity updated.', 'success')
+      return true
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+      return false
+    } finally {
+      setSavingCapacity(false)
+      isMutatingRef.current = false
+    }
+  }
+
+  async function handleSeatedPaxChange(tableId: number, seatedPax: number): Promise<boolean> {
+    setSavingCapacity(true)
+    isMutatingRef.current = true
+    try {
+      const updated = await updateTable(tableId, { seatedPax })
+      setTables((prev) => patchTables(prev, updated))
+      showToast('Seated guests updated.', 'success')
       return true
     } catch (err: unknown) {
       showToast((err as Error).message, 'error')
@@ -1657,21 +1676,16 @@ export default function TableManagerPage() {
 
       {/* Toolbar */}
       <FloorPlanToolbar
-        zoom={floorPlan.zoom}
         canUndo={floorPlan.canUndo}
         canRedo={floorPlan.canRedo}
-        snapEnabled={floorPlan.config.snapEnabled}
         isDirty={floorPlan.isDirty}
         saving={savingLayout || isSwitchingLayout}
         activePresetName={activePreset?.PRESET_NAME}
         onUndo={floorPlan.undo}
         onRedo={floorPlan.redo}
         onRotateSelected={floorPlan.selectedTableId !== null ? () => floorPlan.rotateTable(floorPlan.selectedTableId!) : undefined}
-        onZoomIn={floorPlan.zoomIn}
-        onZoomOut={floorPlan.zoomOut}
-        onResetZoom={floorPlan.resetZoom}
-        onToggleSnap={() => floorPlan.updateConfig({ snapEnabled: !floorPlan.config.snapEnabled })}
         onOpenGridSettings={() => setShowGridSettings(true)}
+        onOpenSavedLayouts={() => setShowSavedLayoutsModal(true)}
         onSavePreset={handleToolbarSave}
         onPrintQr={() => {
           if (layoutTables.length > 0) void downloadBulkQrPdf(layoutTables)
@@ -1734,7 +1748,7 @@ export default function TableManagerPage() {
           allPositions={floorPlan.positions}
           onClose={() => floorPlan.setSelectedTableId(null)}
           onCapacityChange={handleCapacityChange}
-          onDimensionsChange={(id, w, h) => floorPlan.updateTableDimensions(id, w, h)}
+          onSeatedPaxChange={handleSeatedPaxChange}
           onRotate={(id) => floorPlan.rotateTable(id)}
           onStatusChange={handleStatusChange}
           onDelete={(id) => setShowDeleteConfirm(id)}
@@ -1742,7 +1756,6 @@ export default function TableManagerPage() {
             const t = tables.find((t) => t.TABLE_ID === id)
             if (t) setQrModalTable(t)
           }}
-          onUnmerge={handleUnmerge}
           saving={savingCapacity}
           orderSummary={inspectorOrderSummary}
         />
@@ -1803,6 +1816,20 @@ export default function TableManagerPage() {
           onClose={() => setShowGridSettings(false)}
         />
       )}
+
+      <SavedLayoutsModal
+        isOpen={showSavedLayoutsModal}
+        onClose={() => setShowSavedLayoutsModal(false)}
+        presets={presets}
+        activePresetId={activePresetId}
+        onLoadPreset={handleLoadPreset}
+        onSaveNewPreset={() => setShowSavePreset(true)}
+        onRenamePreset={setRenamePreset}
+        onDeletePreset={setDeletePresetConfirm}
+        hasActiveOrders={hasActiveOrders}
+        isSwitchingLayout={isSwitchingLayout}
+        switchingPresetId={switchingPresetId}
+      />
 
       {showSavePreset && (
         <SavePresetModal

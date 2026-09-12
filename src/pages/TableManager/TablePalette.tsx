@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, memo, useEffect } from 'react'
-import { Plus, Layout, Star, ChevronDown, ChevronRight, Pencil, Trash2, FolderOpen, Lock, Calendar, Loader2 } from 'lucide-react'
+import { Plus, Layout, ChevronDown, ChevronRight, Pencil, Trash2, Lock, Calendar } from 'lucide-react'
 import type { LayoutPreset } from '@/services/layoutService'
 import type { RestaurantEvent } from '@/types/event'
 import { TableTemplateModal } from './TableTemplateModal'
@@ -101,7 +101,6 @@ export const TablePalette = memo(function TablePalette({
   switchingPresetId = null,
 }: TablePaletteProps) {
   const [tablesExpanded, setTablesExpanded] = useState(true)
-  const [presetsExpanded, setPresetsExpanded] = useState(true)
 
   // Custom table templates state — permanently saved via templateService
   const [templates, setTemplates] = useState<TableTemplate[]>(getLocalTemplates)
@@ -245,114 +244,7 @@ export const TablePalette = memo(function TablePalette({
         </div>
       )}
 
-      {/* ── Presets Section ── */}
-      <div className="fp-palette-section">
-        <button
-          className="fp-palette-section-header"
-          onClick={() => setPresetsExpanded(!presetsExpanded)}
-        >
-          <span className="fp-palette-section-title">
-            <Star className="w-3.5 h-3.5" />
-            Saved Layouts
-          </span>
-          {presetsExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-        </button>
 
-        {presetsExpanded && (
-          <div className="fp-palette-section-body">
-            {presets.length === 0 ? (
-              <p className="fp-palette-empty">No saved layouts yet.</p>
-            ) : (
-              presets.map((preset) => {
-                const isThisPresetLoading = isSwitchingLayout && switchingPresetId === preset.PRESET_ID
-                const isPresetDisabled = hasActiveOrders || isSwitchingLayout
-
-                return (
-                  <div
-                    key={preset.PRESET_ID}
-                    className={`fp-palette-preset ${preset.PRESET_ID === activePresetId ? 'fp-preset-active' : ''}`}
-                  >
-                    <button
-                      className="fp-preset-info text-left flex-1"
-                      disabled={isPresetDisabled}
-                      onClick={() => !isPresetDisabled && onLoadPreset(preset.PRESET_ID)}
-                      title={
-                        hasActiveOrders
-                          ? 'Cannot switch layout while active orders are in progress'
-                          : isSwitchingLayout
-                          ? 'Switching layout...'
-                          : `Click to load layout "${preset.PRESET_NAME}"`
-                      }
-                    >
-                      <span className="fp-preset-name font-semibold">{preset.PRESET_NAME}</span>
-                      <span className="fp-preset-meta">
-                        {(preset.LAYOUT_DATA ?? []).length} Tables
-                        {preset.FLOOR_WIDTH_BLOCKS && preset.FLOOR_HEIGHT_BLOCKS
-                          ? ` · ${preset.FLOOR_WIDTH_BLOCKS}×${preset.FLOOR_HEIGHT_BLOCKS}`
-                          : ''}
-                        {preset.IS_ACTIVE && <span className="fp-preset-active-badge">Active</span>}
-                        {preset.EVENT_ID && <span className="text-indigo-600 font-bold ml-1">· Event</span>}
-                      </span>
-                    </button>
-                    <div className="flex gap-1 items-center">
-                      <button
-                        className={`fp-toolbar-btn px-1.5 py-1 text-xs font-semibold rounded flex items-center gap-1 ${
-                          isPresetDisabled
-                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed opacity-60'
-                            : 'text-slate-700 bg-slate-100 hover:bg-slate-200'
-                        }`}
-                        disabled={isPresetDisabled}
-                        onClick={() => !isPresetDisabled && onLoadPreset(preset.PRESET_ID)}
-                        title={
-                          hasActiveOrders
-                            ? 'Cannot switch layout while active orders are in progress'
-                            : isSwitchingLayout
-                            ? 'Switching layout...'
-                            : `Load ${preset.PRESET_NAME}`
-                        }
-                      >
-                        {isThisPresetLoading ? (
-                          <Loader2 className="w-3 h-3 animate-spin text-amber-500" />
-                        ) : hasActiveOrders ? (
-                          <Lock className="w-3 h-3 text-slate-400" />
-                        ) : (
-                          <FolderOpen className="w-3 h-3 text-slate-600" />
-                        )}
-                        {isThisPresetLoading ? 'Loading…' : 'Load'}
-                      </button>
-                      <button
-                        className="fp-toolbar-btn"
-                        disabled={isSwitchingLayout}
-                        onClick={() => !isSwitchingLayout && onRenamePreset(preset)}
-                        title={`Rename ${preset.PRESET_NAME}`}
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        className="fp-toolbar-btn text-red-600"
-                        disabled={isSwitchingLayout}
-                        onClick={() => !isSwitchingLayout && onDeletePreset(preset)}
-                        title={`Delete ${preset.PRESET_NAME}`}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-
-            <button
-              className="fp-palette-save-btn w-full mt-2"
-              disabled={isSwitchingLayout}
-              onClick={() => !isSwitchingLayout && onSavePreset()}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Save As New Layout
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* ── Table Template Modal (Create / Edit) ── */}
       <TableTemplateModal

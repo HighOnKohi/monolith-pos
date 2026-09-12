@@ -93,34 +93,6 @@ export const GridSettingsModal = memo(function GridSettingsModal({
             max={100}
             onChange={(v) => setDraft((d) => ({ ...d, heightBlocks: v }))}
           />
-          <Stepper
-            label="Table Size"
-            value={draft.tableSizeBlocks}
-            min={1}
-            max={6}
-            suffix={`× ${draft.tableSizeBlocks} blocks`}
-            onChange={(v) => setDraft((d) => ({ ...d, tableSizeBlocks: v }))}
-          />
-          <Stepper
-            label="Table Spacing"
-            value={draft.spacingBlocks}
-            min={0}
-            max={5}
-            suffix={draft.spacingBlocks === 1 ? 'block' : 'blocks'}
-            onChange={(v) => setDraft((d) => ({ ...d, spacingBlocks: v }))}
-          />
-
-          <div className="fp-grid-field">
-            <label className="fp-grid-label">Snap to Grid</label>
-            <button
-              className={`fp-toggle ${draft.snapEnabled ? 'fp-toggle-on' : 'fp-toggle-off'}`}
-              onClick={() => setDraft((d) => ({ ...d, snapEnabled: !d.snapEnabled }))}
-            >
-              <span className="fp-toggle-track" />
-              <span className="fp-toggle-thumb" />
-              <span className="fp-toggle-label">{draft.snapEnabled ? 'ON' : 'OFF'}</span>
-            </button>
-          </div>
 
           <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg text-xs text-slate-600 flex items-center justify-between">
             {activePresetName ? (

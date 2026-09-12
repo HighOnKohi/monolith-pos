@@ -147,11 +147,12 @@ interface TableInspectorProps {
   allPositions?: EditorTable[]
   onClose: () => void
   onCapacityChange: (tableId: number, capacity: number) => void
+  onSeatedPaxChange?: (tableId: number, seatedPax: number) => void
   onDimensionsChange?: (tableId: number, widthBlocks: number, heightBlocks: number) => void
   onStatusChange: (tableId: number, status: TableStatus) => void
   onDelete: (tableId: number) => void
   onQrPrint: (tableId: number) => void
-  onUnmerge: (anchorId: number) => void
+  onUnmerge?: (anchorId: number) => void
   onRotate?: (tableId: number) => void
   saving: boolean
   orderSummary?: { totalBill: number; activeOrderCount: number }
@@ -167,22 +168,27 @@ export const TableInspector = memo(function TableInspector({
   allPositions,
   onClose,
   onCapacityChange,
-  onDimensionsChange,
+  onSeatedPaxChange,
   onStatusChange,
   onDelete,
   onQrPrint,
-  onUnmerge,
   onRotate,
   saving,
   orderSummary,
 }: TableInspectorProps) {
   const [draftCapacity, setDraftCapacity] = useState(table?.GUEST_CAPACITY ?? 4)
+  const [draftSeated, setDraftSeated] = useState(table?.CURRENT_GUEST_COUNT ?? 0)
 
   useEffect(() => {
-    if (table) setDraftCapacity(table.GUEST_CAPACITY)
-  }, [table?.TABLE_ID, table?.GUEST_CAPACITY])
+    if (table) {
+      setDraftCapacity(table.GUEST_CAPACITY)
+      setDraftSeated(table.CURRENT_GUEST_COUNT)
+    }
+  }, [table?.TABLE_ID, table?.GUEST_CAPACITY, table?.CURRENT_GUEST_COUNT])
 
-  const isDirty = table && draftCapacity !== table.GUEST_CAPACITY
+  const isCapacityDirty = table && draftCapacity !== table.GUEST_CAPACITY
+  const isSeatedDirty = table && draftSeated !== table.CURRENT_GUEST_COUNT
+  const isDirty = isCapacityDirty || isSeatedDirty
   const isOccupied = table && (table.STATUS === 'OCCUPIED' || table.STATUS === 'HAS_REQUEST')
   const isMerged = mergeGroup && mergeGroup.memberIds.length > 1
 
@@ -207,6 +213,16 @@ export const TableInspector = memo(function TableInspector({
     if (!isMerged || !allPositions) return table.GUEST_CAPACITY
     return calculateEffectiveCapacity(table, allPositions, tableSizeBlocks, mergeGroup ? [mergeGroup] : undefined)
   }, [table, isMerged, allPositions, tableSizeBlocks, mergeGroup])
+
+  function handleSaveCapacityAndSeated() {
+    if (!table) return
+    if (isCapacityDirty) {
+      onCapacityChange(table.TABLE_ID, draftCapacity)
+    }
+    if (isSeatedDirty && onSeatedPaxChange) {
+      onSeatedPaxChange(table.TABLE_ID, draftSeated)
+    }
+  }
 
   // ── No table selected ──────────────────────────────────────────────────────
 
@@ -262,47 +278,13 @@ export const TableInspector = memo(function TableInspector({
 
           <div className="fp-inspector-row">
             <span className="fp-inspector-label">Table Number</span>
-            <span className="fp-inspector-value">{table.TABLE_NUM}</span>
+            <span className="fp-inspector-value font-bold text-[#14274E]">{table.TABLE_NUM}</span>
           </div>
-
-          <div className="fp-inspector-row">
-            <span className="fp-inspector-label">Table Size</span>
-            <span className="fp-inspector-value">{curWidth} × {curHeight} blocks</span>
-          </div>
-
-          {onDimensionsChange && (
-            <div className="grid grid-cols-2 gap-2 mt-1 mb-2">
-              <div>
-                <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Width</label>
-                <select
-                  className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded px-1.5 py-1"
-                  value={curWidth}
-                  onChange={(e) => onDimensionsChange(table.TABLE_ID, Number(e.target.value), curHeight)}
-                >
-                  {[2, 4, 6, 8].map((w) => (
-                    <option key={w} value={w}>{w} blocks</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Height</label>
-                <select
-                  className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded px-1.5 py-1"
-                  value={curHeight}
-                  onChange={(e) => onDimensionsChange(table.TABLE_ID, curWidth, Number(e.target.value))}
-                >
-                  {[2, 4, 6, 8].map((h) => (
-                    <option key={h} value={h}>{h} blocks</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
 
           {onRotate && (
             <button
               type="button"
-              className="fp-inspector-btn secondary flex items-center justify-center gap-1.5 w-full mt-1 mb-2 text-xs font-semibold"
+              className="fp-inspector-btn secondary flex items-center justify-center gap-1.5 w-full mt-2 text-xs font-semibold"
               onClick={() => onRotate(table.TABLE_ID)}
               title="Rotate table 90° (R)"
             >
@@ -310,18 +292,13 @@ export const TableInspector = memo(function TableInspector({
               <span>Rotate 90° (R)</span>
             </button>
           )}
-
-          <div className="fp-inspector-row">
-            <span className="fp-inspector-label">Position</span>
-            <span className="fp-inspector-value">X: {position.x} · Y: {position.y} blocks</span>
-          </div>
         </div>
 
         <div className="fp-inspector-divider" />
 
-        {/* ── Capacity ── */}
+        {/* ── Capacity & Seating ── */}
         <div className="fp-inspector-section">
-          <span className="fp-inspector-section-title">Capacity</span>
+          <span className="fp-inspector-section-title">Capacity & Seating</span>
 
           <div>
             <div className="flex justify-between items-center mb-1">
@@ -336,18 +313,25 @@ export const TableInspector = memo(function TableInspector({
             />
           </div>
 
-          <div className="fp-inspector-row">
-            <span className="fp-inspector-label">Currently Seated</span>
-            <span className="fp-inspector-value">
-              {table.CURRENT_GUEST_COUNT}
-              {table.CURRENT_GUEST_COUNT >= (isMerged ? tableEffectiveCapacity : table.GUEST_CAPACITY) && (isMerged ? tableEffectiveCapacity : table.GUEST_CAPACITY) > 0 && (
-                <span className="fp-pax-full-label"> (Full)</span>
+          <div className="mt-3">
+            <div className="flex justify-between items-center mb-1">
+              <label className="fp-inspector-label mb-0">Currently Seated</label>
+              {draftSeated >= (isMerged ? tableEffectiveCapacity : draftCapacity) && (isMerged ? tableEffectiveCapacity : draftCapacity) > 0 && (
+                <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                  Full
+                </span>
               )}
-            </span>
+            </div>
+            <PaxStepper
+              value={draftSeated}
+              min={0}
+              max={isMerged ? tableEffectiveCapacity : draftCapacity}
+              onChange={setDraftSeated}
+            />
           </div>
 
           {isMerged && (
-            <div className="fp-inspector-row">
+            <div className="fp-inspector-row mt-2">
               <span className="fp-inspector-label">Effective Seats</span>
               <span className="fp-inspector-value font-bold text-amber-700">
                 {tableEffectiveCapacity} Pax (merged sides deducted)
@@ -356,7 +340,7 @@ export const TableInspector = memo(function TableInspector({
           )}
 
           {orderSummary && (
-            <div className="fp-inspector-row">
+            <div className="fp-inspector-row mt-2">
               <span className="fp-inspector-label">Active Orders</span>
               <span className="fp-inspector-value">
                 {orderSummary.activeOrderCount} order{orderSummary.activeOrderCount !== 1 ? 's' : ''}{isMerged ? ' (shared)' : ''} · ₱{orderSummary.totalBill.toFixed(2)}
@@ -366,14 +350,18 @@ export const TableInspector = memo(function TableInspector({
 
           {isDirty && (
             <button
-              className="fp-inspector-btn primary"
-              onClick={() => onCapacityChange(table.TABLE_ID, draftCapacity)}
+              className="fp-inspector-btn primary mt-3 w-full"
+              onClick={handleSaveCapacityAndSeated}
               disabled={saving}
             >
               {saving
                 ? <span className="fp-spinner" />
                 : <Check className="w-3.5 h-3.5" />}
-              Save Capacity
+              {isCapacityDirty && isSeatedDirty
+                ? 'Save Changes'
+                : isCapacityDirty
+                ? 'Save Capacity'
+                : 'Save Seated Pax'}
             </button>
           )}
         </div>
@@ -406,30 +394,21 @@ export const TableInspector = memo(function TableInspector({
             Merge Status
           </span>
           {isMerged ? (
-            <>
-              <div className="fp-inspector-merge-info">
-                <div className="fp-inspector-row">
-                  <span className="fp-inspector-label">Group</span>
-                  <span className="fp-inspector-value fp-merge-group-label">
-                    {mergeGroup!.memberIds.map((id) => {
-                      const t = allTables.find((at) => at.TABLE_ID === id)
-                      return t ? `T${t.TABLE_NUM}` : `T${id}`
-                    }).join(' + ')}
-                  </span>
-                </div>
-                <div className="fp-inspector-row">
-                  <span className="fp-inspector-label">Combined Capacity</span>
-                  <span className="fp-inspector-value font-black text-[#14274E]">{combinedCapacity} Pax</span>
-                </div>
+            <div className="fp-inspector-merge-info">
+              <div className="fp-inspector-row">
+                <span className="fp-inspector-label">Group</span>
+                <span className="fp-inspector-value fp-merge-group-label">
+                  {mergeGroup!.memberIds.map((id) => {
+                    const t = allTables.find((at) => at.TABLE_ID === id)
+                    return t ? `T${t.TABLE_NUM}` : `T${id}`
+                  }).join(' + ')}
+                </span>
               </div>
-              <button
-                className="fp-inspector-btn danger"
-                onClick={() => onUnmerge(mergeGroup!.anchorId)}
-              >
-                <GitMerge className="w-3.5 h-3.5" />
-                Unmerge Tables
-              </button>
-            </>
+              <div className="fp-inspector-row">
+                <span className="fp-inspector-label">Combined Capacity</span>
+                <span className="fp-inspector-value font-black text-[#14274E]">{combinedCapacity} Pax</span>
+              </div>
+            </div>
           ) : (
             <p className="fp-inspector-muted">Standalone — not part of a merge group.</p>
           )}
