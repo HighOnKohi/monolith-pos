@@ -187,12 +187,12 @@ export default function DispatcherInterface() {
       .channel('dispatcher-orders-realtime-sub')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        { event: '*', schema: 'orders', table: 'Restaurant_Orders' },
         () => loadOrders(true),
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Order_Items' },
+        { event: '*', schema: 'orders', table: 'Order_Items' },
         () => loadOrders(true),
       )
       .subscribe()
@@ -201,12 +201,12 @@ export default function DispatcherInterface() {
       .channel('dispatcher-tickets-realtime-sub')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Ticket_Orders' },
+        { event: '*', schema: 'tickets', table: 'Ticket_Orders' },
         () => loadTickets(true),
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Ticket_Order_Items' },
+        { event: '*', schema: 'tickets', table: 'Ticket_Order_Items' },
         () => loadTickets(true),
       )
       .subscribe()

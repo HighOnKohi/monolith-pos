@@ -216,7 +216,7 @@ export default function CashierPage() {
       .channel('cashier-bill-requests-sync')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Bill_Requests' },
+        { event: '*', schema: 'orders', table: 'Bill_Requests' },
         () => {
           loadInitialData()
         }
@@ -228,7 +228,7 @@ export default function CashierPage() {
       .channel('cashier-orders-sync')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        { event: '*', schema: 'orders', table: 'Restaurant_Orders' },
         () => {
           loadInitialData()
         }
@@ -240,7 +240,7 @@ export default function CashierPage() {
       .channel('cashier-tables-sync')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Tables' },
+        { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
         () => {
           loadTables()
         }

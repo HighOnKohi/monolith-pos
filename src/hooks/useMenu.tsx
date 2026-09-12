@@ -66,12 +66,12 @@ function useMenuState(enabled: boolean): UseMenuResult {
       .channel('shared-menu-sync-realtime')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Menu_Items' },
+        { event: '*', schema: 'menu', table: 'Menu_Items' },
         () => loadIfActive(false),
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Menu_Categories' },
+        { event: '*', schema: 'menu', table: 'Menu_Categories' },
         () => loadIfActive(false),
       )
       .subscribe()

@@ -8,8 +8,8 @@ export interface TableGroupInfo {
   anchorTableNum: number        // Primary table display number
   memberTableIds: number[]      // All member table IDs (e.g. [1, 2])
   memberTableNums: number[]     // All member table numbers (e.g. [1, 2])
-  displayLabel: string          // "Table 1 + Table 2" or "Table 1"
-  shortDisplayLabel: string     // "T1+2" or "T1"
+  displayLabel: string          // "Table 1" (primary table)
+  shortDisplayLabel: string     // "T1" (primary table)
   isMerged: boolean             // true if memberTableIds.length > 1
   capacity: number              // Combined capacity
   currentGuestCount: number     // Combined seated pax
@@ -33,13 +33,8 @@ function buildGroupInfoFromMembers(
   const memberTableNums = sortedMembers.map((m) => m.TABLE_NUM || m.TABLE_ID)
   const isMerged = sortedMembers.length > 1
 
-  const displayLabel = isMerged
-    ? sortedMembers.map((m) => `Table ${m.TABLE_NUM || m.TABLE_ID}`).join(' + ')
-    : `Table ${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
-
-  const shortDisplayLabel = isMerged
-    ? `T${sortedMembers.map((m) => m.TABLE_NUM || m.TABLE_ID).join('+')}`
-    : `T${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
+  const displayLabel = `Table ${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
+  const shortDisplayLabel = `T${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
 
   const capacity = isMerged
     ? (anchorTable.GUEST_CAPACITY || sortedMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY || 0), 0))
@@ -245,7 +240,7 @@ export function useTableGroup(tableId: number | null) {
       .channel(`table-group-sync-${tableId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Tables' },
+        { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
         () => {
           loadGroup()
         },

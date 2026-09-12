@@ -22,6 +22,7 @@ export interface TimeSeriesPoint {
   revenue: number
   orderCount: number
   customerCount: number | null
+  itemCount: number
 }
 
 export interface ItemSalesStat {
@@ -234,7 +235,19 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   const { startDate, endDate } = range
   const { prevStart, prevEnd } = getPreviousPeriod(startDate, endDate)
 
-  // 1. Fetch table orders in the selected period
+  // 1. Fetch completed orders from Completed_Orders table (dedicated archive for completed orders)
+  const { data: rawCompletedOrders, error: completedOrdersErr } = await supabase
+    .from('Completed_Orders')
+    .select('*')
+    .gte('TIME', toIsoDate(startDate))
+    .lte('TIME', toIsoDate(endDate))
+    .order('TIME', { ascending: true })
+
+  if (completedOrdersErr) {
+    console.warn('[analyticsService] Note on Completed_Orders table:', completedOrdersErr.message)
+  }
+
+  // Also query Restaurant_Orders for active/legacy orders in period
   const { data: currentOrders, error: ordersError } = await supabase
     .from('Restaurant_Orders')
     .select('*')
@@ -243,8 +256,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     .order('TIME', { ascending: true })
 
   if (ordersError) {
-    console.error('[analyticsService] Error fetching current orders:', ordersError)
-    throw ordersError
+    console.error('[analyticsService] Error fetching restaurant orders:', ordersError)
   }
 
   // 1b. Fetch ticket orders with items, menu items, and meal packages
@@ -394,7 +406,13 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   const completedTicketItems = completedTicketsList.flatMap((t) => t.items)
 
   // 2. Fetch table orders in the previous equivalent period for % comparison
-  const { data: previousOrders, error: prevOrdersError } = await supabase
+  const { data: previousCompletedOrders } = await supabase
+    .from('Completed_Orders')
+    .select('ORDER_STATUS, TOTAL_BILL, GUEST_COUNT')
+    .gte('TIME', toIsoDate(prevStart))
+    .lte('TIME', toIsoDate(prevEnd))
+
+  const { data: previousRestaurantOrders, error: prevOrdersError } = await supabase
     .from('Restaurant_Orders')
     .select('ORDER_STATUS, TOTAL_BILL, GUEST_COUNT')
     .gte('TIME', toIsoDate(prevStart))
@@ -404,18 +422,89 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     console.warn('[analyticsService] Error fetching previous period orders:', prevOrdersError)
   }
 
-  const allOrders = currentOrders ?? []
-  const prevOrders = previousOrders ?? []
+  const prevOrders = [
+    ...(previousCompletedOrders ?? []),
+    ...(previousRestaurantOrders ?? []),
+  ]
 
-  // Filter completed and cancelled restaurant orders
-  const completedOrdersList = allOrders.filter((o) => o['ORDER_STATUS'] === 'COMPLETED')
-  const cancelledOrdersList = allOrders.filter((o) => o['ORDER_STATUS'] === 'CANCELLED')
-  const completedOrderIds = completedOrdersList.map((o) => Number(o['ORDER_ID']))
+  const allOrders = [
+    ...(rawCompletedOrders ?? []),
+    ...(currentOrders ?? []),
+  ]
 
-  // 3. Fetch Order_Items joined with Menu_Items and Menu_Categories for completed table orders
+  // Combine completed and cancelled orders
+  const completedOrdersList: Array<Record<string, unknown>> = []
+  const cancelledOrdersList: Array<Record<string, unknown>> = []
+  const legacyCompletedOrderIds: number[] = []
+
+  // Add all orders from dedicated Completed_Orders log table
+  for (const co of rawCompletedOrders ?? []) {
+    completedOrdersList.push(co)
+  }
+
+  const archivedOriginalIds = new Set(
+    (rawCompletedOrders ?? [])
+      .map((co) => Number(co['ORIGINAL_ORDER_ID'] ?? co['ORDER_ID']))
+      .filter(Boolean),
+  )
+
+  // Add any legacy or active orders from Restaurant_Orders not already archived
+  for (const ro of currentOrders ?? []) {
+    const roId = Number(ro['ORDER_ID'])
+    const st = String(ro['ORDER_STATUS'] || '')
+    if (st === 'CANCELLED') {
+      cancelledOrdersList.push(ro)
+    } else if (st === 'COMPLETED') {
+      if (!archivedOriginalIds.has(roId)) {
+        completedOrdersList.push(ro)
+        legacyCompletedOrderIds.push(roId)
+      }
+    }
+  }
+
+  // 3. Unpack items from Completed_Orders (ORDER_ITEMS jsonb)
   let orderItemsData: Array<Record<string, unknown>> = []
-  if (completedOrderIds.length > 0) {
-    const { data: itemsData, error: itemsError } = await supabase
+  for (const co of rawCompletedOrders ?? []) {
+    const rawJson = co['ORDER_ITEMS']
+    const itemsList = Array.isArray(rawJson) ? rawJson : []
+    const oId = Number(co['ORDER_ID'])
+    const ordType = String(co['ORDER_TYPE'] || 'DINE-IN')
+    const reqFrom = String(co['REQUESTED_FROM'] || 'Cashier')
+
+    for (const it of itemsList) {
+      const itId = Number(it.item_id || it.itemId || 0)
+      const itName = String(it.item_name || it.itemName || 'Dish')
+      const itPrice = Number(it.price || it.unitPrice || 0)
+      const catId = Number(it.category_id || it.categoryId || 0)
+      const catName = String(it.category_name || it.categoryName || 'Uncategorized')
+      const qty = Math.max(Number(it.quantity) || 1, 1)
+
+      for (let q = 0; q < qty; q++) {
+        orderItemsData.push({
+          ORDER_ITEM_ID: itId,
+          ORDER_ID: oId,
+          ITEM_ID: itId,
+          ORDER_ITEM_STATUS: 'COMPLETED',
+          ORDER_TYPE: ordType,
+          REQUESTED_FROM: reqFrom,
+          Menu_Items: {
+            ITEM_ID: itId,
+            ITEM_NAME: itName,
+            ITEM_PRICE: itPrice,
+            CATEGORY_ID: catId,
+            Menu_Categories: {
+              CATEGORY_ID: catId,
+              CATEGORY_NAME: catName,
+            },
+          },
+        })
+      }
+    }
+  }
+
+  // Fetch Order_Items only for legacy orders that do not have ORDER_ITEMS jsonb
+  if (legacyCompletedOrderIds.length > 0) {
+    const { data: legacyItemsData, error: itemsError } = await supabase
       .from('Order_Items')
       .select(`
         ORDER_ITEM_ID,
@@ -433,13 +522,11 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
           )
         )
       `)
-      .in('ORDER_ID', completedOrderIds)
+      .in('ORDER_ID', legacyCompletedOrderIds)
 
-    if (itemsError) {
-      console.error('[analyticsService] Error fetching order items:', itemsError)
-      throw itemsError
+    if (!itemsError && legacyItemsData) {
+      orderItemsData.push(...(legacyItemsData as Array<Record<string, unknown>>))
     }
-    orderItemsData = (itemsData ?? []) as Array<Record<string, unknown>>
   }
 
   // 3b. Fetch full menu catalog (items + groups) to track zero-sales and underperforming items
@@ -967,6 +1054,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         revenue: 0,
         orderCount: 0,
         customerCount: hasCustomerData ? 0 : null,
+        itemCount: 0,
       })
     }
 
@@ -981,6 +1069,19 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         if (hasCustomerData) {
           point.customerCount = (point.customerCount || 0) + (Number(o['GUEST_COUNT']) || 1)
         }
+        let orderItemCount = 0
+        if (o['ITEM_COUNT'] != null && Number(o['ITEM_COUNT']) > 0) {
+          orderItemCount = Number(o['ITEM_COUNT'])
+        } else if (Array.isArray(o['ORDER_ITEMS']) && o['ORDER_ITEMS'].length > 0) {
+          orderItemCount = (o['ORDER_ITEMS'] as any[]).reduce(
+            (sum: number, it: any) => sum + (Number(it.quantity) || 1),
+            0,
+          )
+        } else {
+          const oId = Number(o['ORDER_ID'])
+          orderItemCount = orderItemsData.filter((oi) => Number(oi['ORDER_ID']) === oId).length
+        }
+        point.itemCount += orderItemCount
       }
     }
 
@@ -993,6 +1094,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         if (hasCustomerData) {
           point.customerCount = (point.customerCount || 0) + 1
         }
+        point.itemCount += t.items.length
       }
     }
   } else {
@@ -1012,6 +1114,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
           revenue: 0,
           orderCount: 0,
           customerCount: hasCustomerData ? 0 : null,
+          itemCount: 0,
         })
       }
       cursor.setDate(cursor.getDate() + 1)
@@ -1028,6 +1131,19 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         if (hasCustomerData) {
           point.customerCount = (point.customerCount || 0) + (Number(o['GUEST_COUNT']) || 1)
         }
+        let orderItemCount = 0
+        if (o['ITEM_COUNT'] != null && Number(o['ITEM_COUNT']) > 0) {
+          orderItemCount = Number(o['ITEM_COUNT'])
+        } else if (Array.isArray(o['ORDER_ITEMS']) && o['ORDER_ITEMS'].length > 0) {
+          orderItemCount = (o['ORDER_ITEMS'] as any[]).reduce(
+            (sum: number, it: any) => sum + (Number(it.quantity) || 1),
+            0,
+          )
+        } else {
+          const oId = Number(o['ORDER_ID'])
+          orderItemCount = orderItemsData.filter((oi) => Number(oi['ORDER_ID']) === oId).length
+        }
+        point.itemCount += orderItemCount
       }
     }
 
@@ -1040,6 +1156,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         if (hasCustomerData) {
           point.customerCount = (point.customerCount || 0) + 1
         }
+        point.itemCount += t.items.length
       }
     }
   }
@@ -1169,7 +1286,23 @@ export async function clearAnalyticsData(adminEmail: string, adminPassword: stri
     throw new Error(authError?.message || 'Invalid administrator email or password.')
   }
 
-  // 2. Fetch IDs of COMPLETED and CANCELLED orders to purge
+  // 2. Purge dedicated Completed_Orders table
+  let deletedCompletedCount = 0
+  try {
+    const { data: targetCompleted } = await supabase
+      .from('Completed_Orders')
+      .select('ORDER_ID')
+
+    if (targetCompleted && targetCompleted.length > 0) {
+      const completedIds = targetCompleted.map((c) => Number(c['ORDER_ID']))
+      await supabase.from('Completed_Orders').delete().in('ORDER_ID', completedIds)
+      deletedCompletedCount = completedIds.length
+    }
+  } catch (cErr) {
+    console.warn('[analyticsService] Warning purging Completed_Orders:', cErr)
+  }
+
+  // 3. Fetch IDs of COMPLETED and CANCELLED orders in Restaurant_Orders to purge
   const { data: targetOrders, error: fetchErr } = await supabase
     .from('Restaurant_Orders')
     .select('ORDER_ID')
@@ -1180,35 +1313,33 @@ export async function clearAnalyticsData(adminEmail: string, adminPassword: stri
     throw fetchErr
   }
 
-  if (!targetOrders || targetOrders.length === 0) {
-    return { success: true, deletedOrdersCount: 0 }
+  const orderIds = (targetOrders ?? []).map((o) => Number(o['ORDER_ID']))
+
+  if (orderIds.length > 0) {
+    // Delete child Order_Items first to prevent FK constraints
+    const { error: itemsDelErr } = await supabase
+      .from('Order_Items')
+      .delete()
+      .in('ORDER_ID', orderIds)
+
+    if (itemsDelErr) {
+      console.error('[analyticsService] Failed to delete child Order_Items:', itemsDelErr)
+      throw itemsDelErr
+    }
+
+    // Delete Restaurant_Orders
+    const { error: ordersDelErr } = await supabase
+      .from('Restaurant_Orders')
+      .delete()
+      .in('ORDER_ID', orderIds)
+
+    if (ordersDelErr) {
+      console.error('[analyticsService] Failed to delete Restaurant_Orders:', ordersDelErr)
+      throw ordersDelErr
+    }
   }
 
-  const orderIds = targetOrders.map((o) => Number(o['ORDER_ID']))
-
-  // 3. Delete child Order_Items first to prevent FK constraints
-  const { error: itemsDelErr } = await supabase
-    .from('Order_Items')
-    .delete()
-    .in('ORDER_ID', orderIds)
-
-  if (itemsDelErr) {
-    console.error('[analyticsService] Failed to delete child Order_Items:', itemsDelErr)
-    throw itemsDelErr
-  }
-
-  // 4. Delete Restaurant_Orders
-  const { error: ordersDelErr } = await supabase
-    .from('Restaurant_Orders')
-    .delete()
-    .in('ORDER_ID', orderIds)
-
-  if (ordersDelErr) {
-    console.error('[analyticsService] Failed to delete Restaurant_Orders:', ordersDelErr)
-    throw ordersDelErr
-  }
-
-  // 5. Also purge completed and cancelled Ticket_Orders and their items
+  // 4. Also purge completed and cancelled Ticket_Orders and their items
   const { data: targetTickets } = await supabase
     .from('Ticket_Orders')
     .select('TICKET_ID')
@@ -1234,5 +1365,8 @@ export async function clearAnalyticsData(adminEmail: string, adminPassword: stri
     deletedTicketsCount = ticketIds.length
   }
 
-  return { success: true, deletedOrdersCount: orderIds.length + deletedTicketsCount }
+  return {
+    success: true,
+    deletedOrdersCount: deletedCompletedCount + orderIds.length + deletedTicketsCount,
+  }
 }

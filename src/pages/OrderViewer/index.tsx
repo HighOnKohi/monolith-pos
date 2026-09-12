@@ -61,15 +61,15 @@ export default function OrderViewer() {
     // 3. Supabase Postgres Changes listeners for multi-device realtime
     const ordersChannel = supabase
       .channel('order-viewer-table-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Orders' }, () => void loadData(true))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Order_Items' }, () => void loadData(true))
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Restaurant_Orders' }, () => void loadData(true))
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Order_Items' }, () => void loadData(true))
       .subscribe()
 
     const ticketsChannel = supabase
       .channel('order-viewer-ticket-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Ticket_Orders' }, () => void loadData(true))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Ticket_Order_Items' }, () => void loadData(true))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Ticket_Order_Group_Items' }, () => void loadData(true))
+      .on('postgres_changes', { event: '*', schema: 'tickets', table: 'Ticket_Orders' }, () => void loadData(true))
+      .on('postgres_changes', { event: '*', schema: 'tickets', table: 'Ticket_Order_Items' }, () => void loadData(true))
+      .on('postgres_changes', { event: '*', schema: 'tickets', table: 'Ticket_Order_Group_Items' }, () => void loadData(true))
       .subscribe()
 
     return () => {

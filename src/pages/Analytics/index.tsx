@@ -33,6 +33,7 @@ import { DateRangePicker } from './components/DateRangePicker'
 import { KpiCard } from './components/KpiCard'
 import { AreaChart } from './components/AreaChart'
 import { BarChart } from './components/BarChart'
+import { CustomerDiningItemChart } from './components/CustomerDiningItemChart'
 import { TopItemsChart } from './components/TopItemsChart'
 import { CategoryBreakdown } from './components/CategoryBreakdown'
 import { OrderStatusBreakdown } from './components/OrderStatusBreakdown'
@@ -446,6 +447,22 @@ export default function AnalyticsPage() {
                   <span className="text-[9px] text-slate-400 font-bold group-hover:text-amber-700 transition-colors">View Playbook</span>
                 </div>
               </button>
+            </div>
+
+            {/* Customer Dining (Seated Pax) & Item Order Count Unified Graph */}
+            <div className="mt-5 pt-4 border-t border-slate-100">
+              <div className="mb-2">
+                <h3 className="text-xs font-black text-[#14274E] uppercase tracking-wider">
+                  Customer Dining (Seated Pax) vs. Item Order Count
+                </h3>
+                <p className="text-[11px] text-slate-400 font-medium">
+                  {dateRange.preset === 'today' || dateRange.preset === 'yesterday'
+                    ? 'Hourly comparison of seated guest count (pax) against total items ordered'
+                    : 'Daily comparison of seated guest count (pax) against total items ordered'}
+                </p>
+              </div>
+
+              <CustomerDiningItemChart data={summary.timeSeries} height={250} />
             </div>
           </div>
 

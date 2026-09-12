@@ -135,7 +135,7 @@ export default function EventsPage() {
       .channel('restaurant_events_realtime')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Events' },
+        { event: '*', schema: 'events', table: 'Restaurant_Events' },
         () => {
           loadEvents()
         },

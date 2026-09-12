@@ -804,7 +804,7 @@ export default function TableManagerPage() {
 
     const channel = supabase
       .channel('tm-phase3-tables')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Tables' }, async (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, async (payload) => {
         if (payload.eventType === 'UPDATE') {
           const updated = payload.new as TableData
           setTables((prev) => {
@@ -848,7 +848,7 @@ export default function TableManagerPage() {
       })
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        { event: '*', schema: 'orders', table: 'Restaurant_Orders' },
         async (payload) => {
           const newRow = payload.new as Record<string, unknown> | null
           const oldRow = payload.old as Record<string, unknown> | null
@@ -867,14 +867,14 @@ export default function TableManagerPage() {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Bill_Requests' },
+        { event: '*', schema: 'orders', table: 'Bill_Requests' },
         () => {
           void fetchAllBillRequests().then(setBillRequests)
         },
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Events' },
+        { event: '*', schema: 'events', table: 'Restaurant_Events' },
         async () => {
           const evts = await fetchEvents().catch(() => [])
           setEvents(evts)

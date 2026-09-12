@@ -72,12 +72,12 @@ export default function TicketingInterfacePage() {
       .channel('ticketing-groups-realtime')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Menu_Item_Groups' },
+        { event: '*', schema: 'menu', table: 'Menu_Item_Groups' },
         () => void loadGroups(),
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Item_Groups' },
+        { event: '*', schema: 'menu', table: 'Item_Groups' },
         () => void loadGroups(),
       )
       .subscribe()
@@ -87,7 +87,7 @@ export default function TicketingInterfacePage() {
       .channel('ticketing-orders-realtime')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Ticket_Orders' },
+        { event: '*', schema: 'tickets', table: 'Ticket_Orders' },
         () => {
           void loadGroups()
         },

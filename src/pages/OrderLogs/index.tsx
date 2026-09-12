@@ -162,28 +162,35 @@ export default function OrderLogsPage() {
       .channel('order_logs_realtime')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        { event: '*', schema: 'analytics', table: 'Completed_Orders' },
         () => {
           loadOrderLogs()
         },
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Order_Events' },
+        { event: '*', schema: 'orders', table: 'Restaurant_Orders' },
         () => {
           loadOrderLogs()
         },
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Ticket_Orders' },
+        { event: '*', schema: 'orders', table: 'Order_Events' },
         () => {
           loadOrderLogs()
         },
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Ticket_Order_Items' },
+        { event: '*', schema: 'tickets', table: 'Ticket_Orders' },
+        () => {
+          loadOrderLogs()
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'tickets', table: 'Ticket_Order_Items' },
         () => {
           loadOrderLogs()
         },

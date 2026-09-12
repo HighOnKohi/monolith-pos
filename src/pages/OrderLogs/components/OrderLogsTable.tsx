@@ -264,7 +264,7 @@ export const OrderLogsTable: React.FC<OrderLogsTableProps> = ({
                     ) : order.isMerged ? (
                       <div className="flex flex-col">
                         <span className="inline-flex items-center gap-1 font-bold text-indigo-900 bg-indigo-50 px-2 py-0.5 rounded-md text-[11px] border border-indigo-100 w-fit">
-                          {order.mergedGroupLabel || `Table ${order.tableNum} (Merged)`}
+                          {order.mergedGroupLabel || `Table ${order.tableNum}`}
                         </span>
                       </div>
                     ) : (

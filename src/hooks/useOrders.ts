@@ -167,7 +167,7 @@ export function useOrders(
         'postgres_changes',
         {
           event: '*',
-          schema: 'public',
+          schema: 'orders',
           table: 'Restaurant_Orders',
         },
         (payload) => {
@@ -183,7 +183,7 @@ export function useOrders(
         'postgres_changes',
         {
           event: '*',
-          schema: 'public',
+          schema: 'orders',
           table: 'Order_Items',
         },
         () => {

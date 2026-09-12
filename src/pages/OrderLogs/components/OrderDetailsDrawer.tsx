@@ -174,7 +174,7 @@ export const OrderDetailsDrawer: React.FC<OrderDetailsDrawerProps> = ({
                   </span>
                 ) : order.isMerged ? (
                   <span className="text-xs font-bold text-indigo-900 bg-indigo-50 px-2.5 py-0.5 rounded-md border border-indigo-200/80">
-                    {order.mergedGroupLabel || `Table ${order.tableNum} (Merged)`}
+                    {order.mergedGroupLabel || `Table ${order.tableNum}`}
                   </span>
                 ) : (
                   <span className="text-xs font-bold text-slate-700 bg-white px-2 py-0.5 rounded-md border border-slate-200">

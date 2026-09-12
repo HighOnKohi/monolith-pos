@@ -47,13 +47,9 @@ export const MergeGroupOverlay = memo(function MergeGroupOverlay({
 
   if (!bounds) return null
 
-  const tableNums = positions
-    .filter((p) => group.memberIds.includes(p.tableId))
-    .sort((a, b) => a.tableId - b.tableId)
-
-  const label = tableNums.length > 0
-    ? `${tableNums.map((t) => `T${t.tableId}`).join('+')}${combinedCapacity ? ` (${combinedCapacity}p)` : ''}`
-    : ''
+  const anchorPos = positions.find((p) => p.tableId === group.anchorId)
+  const anchorNum = anchorPos?.tableNum ?? group.anchorId
+  const label = `Table ${anchorNum}${combinedCapacity ? ` (${combinedCapacity}p)` : ''}`
 
   const pad = 4
   return (

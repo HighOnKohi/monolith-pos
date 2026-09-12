@@ -128,12 +128,12 @@ export default function CashierInterface() {
 
     const channel = supabase
       .channel('cashier-interface-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Tables' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Orders' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Order_Items' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Bill_Requests' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Ticket_Orders' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Ticket_Order_Items' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Restaurant_Orders' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Order_Items' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Bill_Requests' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'tickets', table: 'Ticket_Orders' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'tickets', table: 'Ticket_Order_Items' }, () => void load())
       .subscribe()
 
     return () => {
@@ -600,7 +600,7 @@ export default function CashierInterface() {
                     onClick={() => void selectTable(group.anchorTableId)}
                   >
                     <div className="ci-table-top">
-                      <span>Table {group.memberTableNums.join(' + ')}</span>
+                      <span>{group.displayLabel}</span>
                     </div>
                     <div className={`tm-pax-row ${group.currentGuestCount >= group.capacity ? 'tm-pax-full' : ''}`}>
                       <Users className="ci-icon" />
@@ -1142,7 +1142,7 @@ export default function CashierInterface() {
               {mode === 'tables' && selectedTableGroup && (
                 <>
                   <p className="mb-3 text-slate-700 font-medium">
-                    Are you sure you want to remove active order(s) for <strong>Table {selectedTableGroup.group.memberTableNums.join(' + ')}</strong>?
+                    Are you sure you want to remove active order(s) for <strong>{selectedTableGroup.group.displayLabel}</strong>?
                   </p>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5 text-xs">
                     <div className="flex justify-between">

@@ -73,7 +73,7 @@ export default function CustomerPage() {
         'postgres_changes',
         {
           event: 'UPDATE',
-          schema: 'public',
+          schema: 'tables',
           table: 'Restaurant_Tables',
           filter: `TABLE_ID=eq.${parsedTableId}`,
         },

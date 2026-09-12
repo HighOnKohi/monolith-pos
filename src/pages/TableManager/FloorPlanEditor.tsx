@@ -233,14 +233,7 @@ export const FloorPlanEditor = memo(function FloorPlanEditor({
 
             const isDragging = dragState?.tableId === pos.tableId
             const group = findGroupForTable(pos.tableId, mergeGroups)
-            const mergeLabel = group && group.anchorId === pos.tableId
-              ? group.memberIds.length > 1
-                ? group.memberIds.map((id) => {
-                    const t = tableDataMap.get(id)
-                    return t ? t.TABLE_NUM : id
-                  }).join('+')
-                : undefined
-              : undefined
+            const mergeLabel = undefined
 
             const effectivePositions = dragState && dragState.isValid
               ? positions.map((p) => (p.tableId === dragState.tableId ? { ...p, x: dragState.currentX, y: dragState.currentY } : p))

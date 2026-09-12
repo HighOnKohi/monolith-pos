@@ -338,7 +338,7 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
   const targetIds = memberTableIds && memberTableIds.length > 0 ? memberTableIds : [tableId]
   const { data: activeOrders, error: fetchErr } = await supabase
     .from('Restaurant_Orders')
-    .select('ORDER_ID')
+    .select('*')
     .in('TABLE_ID', targetIds)
     .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED'])
 
@@ -361,13 +361,155 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
     }).catch(() => {})
   }
 
-  // Delete child Order_Items first to avoid FK constraint issues
+  // 1. Fetch table numbers and active guest counts for tables
+  const tableNumMap = new Map<number, number>()
+  const tableGuestMap = new Map<number, number>()
+  try {
+    const { data: tablesData } = await supabase
+      .from('Restaurant_Tables')
+      .select('TABLE_ID, TABLE_NUM, CURRENT_GUEST_COUNT')
+      .in('TABLE_ID', targetIds)
+    for (const t of tablesData ?? []) {
+      const tId = Number(t.TABLE_ID)
+      tableNumMap.set(tId, Number(t.TABLE_NUM) || tId)
+      tableGuestMap.set(tId, Number(t.CURRENT_GUEST_COUNT) || 1)
+    }
+  } catch (tErr) {
+    console.warn('[orderService] Failed to fetch table details for settlement:', tErr)
+  }
+
+  // 2. Fetch all child Order_Items joined with Menu_Items & Categories to snapshot items
+  const itemsByOrder = new Map<
+    number,
+    Array<{
+      item_id: number
+      item_name: string
+      category_id: number
+      category_name: string
+      price: number
+      quantity: number
+    }>
+  >()
+
+  try {
+    const { data: childItems, error: itemsErr } = await supabase
+      .from('Order_Items')
+      .select(`
+        ORDER_ITEM_ID,
+        ORDER_ID,
+        ITEM_ID,
+        ORDER_ITEM_STATUS,
+        Menu_Items (
+          ITEM_ID,
+          ITEM_NAME,
+          ITEM_PRICE,
+          CATEGORY_ID,
+          Menu_Categories (
+            CATEGORY_ID,
+            CATEGORY_NAME
+          )
+        )
+      `)
+      .in('ORDER_ID', orderIds)
+
+    if (itemsErr) {
+      console.warn('[orderService] Warning fetching order items for archiving:', itemsErr)
+    } else {
+      for (const item of childItems ?? []) {
+        const oId = Number(item.ORDER_ID)
+        const mItem = (item as Record<string, unknown>)['Menu_Items'] as Record<string, unknown> | undefined
+        const mCat = mItem ? (mItem['Menu_Categories'] as Record<string, unknown> | undefined) : undefined
+        const list = itemsByOrder.get(oId) || []
+        list.push({
+          item_id: Number(item.ITEM_ID),
+          item_name: String(mItem?.['ITEM_NAME'] || 'Unknown Item'),
+          category_id: Number(mItem?.['CATEGORY_ID'] || 0),
+          category_name: String(mCat?.['CATEGORY_NAME'] || 'Uncategorized'),
+          price: Number(mItem?.['ITEM_PRICE'] || 0),
+          quantity: 1,
+        })
+        itemsByOrder.set(oId, list)
+      }
+    }
+  } catch (err) {
+    console.warn('[orderService] Error processing items for archive:', err)
+  }
+
+  // Helper to aggregate duplicate portions into quantities
+  const compressItems = (
+    raw: Array<{
+      item_id: number
+      item_name: string
+      category_id: number
+      category_name: string
+      price: number
+      quantity: number
+    }>,
+  ) => {
+    const map = new Map<number, (typeof raw)[0]>()
+    for (const it of raw) {
+      if (!map.has(it.item_id)) {
+        map.set(it.item_id, { ...it })
+      } else {
+        const existing = map.get(it.item_id)!
+        existing.quantity += 1
+      }
+    }
+    return Array.from(map.values())
+  }
+
+  // 3. Save completed orders into Completed_Orders log table
+  const completedRows = activeOrders.map((o) => {
+    const oId = Number(o['ORDER_ID'])
+    const tId = Number(o['TABLE_ID'])
+    const rawList = itemsByOrder.get(oId) || []
+    const compressed = compressItems(rawList)
+    const totalItemCount = rawList.length
+    const subtotal = Number(o['SUBTOTAL_BILL']) || Number(o['TOTAL_BILL']) || 0
+    const total = Number(o['TOTAL_BILL']) || subtotal
+    const discount = Math.max(subtotal - total, 0)
+
+    return {
+      ORIGINAL_ORDER_ID: oId,
+      TABLE_ID: tId,
+      TABLE_NUM: tableNumMap.get(tId) ?? tId,
+      ORDER_TYPE: String(o['ORDER_TYPE'] || 'DINE-IN'),
+      REQUESTED_FROM: String(o['REQUESTED_FROM'] || 'Cashier'),
+      ORDER_STATUS: 'COMPLETED',
+      GUEST_COUNT: Math.max(Number(o['GUEST_COUNT']) || tableGuestMap.get(tId) || 1, 1),
+      ITEM_COUNT: totalItemCount,
+      SUBTOTAL_BILL: subtotal,
+      TOTAL_BILL: total,
+      DISCOUNT_AMOUNT: discount,
+      PAYMENT_METHOD: String(o['PAYMENT_METHOD'] || 'CASH'),
+      TIME: String(o['TIME'] || new Date().toISOString()),
+      READY_AT: o['READY_AT'] ? String(o['READY_AT']) : null,
+      SERVED_AT: o['SERVED_AT'] ? String(o['SERVED_AT']) : null,
+      COMPLETED_AT: new Date().toISOString(),
+      KITCHEN_NOTE: o['KITCHEN_NOTE'] ? String(o['KITCHEN_NOTE']) : null,
+      SERVER_NOTE: o['SERVER_NOTE'] ? String(o['SERVER_NOTE']) : null,
+      ORDER_ITEMS: compressed,
+    }
+  })
+
+  if (completedRows.length > 0) {
+    try {
+      const { error: insertErr } = await supabase.from('Completed_Orders').insert(completedRows)
+      if (insertErr) {
+        console.error('[orderService] Failed to archive orders into Completed_Orders:', insertErr)
+      }
+    } catch (insertEx) {
+      console.warn('[orderService] Archive exception:', insertEx)
+    }
+  }
+
+  // 4. Delete child Order_Items first to avoid FK constraint issues
   const { error: childDelErr } = await supabase.from('Order_Items').delete().in('ORDER_ID', orderIds)
   if (childDelErr) {
     console.warn('[orderService] Order_Items deletion warning:', childDelErr)
   }
 
-  // Delete Restaurant_Orders so order now completely disappears
+  // 5. Delete active Restaurant_Orders so order completely disappears from active queue
   const { error: orderDelErr } = await supabase.from('Restaurant_Orders').delete().in('ORDER_ID', orderIds)
   if (orderDelErr) {
     console.warn('[orderService] Restaurant_Orders deletion warning:', orderDelErr)

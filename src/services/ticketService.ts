@@ -293,11 +293,12 @@ export async function updateTicketOrderStatus(ticketId: number, status: TicketSt
  * clears from the Cashier's pending billing list and persists into logs & analytics.
  */
 export async function settleTicketOrder(ticketId: number): Promise<void> {
+  const completedAt = new Date().toISOString()
   const { error } = await supabase
     .from('Ticket_Orders')
     .update({
       TICKET_STATUS: 'COMPLETED',
-      COMPLETED_AT: new Date().toISOString(),
+      COMPLETED_AT: completedAt,
     })
     .eq('TICKET_ID', ticketId)
 
@@ -311,6 +312,133 @@ export async function settleTicketOrder(ticketId: number): Promise<void> {
     .from('Ticket_Order_Items')
     .update({ TICKET_ORDER_ITEM_STATUS: 'COMPLETED' })
     .eq('TICKET_ORDER_ID', ticketId)
+
+  // Archive settled ticket into Completed_Orders log table
+  try {
+    const { data: ticketData } = await supabase
+      .from('Ticket_Orders')
+      .select(`
+        *,
+        Ticket_Order_Items (
+          TICKET_ORDER_ITEM_ID,
+          ITEM_ID,
+          ITEM_GROUP_ID,
+          Menu_Items (
+            ITEM_ID,
+            ITEM_NAME,
+            ITEM_PRICE,
+            CATEGORY_ID,
+            Menu_Categories (
+              CATEGORY_ID,
+              CATEGORY_NAME
+            )
+          ),
+          Menu_Item_Groups (
+            MENU_GROUP_ID,
+            GROUP_NAME,
+            GROUP_PRICE,
+            CATEGORY_ID,
+            Menu_Categories (
+              CATEGORY_ID,
+              CATEGORY_NAME
+            )
+          )
+        )
+      `)
+      .eq('TICKET_ID', ticketId)
+      .maybeSingle()
+
+    if (ticketData) {
+      const rawItems = (ticketData.Ticket_Order_Items as Array<Record<string, unknown>> | undefined) ?? []
+      let totalBill = 0
+      const itemsMap = new Map<
+        string,
+        {
+          item_id: number
+          item_name: string
+          category_id: number
+          category_name: string
+          price: number
+          quantity: number
+        }
+      >()
+
+      for (const oi of rawItems) {
+        const menuItem = oi['Menu_Items'] as Record<string, unknown> | undefined
+        const groupItem = oi['Menu_Item_Groups'] as Record<string, unknown> | undefined
+        const isGroup = Boolean(oi['ITEM_GROUP_ID'])
+
+        let id = Number(oi['ITEM_ID'] || 0)
+        let name = 'Unknown Item'
+        let price = 0
+        let categoryName = 'Uncategorized'
+        let categoryId = 0
+
+        if (isGroup && groupItem) {
+          id = Number(groupItem['MENU_GROUP_ID'] || 0)
+          name = String(groupItem['GROUP_NAME'] ?? 'Meal Package')
+          price = Number(groupItem['GROUP_PRICE'] ?? 0)
+          const catObj = groupItem['Menu_Categories'] as Record<string, unknown> | undefined
+          categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'Meal Packages'
+          categoryId = Number(groupItem['CATEGORY_ID'] ?? 0)
+        } else if (menuItem) {
+          name = String(menuItem['ITEM_NAME'] ?? 'Dish')
+          price = Number(menuItem['ITEM_PRICE'] ?? 0)
+          const catObj = menuItem['Menu_Categories'] as Record<string, unknown> | undefined
+          categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'Uncategorized'
+          categoryId = Number(menuItem['CATEGORY_ID'] ?? 0)
+        }
+
+        totalBill += price
+        const key = `${id}_${name}`
+        if (!itemsMap.has(key)) {
+          itemsMap.set(key, {
+            item_id: id,
+            item_name: name,
+            category_id: categoryId,
+            category_name: categoryName,
+            price,
+            quantity: 1,
+          })
+        } else {
+          itemsMap.get(key)!.quantity += 1
+        }
+      }
+
+      const compressedItems = Array.from(itemsMap.values())
+      const orderTimeStr =
+        ticketData['TIME'] ||
+        ticketData['CREATED_AT'] ||
+        ticketData['TICKET_DATE'] ||
+        new Date().toISOString()
+
+      await supabase.from('Completed_Orders').insert({
+        ORIGINAL_ORDER_ID: ticketId,
+        TABLE_ID: null,
+        TABLE_NUM: null,
+        ORDER_TYPE: 'TICKET',
+        REQUESTED_FROM: 'Ticketing',
+        ORDER_STATUS: 'COMPLETED',
+        GUEST_COUNT: 1,
+        ITEM_COUNT: rawItems.length,
+        SUBTOTAL_BILL: totalBill,
+        TOTAL_BILL: totalBill,
+        DISCOUNT_AMOUNT: 0,
+        PAYMENT_METHOD: 'CASH',
+        TIME: String(orderTimeStr),
+        READY_AT: ticketData['READY_AT'] ? String(ticketData['READY_AT']) : null,
+        SERVED_AT: ticketData['SERVED_AT'] ? String(ticketData['SERVED_AT']) : null,
+        COMPLETED_AT: completedAt,
+        KITCHEN_NOTE: ticketData['REGISTERED_NAME'] ? `Customer: ${ticketData['REGISTERED_NAME']}` : null,
+        SERVER_NOTE: ticketData['REGISTERED_CONTACT_INFO']
+          ? `Contact: ${ticketData['REGISTERED_CONTACT_INFO']}`
+          : null,
+        ORDER_ITEMS: compressedItems,
+      })
+    }
+  } catch (archErr) {
+    console.warn('[ticketService] Failed to archive ticket into Completed_Orders:', archErr)
+  }
 
   broadcastOrderUpdate({ type: 'tickets' })
 }

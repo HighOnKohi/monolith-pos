@@ -143,7 +143,7 @@ export function exportOrderLogsPdf(params: OrderLogsPdfParams): void {
       doc.setTextColor(40, 50, 70)
 
       const timeFormatted = ord.createdAt ? ord.createdAt.replace('T', ' ').slice(0, 16) : '—'
-      const tableLabel = ord.orderType === 'TICKET' ? `Ticket #${ord.orderId}` : ord.mergedGroupLabel ? `T${ord.tableNum} (Merged)` : `Table ${ord.tableNum}`
+      const tableLabel = ord.orderType === 'TICKET' ? `Ticket #${ord.orderId}` : (ord.mergedGroupLabel || `Table ${ord.tableNum}`)
 
       doc.text(`#${ord.orderId}`, margin + 2, y + 3.8)
       doc.text(timeFormatted, margin + 18, y + 3.8)
