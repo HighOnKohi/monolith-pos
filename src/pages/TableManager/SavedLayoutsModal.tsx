@@ -218,7 +218,7 @@ export const SavedLayoutsModal = memo(function SavedLayoutsModal({
         {/* Footer */}
         <div className="fp-modal-footer flex items-center justify-between">
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => {
               onSaveNewPreset()

@@ -70,7 +70,6 @@ import { GridSettingsModal } from './GridSettingsModal'
 import { SavedLayoutsModal } from './SavedLayoutsModal'
 import { SavePresetModal, ConfirmLoadModal, ConfirmDeletePresetModal } from './PresetModal'
 import { findGroupForTable, calculateEffectiveCapacity, disburseCapacities, calculateMergeGroups, type MergeGroup } from '@/utils/floorPlan/adjacency'
-import { findFirstAvailablePosition } from '@/utils/floorPlan/collision'
 import type { FloorConfig } from '@/utils/floorPlan/grid'
 import { calculateCustomTemplateDistribution, type TemplateDistributionTarget } from '@/utils/floorPlan/distribution'
 import { fetchAllTableTemplates, getLocalTemplates, type TableTemplate } from '@/services/templateService'
@@ -1519,46 +1518,6 @@ export default function TableManagerPage() {
     showToast('Grid settings applied. Click "Save Layout" to persist.', 'info')
   }
 
-  // ── Unmerge ──
-
-  async function handleUnmerge(anchorId: number) {
-    const group = floorPlan.mergeGroups.find(
-      (g) => g.anchorId === anchorId || g.memberIds.includes(anchorId),
-    )
-    if (!group || group.memberIds.length <= 1) {
-      showToast('This table is not merged.', 'info')
-      return
-    }
-
-    // Move non-anchor tables to open spots
-    const nonAnchors = group.memberIds.filter((id) => id !== group.anchorId)
-    let updatedPositions = [...floorPlan.positions]
-
-    for (const id of nonAnchors) {
-      const currentPos = updatedPositions.find((p) => p.tableId === id)
-      const w = currentPos?.widthBlocks ?? floorPlan.config.tableSizeBlocks
-      const h = currentPos?.heightBlocks ?? floorPlan.config.tableSizeBlocks
-
-      const pos = findFirstAvailablePosition(
-        floorPlan.config.tableSizeBlocks,
-        floorPlan.config.widthBlocks,
-        floorPlan.config.heightBlocks,
-        updatedPositions.filter((p) => p.tableId !== id),
-        floorPlan.config.spacingBlocks,
-        w,
-        h,
-      )
-      if (pos) {
-        updatedPositions = updatedPositions.map((p) =>
-          p.tableId === id ? { ...p, x: pos.x, y: pos.y } : p,
-        )
-      }
-    }
-
-    floorPlan.setPositions(updatedPositions)
-    showToast('Tables unmerged.', 'success')
-  }
-
   // ── Auto-disbursement when unmerging at 50/50 capacity ──
   const prevMergeGroupsRef = useRef<MergeGroup[]>([])
 
@@ -1700,19 +1659,11 @@ export default function TableManagerPage() {
         {/* Left — Palette */}
         <TablePalette
           onAddTable={handleAddTable}
-          presets={presets}
-          activePresetId={activePresetId}
-          onLoadPreset={handleLoadPreset}
-          onSavePreset={() => setShowSavePreset(true)}
-          onRenamePreset={setRenamePreset}
-          onDeletePreset={setDeletePresetConfirm}
           tableCount={floorPlan.positions.length}
           totalSeats={totalSeats}
           maxPax={effectiveMaxPax}
           activeLinkedEvent={activeLinkedEvent}
           hasActiveOrders={hasActiveOrders}
-          isSwitchingLayout={isSwitchingLayout}
-          switchingPresetId={switchingPresetId}
         />
 
         {/* Center — Floor Plan */}

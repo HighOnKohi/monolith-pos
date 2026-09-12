@@ -4,7 +4,6 @@
 
 import { useState, memo, useEffect } from 'react'
 import { Plus, Layout, ChevronDown, ChevronRight, Pencil, Trash2, Lock, Calendar } from 'lucide-react'
-import type { LayoutPreset } from '@/services/layoutService'
 import type { RestaurantEvent } from '@/types/event'
 import { TableTemplateModal } from './TableTemplateModal'
 import { distributeSeatsToSides, type TableSide } from '@/utils/floorPlan/adjacency'
@@ -69,36 +68,20 @@ function TemplatePreviewIcon({
 
 interface TablePaletteProps {
   onAddTable: (capacity: number, widthBlocks?: number, heightBlocks?: number) => void
-  presets: LayoutPreset[]
-  activePresetId: number | null
-  onLoadPreset: (presetId: number) => void
-  onSavePreset: () => void
-  onRenamePreset: (preset: LayoutPreset) => void
-  onDeletePreset: (preset: LayoutPreset) => void
   tableCount: number
   totalSeats: number
   maxPax?: number
   activeLinkedEvent?: RestaurantEvent | null
   hasActiveOrders?: boolean
-  isSwitchingLayout?: boolean
-  switchingPresetId?: number | null
 }
 
 export const TablePalette = memo(function TablePalette({
   onAddTable,
-  presets,
-  activePresetId,
-  onLoadPreset,
-  onSavePreset,
-  onRenamePreset,
-  onDeletePreset,
   tableCount,
   totalSeats,
   maxPax = 50,
   activeLinkedEvent = null,
   hasActiveOrders = false,
-  isSwitchingLayout = false,
-  switchingPresetId = null,
 }: TablePaletteProps) {
   const [tablesExpanded, setTablesExpanded] = useState(true)
 
