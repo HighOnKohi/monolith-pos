@@ -289,32 +289,33 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
 
   /** Returns true if we successfully acquired the lock, false if another session holds it. */
   const acquireLock = useCallback((): boolean => {
-    let acquired = false
-    setCartState((prev) => {
-      // Check stale lock first
-      const isStale =
-        prev.lockedBy &&
-        prev.lockedAt &&
-        Date.now() - prev.lockedAt > LOCK_TIMEOUT_MS
+    // Read the latest cart state synchronously from the ref instead of relying
+    // on the setCartState updater executing before this function returns.
+    // React 18 batches state updates, so the updater callback inside
+    // setCartState may not run synchronously — causing `acquired` to remain
+    // `false` and silently aborting the order.
+    const prev = cartStateRef.current
 
-      if (prev.lockedBy && !isStale) {
-        // Another active session holds the lock — reject
-        acquired = false
-        return prev
-      }
+    // Check stale lock first
+    const isStale =
+      prev.lockedBy &&
+      prev.lockedAt &&
+      Date.now() - prev.lockedAt > LOCK_TIMEOUT_MS
 
-      acquired = true
-      const next: SharedCartState = {
-        ...prev,
-        lockedBy: sessionId.current,
-        lockedAt: Date.now(),
-      }
-      persistStoredCart(tableId, next)
-      channelRef.current?.send({ type: 'broadcast', event: 'cart_update', payload: next })
-      return next
-    })
-    return acquired
-  }, [tableId])
+    if (prev.lockedBy && !isStale) {
+      // Another active session holds the lock — reject
+      return false
+    }
+
+    const next: SharedCartState = {
+      ...prev,
+      lockedBy: sessionId.current,
+      lockedAt: Date.now(),
+    }
+    // Apply immediately via broadcast helper (sets state, persists, broadcasts)
+    broadcast(next)
+    return true
+  }, [tableId, broadcast])
 
   const releaseLock = useCallback(() => {
     setCartState((prev) => {
