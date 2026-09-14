@@ -16,8 +16,20 @@ export function OrderStatusTracker({ status }: OrderStatusTrackerProps) {
   ]
 
   let currentIndex = steps.findIndex((s) => s.key === status)
-  if (currentIndex === -1) currentIndex = 0
-  const currentStep = steps[currentIndex]
+  if (currentIndex === -1) {
+    if (status === 'COMPLETED') {
+      currentIndex = steps.length - 1
+    } else {
+      currentIndex = 0
+    }
+  }
+  const currentStep = {
+    ...steps[currentIndex],
+    desc:
+      status === 'COMPLETED'
+        ? 'Order completed & served. You can now request your bill!'
+        : steps[currentIndex].desc,
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-[#9BA4B4]/20 p-5 shadow-sm interactive-card">
@@ -36,7 +48,7 @@ export function OrderStatusTracker({ status }: OrderStatusTrackerProps) {
           status === 'READY' ? 'bg-indigo-100 text-indigo-800' :
           'bg-emerald-100 text-emerald-800'
         ].join(' ')}>
-          {status}
+          {status === 'COMPLETED' ? 'Completed' : status}
         </span>
       </div>
       

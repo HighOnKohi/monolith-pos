@@ -134,6 +134,7 @@ export default function CustomerPage() {
   } = useSharedCart(effectiveAnchorId)
   const {
     orders,
+    pastOrders,
     isSubmitting: isSubmittingOrder,
     placeOrder,
     latestStatusUpdate,
@@ -187,7 +188,7 @@ export default function CustomerPage() {
 
   // Active unserved orders count
   const activeOrderCount = useMemo(
-    () => orders.filter((o) => o.orderStatus !== 'SERVED').length,
+    () => orders.filter((o) => o.orderStatus !== 'SERVED' && o.orderStatus !== 'COMPLETED' && o.orderStatus !== 'CANCELLED').length,
     [orders],
   )
 
@@ -267,6 +268,7 @@ export default function CustomerPage() {
           <div className="sticky top-0 z-20 bg-[#F1F6F9]/95 backdrop-blur-md pb-1.5 sm:pb-2 transition-all w-full max-w-full min-w-0">
             <CustomerHeader
               tableLabel={tableLabel}
+              isMerged={groupInfo?.isMerged}
               onOpenAssist={() => setIsAssistOpen(true)}
               hasActiveAssist={Boolean(activeAssistance)}
               onOpenOrders={() => handleTabChange('orders')}
@@ -304,6 +306,7 @@ export default function CustomerPage() {
           <div className="sticky top-0 z-20 bg-[#F1F6F9]/95 backdrop-blur-md pb-1.5 sm:pb-2 w-full max-w-full min-w-0">
             <CustomerHeader
               tableLabel={tableLabel}
+              isMerged={groupInfo?.isMerged}
               onOpenAssist={() => setIsAssistOpen(true)}
               hasActiveAssist={Boolean(activeAssistance)}
               onOpenOrders={() => handleTabChange('orders')}
@@ -315,7 +318,9 @@ export default function CustomerPage() {
           </div>
           <ActiveOrders
             orders={orders}
+            pastOrders={pastOrders}
             onRequestBill={() => setIsBillOutOpen(true)}
+            onBrowseMenu={() => handleTabChange('menu')}
           />
         </div>
       )}

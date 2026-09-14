@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import type { CartItem, DiningType } from '@/types/cart'
-import type { Order, OrderStatus } from '@/types/order'
+import type { Order, OrderItem, OrderStatus } from '@/types/order'
 import { logOrderEvent } from '@/services/orderLogsService'
 
 const DINING_TYPE_MAP: Record<DiningType, string> = {
@@ -138,7 +138,7 @@ export async function createOrder(
 
 export async function fetchOrdersByTable(
   tableId: number,
-  statuses: OrderStatus[] = ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'CANCELLED'],
+  statuses: OrderStatus[] = ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED', 'CANCELLED'],
   memberTableIds?: number[],
 ): Promise<Order[]> {
   const targetIds = memberTableIds && memberTableIds.length > 0 ? memberTableIds : [tableId]
@@ -181,6 +181,49 @@ export async function fetchOrdersByTable(
     .filter((order) => order.items && order.items.length > 0)
 }
 
+export async function fetchRecentCompletedOrders(
+  tableId: number,
+  memberTableIds?: number[],
+): Promise<Order[]> {
+  const targetIds = memberTableIds && memberTableIds.length > 0 ? memberTableIds : [tableId]
+  const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()
+
+  const { data, error } = await supabase
+    .from('Completed_Orders')
+    .select('*')
+    .in('TABLE_ID', targetIds)
+    .gte('COMPLETED_AT', fourHoursAgo)
+    .order('COMPLETED_AT', { ascending: false })
+    .limit(10)
+
+  if (error || !data) return []
+
+  return data.map((row) => {
+    const rawItems = Array.isArray(row['ORDER_ITEMS']) ? (row['ORDER_ITEMS'] as any[]) : []
+    const items: OrderItem[] = rawItems.map((it: any, idx: number) => ({
+      orderItemId: idx + 1,
+      orderId: Number(row['ORIGINAL_ORDER_ID'] || row['ORDER_ID']),
+      itemId: String(it.item_id || idx + 1),
+      name: it.item_name || `Item #${it.item_id}`,
+      price: Number(it.price || 0),
+      status: 'DONE',
+    }))
+
+    return {
+      orderId: Number(row['ORIGINAL_ORDER_ID'] || row['ORDER_ID']),
+      tableId: Number(row['TABLE_ID']),
+      orderStatus: 'COMPLETED' as OrderStatus,
+      orderType: (row['ORDER_TYPE'] as Order['orderType']) || 'DINE-IN',
+      totalBill: Number(row['TOTAL_BILL'] ?? 0),
+      subtotalBill: Number(row['SUBTOTAL_BILL'] ?? row['TOTAL_BILL'] ?? 0),
+      createdAt: (row['TIME'] ?? row['COMPLETED_AT']) as string | undefined,
+      completedAt: (row['COMPLETED_AT'] ?? row['TIME']) as string | undefined,
+      paymentMethod: row['PAYMENT_METHOD'] as string | undefined,
+      items,
+    }
+  })
+}
+
 import type { CompressedTableOrder, CompressedOrderItem } from '@/types/order'
 
 export function compressTableOrders(orders: Order[]): CompressedTableOrder | null {
@@ -215,7 +258,13 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
       itemMap[id].quantity += 1
       itemMap[id].total += price
 
-      if (st === 'SERVED' || st === 'DONE') {
+      if (
+        st === 'SERVED' ||
+        st === 'DONE' ||
+        st === 'COMPLETED' ||
+        order.orderStatus === 'SERVED' ||
+        order.orderStatus === 'COMPLETED'
+      ) {
         itemMap[id].servedCount += 1
       } else if (st === 'PREPARING' || order.orderStatus === 'PREPARING') {
         itemMap[id].preparingCount += 1
@@ -235,7 +284,9 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
   const activeOrders = orders.filter((o) => o.orderStatus !== 'CANCELLED')
   if (activeOrders.length === 0) {
     overallStatus = 'REQUESTED'
-  } else if (activeOrders.every((o) => o.orderStatus === 'SERVED')) {
+  } else if (activeOrders.every((o) => o.orderStatus === 'COMPLETED')) {
+    overallStatus = 'COMPLETED'
+  } else if (activeOrders.every((o) => o.orderStatus === 'SERVED' || o.orderStatus === 'COMPLETED')) {
     overallStatus = 'SERVED'
   } else if (activeOrders.some((o) => o.orderStatus === 'REQUESTED')) {
     overallStatus = 'REQUESTED'
@@ -245,10 +296,14 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
     overallStatus = 'PREPARING'
   } else if (activeOrders.some((o) => o.orderStatus === 'READY')) {
     overallStatus = 'READY'
+  } else {
+    overallStatus = 'SERVED'
   }
 
-  // Bill out is only enabled once ALL table orders are completed/marked as SERVED
-  const canBillOut = orders.length > 0 && orders.every((o) => o.orderStatus === 'SERVED')
+  // Bill out is enabled once ALL table orders are completed or marked as SERVED
+  const canBillOut =
+    activeOrders.length > 0 &&
+    activeOrders.every((o) => o.orderStatus === 'SERVED' || o.orderStatus === 'COMPLETED')
 
   return {
     tableId,

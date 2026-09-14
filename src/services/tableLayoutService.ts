@@ -410,25 +410,28 @@ export async function savePresetLayout(
     const existingByNum = new Map(existingRestaurantTables.map((t) => [t.TABLE_NUM, t]))
     const newTableNums = new Set(tables.map((t) => t.TABLE_NUM))
 
-    // A. Upsert / update active tables
+    // A. Pass 1: Upsert / update active tables (capacities & layout coordinates)
     for (const t of tables) {
       const typeConfig = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
       const capacity = tableCapacities?.get(t.TABLE_NUM) ?? typeConfig.defaultCapacity
       const existing = existingByNum.get(t.TABLE_NUM)
 
       if (existing) {
-        await supabase
+        const { error: updErr } = await supabase
           .schema('tables')
           .from('Restaurant_Tables')
           .update({
             GUEST_CAPACITY: capacity,
-            MERGE_GROUP_ID: t.MERGE_GROUP_ID ?? null,
             LAYOUT_X: t.X_POS,
             LAYOUT_Y: t.Y_POS,
           })
           .eq('TABLE_ID', existing.TABLE_ID)
+
+        if (updErr) {
+          console.warn('[tableLayoutService] Error updating table capacity/pos:', existing.TABLE_ID, updErr)
+        }
       } else {
-        await supabase
+        const { error: insErr } = await supabase
           .schema('tables')
           .from('Restaurant_Tables')
           .insert({
@@ -437,15 +440,52 @@ export async function savePresetLayout(
             GUEST_CAPACITY: capacity,
             CURRENT_GUEST_COUNT: 0,
             BILL_OUT_REQUESTED: false,
-            MERGE_GROUP_ID: t.MERGE_GROUP_ID ?? null,
+            MERGE_GROUP_ID: null,
             LAYOUT_X: t.X_POS,
             LAYOUT_Y: t.Y_POS,
           })
+
+        if (insErr) {
+          console.warn('[tableLayoutService] Error inserting table:', t.TABLE_NUM, insErr)
+        }
       }
     }
 
-    // B. Clean up removed tables that are not in the layout and currently have AVAILABLE status
-    for (const existing of existingRestaurantTables) {
+    // B. Pass 2: Fetch latest live tables to obtain verified TABLE_IDs and persist MERGE_GROUP_ID
+    const updatedLiveTables = await fetchLiveRestaurantTables()
+    const liveByNum = new Map(updatedLiveTables.map((t) => [t.TABLE_NUM, t]))
+
+    for (const t of tables) {
+      const liveCurrent = liveByNum.get(t.TABLE_NUM)
+      if (!liveCurrent) continue
+
+      let targetMergeId: number | null = null
+      if (t.MERGE_GROUP_ID != null) {
+        const anchor = liveByNum.get(t.MERGE_GROUP_ID)
+        // Secondary tables reference the primary anchor's TABLE_ID.
+        // Primary anchor table sets MERGE_GROUP_ID to null (per migration 007 conventions)
+        if (anchor && anchor.TABLE_NUM !== t.TABLE_NUM) {
+          targetMergeId = anchor.TABLE_ID
+        } else {
+          targetMergeId = null
+        }
+      }
+
+      const { error: mergeErr } = await supabase
+        .schema('tables')
+        .from('Restaurant_Tables')
+        .update({
+          MERGE_GROUP_ID: targetMergeId,
+        })
+        .eq('TABLE_ID', liveCurrent.TABLE_ID)
+
+      if (mergeErr) {
+        console.warn('[tableLayoutService] Error updating MERGE_GROUP_ID for table:', liveCurrent.TABLE_ID, mergeErr)
+      }
+    }
+
+    // C. Clean up removed tables that are not in the layout and currently have AVAILABLE status
+    for (const existing of updatedLiveTables) {
       if (!newTableNums.has(existing.TABLE_NUM) && existing.STATUS === 'AVAILABLE' && existing.CURRENT_GUEST_COUNT === 0) {
         try {
           await supabase
@@ -459,7 +499,7 @@ export async function savePresetLayout(
       }
     }
 
-    // C. Dispatch broadcast event for realtime inter-interface sync
+    // D. Dispatch broadcast event for realtime inter-interface sync
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('monolith-order-update', { detail: { type: 'tables_sync', presetId } }))
     }

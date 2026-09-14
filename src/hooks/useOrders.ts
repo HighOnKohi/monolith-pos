@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { CartItem, DiningType } from '@/types/cart'
 import type { Order, OrderStatus } from '@/types/order'
-import { createOrder, fetchOrdersByTable } from '@/services/orderService'
+import { createOrder, fetchOrdersByTable, fetchRecentCompletedOrders } from '@/services/orderService'
+import { subscribeToOrderUpdates } from '@/services/dispatcherService'
 
 export interface OrderStatusNotification {
   orderId: number
@@ -46,6 +47,7 @@ const STATUS_MESSAGES: Record<OrderStatus, { title: string; message: string }> =
 
 interface UseOrdersResult {
   orders: Order[]
+  pastOrders: Order[]
   isSubmitting: boolean
   submitError: string | null
   placeOrder: (items: CartItem[], diningType: DiningType, total: number, serverNote?: string) => Promise<boolean>
@@ -61,6 +63,7 @@ export function useOrders(
   memberTableIds?: number[],
 ): UseOrdersResult {
   const [orders, setOrders] = useState<Order[]>([])
+  const [pastOrders, setPastOrders] = useState<Order[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [latestStatusUpdate, setLatestStatusUpdate] = useState<OrderStatusNotification | null>(null)
@@ -132,6 +135,13 @@ export function useOrders(
     try {
       const fresh = await fetchOrdersByTable(tableId, undefined, targetTableIds)
       applyFetchedOrders(fresh)
+
+      if (fresh.length === 0) {
+        const recent = await fetchRecentCompletedOrders(tableId, targetTableIds)
+        setPastOrders(recent)
+      } else {
+        setPastOrders([])
+      }
     } catch (err) {
       console.error('[useOrders] fetch error', err)
     }
@@ -167,7 +177,7 @@ export function useOrders(
         'postgres_changes',
         {
           event: '*',
-          schema: 'orders',
+          schema: 'public',
           table: 'Restaurant_Orders',
         },
         (payload) => {
@@ -183,7 +193,7 @@ export function useOrders(
         'postgres_changes',
         {
           event: '*',
-          schema: 'orders',
+          schema: 'public',
           table: 'Order_Items',
         },
         () => {
@@ -192,7 +202,15 @@ export function useOrders(
       )
       .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
+    // Cross-tab broadcast listener for dispatcher/cashier updates
+    const unsubscribeBroadcast = subscribeToOrderUpdates(() => {
+      refreshOrders()
+    })
+
+    return () => {
+      supabase.removeChannel(channel)
+      unsubscribeBroadcast()
+    }
   }, [tableId, targetTableIds, refreshOrders])
 
   const placeOrder = useCallback(
@@ -225,6 +243,7 @@ export function useOrders(
 
   return {
     orders,
+    pastOrders,
     isSubmitting,
     submitError,
     placeOrder,

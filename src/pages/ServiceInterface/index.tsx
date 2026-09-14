@@ -654,6 +654,7 @@ export default function CashierPage() {
               onSearchChange={setSearchQuery}
               selectedTable={selectedTable}
               selectedTableLabel={selectedGroup.displayLabel}
+              isMerged={selectedGroup.isMerged}
               onOpenTableSelector={() => setIsTableSelectorOpen(true)}
             />
           </div>

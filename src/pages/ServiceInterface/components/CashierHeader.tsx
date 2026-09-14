@@ -1,5 +1,5 @@
 import React from 'react'
-import { Search, LayoutGrid, ChevronDown } from 'lucide-react'
+import { Search, LayoutGrid, ChevronDown, GitMerge } from 'lucide-react'
 import type { TableItem } from './TableSelectorModal'
 
 interface CashierHeaderProps {
@@ -7,6 +7,7 @@ interface CashierHeaderProps {
   onSearchChange: (query: string) => void
   selectedTable: TableItem | null
   selectedTableLabel?: string
+  isMerged?: boolean
   onOpenTableSelector: () => void
 }
 
@@ -15,6 +16,7 @@ export const CashierHeader: React.FC<CashierHeaderProps> = ({
   onSearchChange,
   selectedTable,
   selectedTableLabel,
+  isMerged = false,
   onOpenTableSelector,
 }) => {
   return (
@@ -38,13 +40,24 @@ export const CashierHeader: React.FC<CashierHeaderProps> = ({
         {/* Table Selector Pill */}
         <button
           onClick={onOpenTableSelector}
-          className="service-interface-pill-btn service-interface-pill-table cursor-pointer"
+          className={`service-interface-pill-btn service-interface-pill-table cursor-pointer ${
+            isMerged ? 'border-indigo-300 bg-indigo-50/50' : ''
+          }`}
           title="Select Table"
         >
-          <LayoutGrid className="w-3.5 h-3.5 text-[#14274E]" />
+          {isMerged ? (
+            <GitMerge className="w-3.5 h-3.5 text-indigo-600" />
+          ) : (
+            <LayoutGrid className="w-3.5 h-3.5 text-[#14274E]" />
+          )}
           <span className="font-extrabold text-[#14274E]">
             {selectedTableLabel || (selectedTable ? `Table ${selectedTable.TABLE_NUM || selectedTable.TABLE_ID}` : '—')}
           </span>
+          {isMerged && (
+            <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-indigo-100 text-indigo-700 border border-indigo-200">
+              MERGED
+            </span>
+          )}
           {selectedTable?.BILL_OUT_REQUESTED && (
             <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
           )}

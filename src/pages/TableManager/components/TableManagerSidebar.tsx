@@ -1,4 +1,4 @@
-import React, { memo } from 'react'
+import React, { memo, useState } from 'react'
 import {
   TABLE_TYPES,
   type TableType,
@@ -14,7 +14,13 @@ import {
   Clock,
   Ban,
   ShieldCheck,
+  GitMerge,
+  QrCode,
+  Copy,
+  Check,
+  ExternalLink,
 } from 'lucide-react'
+import { getTableQrUrl } from '@/components/table-qr/tableQrUtils'
 
 interface TableManagerSidebarProps {
   isEditMode: boolean
@@ -27,6 +33,7 @@ interface TableManagerSidebarProps {
   onUpdateStatus: (tableNum: number, status: RestaurantTableData['STATUS']) => void
   onUnmergeTable: (tableNum: number) => void
   onDeleteTable: (tableNum: number) => void
+  onOpenQrModal?: (table: MergedTableNode) => void
 }
 
 export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
@@ -39,7 +46,29 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   onUpdateStatus,
   onUnmergeTable,
   onDeleteTable,
+  onOpenQrModal,
 }) => {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopyUrl = async () => {
+    if (!selectedTable) return
+    const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
+    const url = getTableQrUrl(tableId)
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      const input = document.createElement('input')
+      input.value = url
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
   if (!selectedTable) {
     return (
       <aside className="table-manager-sidebar w-80 sm:w-84 shrink-0 h-full bg-white border-l border-slate-200 flex flex-col p-6 shadow-xs select-none z-20 overflow-y-auto">
@@ -127,9 +156,16 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
           <TableShapeIcon tableType={selectedTable.TABLE_TYPE} size={22} />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-black text-[#14274E] tracking-tight">
-            Table #{selectedTable.TABLE_NUM}
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-black text-[#14274E] tracking-tight">
+              Table #{selectedTable.TABLE_NUM}
+            </h2>
+            {selectedTable.MERGE_GROUP_ID != null && (
+              <span className="px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-extrabold inline-flex items-center gap-1">
+                <GitMerge className="w-2.5 h-2.5" /> Merged
+              </span>
+            )}
+          </div>
           <span className="text-xs font-bold text-slate-400">
             {currentTypeConfig.name}
           </span>
@@ -345,6 +381,78 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
             )}
           </div>
         )}
+
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {/* Table QR Code & Customer Ordering (Visible in both View & Edit)  */}
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {(() => {
+          const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
+          const qrUrl = getTableQrUrl(tableId)
+          return (
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <QrCode className="w-4 h-4 text-[#14274E]" />
+                  <span className="text-xs font-black text-[#14274E] uppercase tracking-wider">
+                    Table QR & Ordering
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono font-bold text-slate-400">
+                  ID: #{tableId}
+                </span>
+              </div>
+
+              {/* Prominent View / Print QR Code button */}
+              <button
+                type="button"
+                onClick={() => onOpenQrModal && onOpenQrModal(selectedTable)}
+                className="w-full py-2.5 px-3 rounded-xl bg-[#14274E] hover:bg-[#0f1f40] text-white text-xs font-black flex items-center justify-center gap-2 shadow-xs transition-transform active:scale-98 cursor-pointer"
+              >
+                <QrCode className="w-4 h-4 text-[#E9C46A]" />
+                <span>View / Print Table {selectedTable.TABLE_NUM} QR</span>
+              </button>
+
+              {/* Canonical QR URL with copy button */}
+              <div className="flex items-center justify-between p-2 rounded-xl bg-white border border-slate-200 text-xs">
+                <span
+                  className="text-[11px] font-mono text-slate-600 truncate max-w-[170px]"
+                  title={qrUrl}
+                >
+                  {qrUrl}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyUrl}
+                  className="p-1 text-xs text-slate-500 hover:text-[#14274E] rounded-md transition-colors flex items-center gap-1 font-bold cursor-pointer"
+                  title="Copy canonical table QR URL"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="text-emerald-700 text-[10px]">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span className="text-[10px]">Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* External customer link */}
+              <a
+                href={qrUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
+                <span>Test Customer View</span>
+              </a>
+            </div>
+          )
+        })()}
       </div>
 
       {/* ── Footer: Delete Table (Fixed at the bottom in Edit Mode) ── */}

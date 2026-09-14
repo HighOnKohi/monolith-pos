@@ -4,6 +4,7 @@ import { BellRing, ReceiptText, ShoppingBag } from 'lucide-react'
 
 interface CustomerHeaderProps {
   tableLabel: string
+  isMerged?: boolean
   onOpenAssist?: () => void
   hasActiveAssist?: boolean
   onOpenOrders?: () => void
@@ -15,6 +16,7 @@ interface CustomerHeaderProps {
 
 export function CustomerHeader({
   tableLabel,
+  isMerged = false,
   onOpenAssist,
   hasActiveAssist,
   onOpenOrders,
@@ -97,7 +99,7 @@ export function CustomerHeader({
             )}
           </button>
         )}
-        <TableBadge tableLabel={tableLabel} />
+        <TableBadge tableLabel={tableLabel} isMerged={isMerged} />
       </div>
     </div>
   )

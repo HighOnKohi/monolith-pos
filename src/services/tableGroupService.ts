@@ -33,8 +33,12 @@ function buildGroupInfoFromMembers(
   const memberTableNums = sortedMembers.map((m) => m.TABLE_NUM || m.TABLE_ID)
   const isMerged = sortedMembers.length > 1
 
-  const displayLabel = `Table ${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
-  const shortDisplayLabel = `T${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
+  const displayLabel = isMerged
+    ? `Table ${memberTableNums.join(' + ')}`
+    : `Table ${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
+  const shortDisplayLabel = isMerged
+    ? `T${memberTableNums.join('+')}`
+    : `T${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
 
   const capacity = isMerged
     ? (anchorTable.GUEST_CAPACITY || sortedMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY || 0), 0))
@@ -81,7 +85,7 @@ export function resolveTableGroupByList(
   targetTableId: number,
   allTables: TableData[],
 ): TableGroupInfo {
-  const target = allTables.find((t) => t.TABLE_ID === targetTableId)
+  const target = allTables.find((t) => t.TABLE_ID === targetTableId || t.TABLE_NUM === targetTableId)
   if (!target) {
     return {
       groupId: targetTableId,
@@ -99,27 +103,39 @@ export function resolveTableGroupByList(
     }
   }
 
-  if (target.MERGE_GROUP_ID !== null && target.MERGE_GROUP_ID !== undefined) {
-    // Secondary member: resolve anchor
-    const anchor = allTables.find((t) => t.TABLE_ID === target.MERGE_GROUP_ID) ?? target
-    const secondaries = allTables.filter((t) => t.MERGE_GROUP_ID === anchor.TABLE_ID)
-    const membersMap = new Map<number, TableData>()
-    membersMap.set(anchor.TABLE_ID, anchor)
-    secondaries.forEach((s) => membersMap.set(s.TABLE_ID, s))
-    return buildGroupInfoFromMembers(anchor, Array.from(membersMap.values()))
+  // 1. Identify primary anchor table
+  let anchor: TableData = target
+  if (target.MERGE_GROUP_ID != null) {
+    const foundAnchor = allTables.find(
+      (t) => t.TABLE_ID === target.MERGE_GROUP_ID || t.TABLE_NUM === target.MERGE_GROUP_ID,
+    )
+    if (foundAnchor) {
+      anchor = foundAnchor
+    }
   }
 
-  // Check if target is an anchor with secondaries pointing to it
-  const secondaries = allTables.filter((t) => t.MERGE_GROUP_ID === target.TABLE_ID)
-  if (secondaries.length > 0) {
-    const membersMap = new Map<number, TableData>()
-    membersMap.set(target.TABLE_ID, target)
-    secondaries.forEach((s) => membersMap.set(s.TABLE_ID, s))
-    return buildGroupInfoFromMembers(target, Array.from(membersMap.values()))
-  }
+  // 2. Collect all members belonging to this anchor group:
+  // - The anchor table itself
+  // - Any table pointing to the anchor via MERGE_GROUP_ID (by TABLE_ID or TABLE_NUM)
+  const membersMap = new Map<number, TableData>()
+  membersMap.set(anchor.TABLE_ID, anchor)
 
-  // Standalone table
-  return buildGroupInfoFromMembers(target, [target])
+  allTables.forEach((t) => {
+    if (
+      t.TABLE_ID === anchor.TABLE_ID ||
+      t.TABLE_NUM === anchor.TABLE_NUM ||
+      t.MERGE_GROUP_ID === anchor.TABLE_ID ||
+      t.MERGE_GROUP_ID === anchor.TABLE_NUM
+    ) {
+      membersMap.set(t.TABLE_ID, t)
+    }
+  })
+
+  // Ensure target itself is in the members map
+  membersMap.set(target.TABLE_ID, target)
+
+  const members = Array.from(membersMap.values())
+  return buildGroupInfoFromMembers(anchor, members)
 }
 
 /**
@@ -127,14 +143,13 @@ export function resolveTableGroupByList(
  * Ideal for Customer interface entry point and external hooks.
  */
 export async function resolveTableGroup(targetTableId: number): Promise<TableGroupInfo> {
-  const { data: targetData, error: targetErr } = await supabase
+  const { data: allTablesData, error: allErr } = await supabase
     .schema('tables')
     .from('Restaurant_Tables')
     .select('*')
-    .eq('TABLE_ID', targetTableId)
-    .maybeSingle()
+    .order('TABLE_NUM')
 
-  if (targetErr || !targetData) {
+  if (allErr || !allTablesData || allTablesData.length === 0) {
     return {
       groupId: targetTableId,
       anchorTableId: targetTableId,
@@ -151,38 +166,7 @@ export async function resolveTableGroup(targetTableId: number): Promise<TableGro
     }
   }
 
-  const target = targetData as TableData
-
-  // Case 1: Target is a secondary table pointing to an anchor
-  if (target.MERGE_GROUP_ID !== null && target.MERGE_GROUP_ID !== undefined) {
-    const anchorId = target.MERGE_GROUP_ID
-    const { data: membersData } = await supabase
-      .schema('tables')
-      .from('Restaurant_Tables')
-      .select('*')
-      .or(`TABLE_ID.eq.${anchorId},MERGE_GROUP_ID.eq.${anchorId}`)
-      .order('TABLE_NUM')
-
-    const members = (membersData as TableData[]) ?? [target]
-    const anchor = members.find((m) => m.TABLE_ID === anchorId) ?? target
-    return buildGroupInfoFromMembers(anchor, members)
-  }
-
-  // Case 2: Target may be the anchor for secondaries
-  const { data: secondariesData } = await supabase
-    .schema('tables')
-    .from('Restaurant_Tables')
-    .select('*')
-    .eq('MERGE_GROUP_ID', target.TABLE_ID)
-    .order('TABLE_NUM')
-
-  const secondaries = (secondariesData as TableData[]) ?? []
-  if (secondaries.length > 0) {
-    return buildGroupInfoFromMembers(target, [target, ...secondaries])
-  }
-
-  // Case 3: Standalone unmerged table
-  return buildGroupInfoFromMembers(target, [target])
+  return resolveTableGroupByList(targetTableId, allTablesData as TableData[])
 }
 
 /**

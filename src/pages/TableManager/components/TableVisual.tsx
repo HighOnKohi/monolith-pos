@@ -1,5 +1,5 @@
 import React, { memo } from 'react'
-import { Users } from 'lucide-react'
+import { Users, GitMerge, QrCode } from 'lucide-react'
 import type { TableType } from '@/services/tableLayoutService'
 
 interface ChairProps {
@@ -262,6 +262,7 @@ export interface TableVisualProps {
     right?: boolean
     radial?: boolean[]
   }
+  onOpenQr?: () => void
 }
 
 export const TableVisual: React.FC<TableVisualProps> = memo(({
@@ -276,6 +277,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   isSelected = false,
   isEditMode = false,
   hideChairs = {},
+  onOpenQr,
 }) => {
   const getStatusDetails = () => {
     switch (status) {
@@ -355,10 +357,10 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className={`relative z-10 w-full h-full rounded-md flex flex-col items-center justify-center shadow-md transition-all duration-150 ${
             isSelected
               ? 'ring-3 ring-blue-500 shadow-blue-500/30'
-              : !isEditMode
-              ? `ring-2 ${statusInfo.ring}`
               : isMerged
               ? 'ring-2 ring-indigo-400/90 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
+              : !isEditMode
+              ? `ring-2 ${statusInfo.ring}`
               : 'border border-slate-700/80'
           }`}
           style={{
@@ -366,10 +368,33 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
             backgroundImage: 'radial-gradient(circle at 50% 30%, #3C424C 0%, #252A30 100%)',
           }}
         >
+          {/* Merged Indicator Badge */}
+          {isMerged && (
+            <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-indigo-950/90 border border-indigo-400/80 text-[7px] font-black text-indigo-300 flex items-center gap-0.5 leading-none pointer-events-none shadow-xs">
+              <GitMerge className="w-2 h-2 text-indigo-300" />
+              <span>LINK</span>
+            </div>
+          )}
+
           {/* Centered Table Number */}
           <span className="text-white font-black text-sm sm:text-base tracking-tight leading-none drop-shadow-md">
             {tableNum}
           </span>
+
+          {/* Quick QR Button in View Mode */}
+          {!isEditMode && onOpenQr && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenQr()
+              }}
+              className="absolute top-1 right-1 p-0.5 rounded bg-black/40 hover:bg-[#14274E] border border-white/10 text-amber-300 transition-colors z-20 cursor-pointer shadow-xs"
+              title={`View / Print QR Code for Table ${tableNum}`}
+            >
+              <QrCode className="w-2.5 h-2.5" />
+            </button>
+          )}
 
           {/* Corner Seat Counter (Bottom-Right for Square Table) */}
           <div className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/40 border border-white/10 text-[8px] font-black text-slate-300 flex items-center gap-0.5 leading-none pointer-events-none">
@@ -441,10 +466,10 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className={`relative z-10 w-full h-full rounded-md flex flex-col items-center justify-center shadow-md transition-all duration-150 ${
             isSelected
               ? 'ring-3 ring-blue-500 shadow-blue-500/30'
-              : !isEditMode
-              ? `ring-2 ${statusInfo.ring}`
               : isMerged
               ? 'ring-2 ring-indigo-400/90 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
+              : !isEditMode
+              ? `ring-2 ${statusInfo.ring}`
               : 'border border-slate-700/80'
           }`}
           style={{
@@ -452,10 +477,33 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
             backgroundImage: 'radial-gradient(ellipse at 50% 30%, #3C424C 0%, #252A30 100%)',
           }}
         >
+          {/* Merged Indicator Badge */}
+          {isMerged && (
+            <div className="absolute top-1.5 left-2 px-1.5 py-0.5 rounded bg-indigo-950/90 border border-indigo-400/80 text-[7px] font-black text-indigo-300 flex items-center gap-0.5 leading-none pointer-events-none shadow-xs">
+              <GitMerge className="w-2 h-2 text-indigo-300" />
+              <span>LINK</span>
+            </div>
+          )}
+
           {/* Centered Table Number */}
           <span className="text-white font-black text-sm sm:text-base tracking-tight leading-none drop-shadow-md">
             {tableNum}
           </span>
+
+          {/* Quick QR Button in View Mode */}
+          {!isEditMode && onOpenQr && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenQr()
+              }}
+              className="absolute top-1.5 right-2 p-0.5 rounded bg-black/40 hover:bg-[#14274E] border border-white/10 text-amber-300 transition-colors z-20 cursor-pointer shadow-xs"
+              title={`View / Print QR Code for Table ${tableNum}`}
+            >
+              <QrCode className="w-2.5 h-2.5" />
+            </button>
+          )}
 
           {/* Corner Seat Counter (Bottom-Right for Rectangle Table) */}
           <div className="absolute bottom-1.5 right-2 px-1.5 py-0.5 rounded bg-black/40 border border-white/10 text-[9px] font-black text-slate-300 flex items-center gap-1 leading-none pointer-events-none">
@@ -520,10 +568,10 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className={`relative z-10 w-full h-full rounded-full flex flex-col items-center justify-center shadow-md transition-all duration-150 ${
             isSelected
               ? 'ring-3 ring-blue-500 shadow-blue-500/30'
-              : !isEditMode
-              ? `ring-2 ${statusInfo.ring}`
               : isMerged
               ? 'ring-2 ring-indigo-400/90 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
+              : !isEditMode
+              ? `ring-2 ${statusInfo.ring}`
               : 'border border-slate-700/80'
           }`}
           style={{
@@ -531,10 +579,33 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
             backgroundImage: 'radial-gradient(circle at 45% 35%, #3C424C 0%, #252A30 100%)',
           }}
         >
+          {/* Merged Indicator Badge */}
+          {isMerged && (
+            <div className="absolute top-1 left-1/2 -translate-x-1/2 px-1 py-0.5 rounded bg-indigo-950/90 border border-indigo-400/80 text-[7px] font-black text-indigo-300 flex items-center gap-0.5 leading-none pointer-events-none shadow-xs">
+              <GitMerge className="w-2 h-2 text-indigo-300" />
+              <span>LINK</span>
+            </div>
+          )}
+
           {/* Centered Table Number */}
           <span className="text-white font-black text-sm sm:text-base tracking-tight leading-none drop-shadow-md">
             {tableNum}
           </span>
+
+          {/* Quick QR Button in View Mode */}
+          {!isEditMode && onOpenQr && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenQr()
+              }}
+              className="absolute right-1 top-1 p-0.5 rounded-full bg-black/40 hover:bg-[#14274E] border border-white/10 text-amber-300 transition-colors z-20 cursor-pointer shadow-xs"
+              title={`View / Print QR Code for Table ${tableNum}`}
+            >
+              <QrCode className="w-2.5 h-2.5" />
+            </button>
+          )}
 
           {/* Seat Counter Below Table Number for Circle Tables */}
           <div className="flex items-center gap-0.5 mt-0.5 text-[8px] sm:text-[9px] font-bold text-slate-300 pointer-events-none">
@@ -584,10 +655,10 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className={`relative z-10 w-full h-full rounded-full flex flex-col items-center justify-center shadow-lg transition-all duration-150 ${
             isSelected
               ? 'ring-3 ring-blue-500 shadow-blue-500/30'
-              : !isEditMode
-              ? `ring-2 ${statusInfo.ring}`
               : isMerged
               ? 'ring-2 ring-indigo-400/90 shadow-[0_0_14px_rgba(99,102,241,0.4)]'
+              : !isEditMode
+              ? `ring-2 ${statusInfo.ring}`
               : 'border border-slate-700/80'
           }`}
           style={{
@@ -595,10 +666,33 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
             backgroundImage: 'radial-gradient(circle at 45% 35%, #3C424C 0%, #252A30 100%)',
           }}
         >
+          {/* Merged Indicator Badge */}
+          {isMerged && (
+            <div className="absolute top-1.5 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-indigo-950/90 border border-indigo-400/80 text-[8px] font-black text-indigo-300 flex items-center gap-0.5 leading-none pointer-events-none shadow-xs">
+              <GitMerge className="w-2.5 h-2.5 text-indigo-300" />
+              <span>MERGED</span>
+            </div>
+          )}
+
           {/* Centered Table Number */}
           <span className="text-white font-black text-base sm:text-lg tracking-tight leading-none drop-shadow-md">
             {tableNum}
           </span>
+
+          {/* Quick QR Button in View Mode */}
+          {!isEditMode && onOpenQr && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenQr()
+              }}
+              className="absolute right-3 top-3 p-1 rounded-full bg-black/40 hover:bg-[#14274E] border border-white/10 text-amber-300 transition-colors z-20 cursor-pointer shadow-xs"
+              title={`View / Print QR Code for Table ${tableNum}`}
+            >
+              <QrCode className="w-3 h-3" />
+            </button>
+          )}
 
           {/* Seat Counter Below Table Number for Circle Tables */}
           <div className="flex items-center gap-1 mt-0.5 text-[10px] sm:text-xs font-bold text-slate-300 pointer-events-none">

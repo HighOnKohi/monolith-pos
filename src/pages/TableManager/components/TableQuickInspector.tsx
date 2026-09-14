@@ -5,6 +5,8 @@ import {
   Unlink,
   Users,
   Hash,
+  GitMerge,
+  QrCode,
 } from 'lucide-react'
 import type { MergedTableNode } from '@/services/tableLayoutService'
 import { TABLE_TYPES } from '@/services/tableLayoutService'
@@ -16,6 +18,7 @@ interface TableQuickInspectorProps {
   onUpdateTableNum?: (tableNum: number) => void
   onUnmerge?: () => void
   onDelete?: () => void
+  onOpenQr?: (table: MergedTableNode) => void
 }
 
 export const TableQuickInspector: React.FC<TableQuickInspectorProps> = ({
@@ -25,6 +28,7 @@ export const TableQuickInspector: React.FC<TableQuickInspectorProps> = ({
   onUpdateTableNum,
   onUnmerge,
   onDelete,
+  onOpenQr,
 }) => {
   const typeConfig = TABLE_TYPES[table.TABLE_TYPE] || TABLE_TYPES[1]
 
@@ -76,6 +80,19 @@ export const TableQuickInspector: React.FC<TableQuickInspectorProps> = ({
             </button>
           )}
 
+          {/* QR Code Button */}
+          {onOpenQr && (
+            <button
+              type="button"
+              onClick={() => onOpenQr(table)}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 transition-colors cursor-pointer"
+              title="View & Print Table QR Code"
+            >
+              <QrCode className="w-3.5 h-3.5 text-[#14274E]" />
+              <span>QR</span>
+            </button>
+          )}
+
           {/* Delete Table Button */}
           <button
             type="button"
@@ -101,9 +118,23 @@ export const TableQuickInspector: React.FC<TableQuickInspectorProps> = ({
           </div>
 
           {table.MERGE_GROUP_ID != null && (
-            <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md border border-indigo-200 text-[10px]">
-              Merged Group #{table.MERGE_GROUP_ID}
+            <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md border border-indigo-200 text-[10px] flex items-center gap-1 font-extrabold">
+              <GitMerge className="w-3 h-3 text-indigo-600" />
+              <span>Merged Table</span>
             </span>
+          )}
+
+          {/* QR Code Button */}
+          {onOpenQr && (
+            <button
+              type="button"
+              onClick={() => onOpenQr(table)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 hover:bg-[#14274E] hover:text-white text-slate-700 text-xs font-bold rounded-xl border border-slate-200 transition-colors cursor-pointer"
+              title="View & Print Table QR Code"
+            >
+              <QrCode className="w-3.5 h-3.5 text-[#14274E] group-hover:text-white" />
+              <span>Print QR</span>
+            </button>
           )}
         </div>
       )}

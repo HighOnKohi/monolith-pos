@@ -25,6 +25,12 @@ import { TableManagerSidebar } from './components/TableManagerSidebar'
 import { NewPresetModal } from './components/NewPresetModal'
 import { ConfirmModal } from './components/ConfirmModal'
 import { RenamePresetModal } from './components/RenamePresetModal'
+import { GitMerge } from 'lucide-react'
+import { resolveTableGroupByList } from '@/services/tableGroupService'
+import type { TableData } from '@/services/tableService'
+import { TableQrPreview } from '@/components/table-qr/TableQrPreview'
+import { printBulkQrPdf } from '@/components/table-qr/tableQrPrinter'
+import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
 
 interface DragState {
   tableNum: number
@@ -341,7 +347,8 @@ export default function TableManager() {
         const defaultPreset = allPresets.find((p) => p.IS_DEFAULT) || allPresets[0]
         setActivePresetId(defaultPreset.LAYOUT_PRESET_ID)
         const layoutData = await fetchPresetLayout(defaultPreset.LAYOUT_PRESET_ID)
-        setLayoutTables(layoutData)
+        const resolved = resolveConnectedMergeGroups(layoutData, areTablesAdjacent)
+        setLayoutTables(resolved)
       } else {
         const created = await createLayoutPreset('Main Dining Hall', gridWidth, gridHeight, true)
         setPresets([created])
@@ -436,7 +443,8 @@ export default function TableManager() {
       setActivePresetId(presetId)
       setSelectedTableNum(null)
       const layoutData = await fetchPresetLayout(presetId)
-      setLayoutTables(layoutData)
+      const resolved = resolveConnectedMergeGroups(layoutData, areTablesAdjacent)
+      setLayoutTables(resolved)
       setIsDirty(false)
     } catch (err) {
       console.error('Failed to load preset layout:', err)
@@ -875,16 +883,57 @@ export default function TableManager() {
     setLayoutTables((prev) => {
       const target = prev.find((t) => t.TABLE_NUM === tableNum)
       if (!target || target.MERGE_GROUP_ID == null) return prev
-      const groupMembers = prev.filter((t) => t.MERGE_GROUP_ID === target.MERGE_GROUP_ID)
+      const currentMergeId = target.MERGE_GROUP_ID
+      const groupMembers = prev.filter((t) => t.MERGE_GROUP_ID === currentMergeId)
 
-      const raw =
-        groupMembers.length <= 2
-          ? prev.map((t) =>
-              t.MERGE_GROUP_ID === target.MERGE_GROUP_ID ? { ...t, MERGE_GROUP_ID: null } : t,
-            )
-          : prev.map((t) => (t.TABLE_NUM === tableNum ? { ...t, MERGE_GROUP_ID: null } : t))
+      // Try nudging unmerged table away from neighbors so they don't immediately re-merge
+      const cfg = TABLE_TYPES[target.TABLE_TYPE] || TABLE_TYPES[1]
+      let newX = target.X_POS
+      let newY = target.Y_POS
 
-      const result = resolveConnectedMergeGroups(raw, areTablesAdjacent)
+      const directions = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+        { dx: 2, dy: 0 },
+        { dx: -2, dy: 0 },
+        { dx: 0, dy: 2 },
+        { dx: 0, dy: -2 },
+      ]
+
+      const otherMembers = groupMembers.filter((m) => m.TABLE_NUM !== tableNum)
+      for (const dir of directions) {
+        const testX = Math.max(0, Math.min(gridWidth - cfg.width, target.X_POS + dir.dx))
+        const testY = Math.max(0, Math.min(gridHeight - cfg.height, target.Y_POS + dir.dy))
+        const testTable = { ...target, X_POS: testX, Y_POS: testY }
+        const stillAdjacent = otherMembers.some((m) => areTablesAdjacent(testTable, m))
+        const collidesWithAny = prev.some((other) => {
+          if (other.TABLE_NUM === tableNum) return false
+          const oCfg = TABLE_TYPES[other.TABLE_TYPE] || TABLE_TYPES[1]
+          return (
+            testX < other.X_POS + oCfg.width &&
+            testX + cfg.width > other.X_POS &&
+            testY < other.Y_POS + oCfg.height &&
+            testY + cfg.height > other.Y_POS
+          )
+        })
+
+        if (!stillAdjacent && !collidesWithAny) {
+          newX = testX
+          newY = testY
+          break
+        }
+      }
+
+      const updated = prev.map((t) => {
+        if (t.TABLE_NUM === tableNum) {
+          return { ...t, X_POS: newX, Y_POS: newY, MERGE_GROUP_ID: null }
+        }
+        return t
+      })
+
+      const result = resolveConnectedMergeGroups(updated, areTablesAdjacent)
       const suppMap = calculateSuppressionForLayout(result)
 
       setRestaurantTables((rPrev) => syncRestaurantTablesWithLayout(result, suppMap, rPrev))
@@ -1038,8 +1087,19 @@ export default function TableManager() {
       const supp = chairSuppressionMap.get(lt.TABLE_NUM)
       const suppCount = supp?.suppressedCount ?? 0
       const defaultCap = TABLE_TYPES[lt.TABLE_TYPE]?.defaultCapacity ?? 4
+
+      // In live view mode, resolve merge status from live tables if available
+      let mergeId = lt.MERGE_GROUP_ID
+      if (!isEditMode && live) {
+        const group = resolveTableGroupByList(live.TABLE_ID, restaurantTables as TableData[])
+        if (group.isMerged) {
+          mergeId = group.anchorTableNum
+        }
+      }
+
       return {
         ...lt,
+        MERGE_GROUP_ID: mergeId,
         STATUS: live?.STATUS ?? 'AVAILABLE',
         CURRENT_GUEST_COUNT: live?.CURRENT_GUEST_COUNT ?? 0,
         GUEST_CAPACITY: live?.GUEST_CAPACITY ?? Math.max(1, defaultCap - suppCount),
@@ -1047,7 +1107,7 @@ export default function TableManager() {
         TABLE_ID: live?.TABLE_ID ?? lt.TABLE_NUM,
       }
     })
-  }, [layoutTables, restaurantTables, chairSuppressionMap])
+  }, [layoutTables, restaurantTables, chairSuppressionMap, isEditMode])
 
   // ── 18. Dynamic Bounding Box for Merged Groups ──
   const mergeGroupBounds = useMemo(() => {
@@ -1087,6 +1147,61 @@ export default function TableManager() {
   }, [mergedNodes, dragState])
 
   const selectedNode = mergedNodes.find((n) => n.TABLE_NUM === selectedTableNum) || null
+
+  // ── 19. Table QR Code Preview & Bulk Operations ──
+  const [qrModalTable, setQrModalTable] = useState<{
+    TABLE_ID: number
+    TABLE_NUM: number
+    GUEST_CAPACITY?: number
+  } | null>(null)
+  const [isPrintingBulk, setIsPrintingBulk] = useState(false)
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
+
+  const handlePrintAllQr = useCallback(async () => {
+    if (mergedNodes.length === 0) return
+    try {
+      setIsPrintingBulk(true)
+      const tableRefs = mergedNodes.map((n) => ({
+        TABLE_ID: n.TABLE_ID ?? n.TABLE_NUM,
+        TABLE_NUM: n.TABLE_NUM,
+      }))
+      await printBulkQrPdf(tableRefs)
+    } catch (err) {
+      console.error('Failed to print bulk QRs:', err)
+      showToast('Failed to print table QR codes', 'error')
+    } finally {
+      setIsPrintingBulk(false)
+    }
+  }, [mergedNodes])
+
+  const handleDownloadQrPdf = useCallback(async () => {
+    if (mergedNodes.length === 0) return
+    try {
+      setIsGeneratingPdf(true)
+      const tableRefs = mergedNodes.map((n) => ({
+        TABLE_ID: n.TABLE_ID ?? n.TABLE_NUM,
+        TABLE_NUM: n.TABLE_NUM,
+      }))
+      await downloadBulkQrPdf(tableRefs)
+      showToast('Table QR PDF generated successfully', 'info')
+    } catch (err) {
+      console.error('Failed to generate QR PDF:', err)
+      showToast('Failed to generate table QR PDF', 'error')
+    } finally {
+      setIsGeneratingPdf(false)
+    }
+  }, [mergedNodes])
+
+  const handleOpenQrModal = useCallback(
+    (table: MergedTableNode | { TABLE_ID?: number; TABLE_NUM: number; GUEST_CAPACITY?: number }) => {
+      setQrModalTable({
+        TABLE_ID: table.TABLE_ID ?? table.TABLE_NUM,
+        TABLE_NUM: table.TABLE_NUM,
+        GUEST_CAPACITY: table.GUEST_CAPACITY,
+      })
+    },
+    [],
+  )
 
   const handleToggleEditMode = () => {
     if (isEditMode && isDirty) {
@@ -1147,6 +1262,11 @@ export default function TableManager() {
           onSaveLayout={handleSaveLayout}
           onDiscardChanges={handleDiscardChanges}
           isSaving={isSaving}
+          onDownloadQrPdf={handleDownloadQrPdf}
+          onPrintAllQr={handlePrintAllQr}
+          isGeneratingPdf={isGeneratingPdf}
+          isPrintingBulk={isPrintingBulk}
+          hasTables={mergedNodes.length > 0}
         />
 
         {/* Big Div: layout-container (consumes whole width with margins on all sides, contains grid) */}
@@ -1190,6 +1310,11 @@ export default function TableManager() {
                 const width = (group.maxX - group.minX) * cellSize + padding * 2
                 const height = (group.maxY - group.minY) * cellSize + padding * 2
 
+                const memberNums = mergedNodes
+                  .filter((m) => m.MERGE_GROUP_ID === group.groupId)
+                  .map((m) => m.TABLE_NUM)
+                  .sort((a, b) => a - b)
+
                 return (
                   <div
                     key={`merge-group-${group.groupId}`}
@@ -1201,8 +1326,9 @@ export default function TableManager() {
                       height: `${height}px`,
                     }}
                   >
-                    <div className="absolute top-1.5 left-2 px-2 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-400/50 text-indigo-300 text-[10px] font-black tracking-wider uppercase shadow-xs">
-                      Merged #{group.groupId}
+                    <div className="absolute top-1.5 left-2 px-2 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-400/50 text-indigo-300 text-[10px] font-black tracking-wider uppercase shadow-xs flex items-center gap-1">
+                      <GitMerge className="w-3 h-3 text-indigo-400" />
+                      <span>Merged: Tables {memberNums.join(' + ')}</span>
                     </div>
                   </div>
                 )
@@ -1243,6 +1369,7 @@ export default function TableManager() {
                       isSelected={isSelected}
                       isEditMode={isEditMode}
                       hideChairs={suppress}
+                      onOpenQr={() => handleOpenQrModal(node)}
                     />
                   </div>
                 )
@@ -1291,6 +1418,7 @@ export default function TableManager() {
         onUpdateStatus={handleUpdateStatus}
         onUnmergeTable={handleUnmergeTable}
         onDeleteTable={handleDeleteTable}
+        onOpenQrModal={handleOpenQrModal}
       />
 
       {/* New Preset Modal */}
@@ -1319,6 +1447,16 @@ export default function TableManager() {
         onClose={() => setRenameModal((prev) => ({ ...prev, isOpen: false }))}
         onRename={handleConfirmRename}
       />
+
+      {/* Table QR Preview Modal */}
+      {qrModalTable && (
+        <TableQrPreview
+          tableId={qrModalTable.TABLE_ID}
+          tableNum={qrModalTable.TABLE_NUM}
+          guestCapacity={qrModalTable.GUEST_CAPACITY}
+          onClose={() => setQrModalTable(null)}
+        />
+      )}
     </div>
   )
 }

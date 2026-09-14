@@ -7,6 +7,8 @@ import {
   Pencil,
   ChevronDown,
   RotateCcw,
+  FileDown,
+  Printer,
 } from 'lucide-react'
 import type { TableLayoutPreset } from '@/services/tableLayoutService'
 
@@ -25,6 +27,11 @@ interface TableManagerHeaderProps {
   onSaveLayout?: () => void
   onDiscardChanges?: () => void
   isSaving?: boolean
+  onDownloadQrPdf?: () => void
+  onPrintAllQr?: () => void
+  isGeneratingPdf?: boolean
+  isPrintingBulk?: boolean
+  hasTables?: boolean
 }
 
 export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
@@ -42,6 +49,11 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   onSaveLayout,
   onDiscardChanges,
   isSaving = false,
+  onDownloadQrPdf,
+  onPrintAllQr,
+  isGeneratingPdf = false,
+  isPrintingBulk = false,
+  hasTables = true,
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -183,8 +195,34 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
         </div>
       </div>
 
-      {/* (b) Edit Layout / Save Layout & Discard Changes Buttons */}
+      {/* (b) Bulk QR Actions & Edit Layout / Save Layout / Discard Changes Buttons */}
       <div className="flex items-center gap-2.5">
+        {!isEditMode && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!hasTables || isGeneratingPdf}
+              onClick={onDownloadQrPdf}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white text-[#14274E] border border-slate-300 rounded-xl text-xs font-bold shadow-2xs transition-transform active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+              title="Download print-ready A4 PDF with all table QR cards"
+            >
+              <FileDown className="w-3.5 h-3.5 text-[#14274E]" />
+              <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download QR PDF'}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!hasTables || isPrintingBulk}
+              onClick={onPrintAllQr}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white text-[#14274E] border border-slate-300 rounded-xl text-xs font-bold shadow-2xs transition-transform active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+              title="Print all table QR codes in a 2-column grid"
+            >
+              <Printer className="w-3.5 h-3.5 text-[#14274E]" />
+              <span>{isPrintingBulk ? 'Preparing...' : 'Print All QRs'}</span>
+            </button>
+          </div>
+        )}
+
         {isEditMode ? (
           <>
             {onDiscardChanges && (

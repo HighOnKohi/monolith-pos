@@ -9,6 +9,7 @@ import {
   Trash2,
   AlertTriangle,
   X,
+  GitMerge,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllTables, fetchOrderSummariesForIds, type TableData } from '@/services/tableService'
@@ -427,12 +428,18 @@ export default function CashierInterface() {
                   key={table.TABLE_ID}
                   type="button"
                   disabled={!enabled}
-                  className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
+                  className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${group.isMerged ? 'is-merged' : ''} ${selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
                     }`}
                   onClick={() => void selectTable(group.anchorTableId)}
                 >
                   <div className="ci-table-top">
-                    <span>Table {group.memberTableNums.join(' + ')}</span>
+                    <span className="flex items-center gap-1.5">Table {group.memberTableNums.join(' + ')}</span>
+                    {group.isMerged && (
+                      <span className="ci-merged-badge">
+                        <GitMerge className="w-3 h-3" />
+                        Merged
+                      </span>
+                    )}
                   </div>
                   <div className={`tm-pax-row ${group.currentGuestCount >= group.capacity ? 'tm-pax-full' : ''}`}>
                     <Users className="ci-icon" />
@@ -452,10 +459,16 @@ export default function CashierInterface() {
           <header className="ci-sidebar-header">
             <div>
               <span className="ci-sidebar-kicker">Table Cashier</span>
-              <h2>
+              <h2 className="flex items-center gap-2">
                 {selectedTableGroup
                   ? selectedTableGroup.group.displayLabel
                   : 'Select a table'}
+                {selectedTableGroup?.group.isMerged && (
+                  <span className="ci-merged-badge text-[10px]">
+                    <GitMerge className="w-3 h-3" />
+                    Merged ({selectedTableGroup.group.memberTableNums.length} Tables)
+                  </span>
+                )}
               </h2>
             </div>
             <Receipt className="ci-header-icon" />

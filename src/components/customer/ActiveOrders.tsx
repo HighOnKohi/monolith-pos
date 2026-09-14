@@ -2,26 +2,163 @@ import { useState } from 'react'
 import type { Order } from '@/types/order'
 import { compressTableOrders } from '@/services/orderService'
 import { OrderStatusTracker } from './OrderStatusTracker'
-import { ChevronDown, ChevronUp, Clock, Receipt, Utensils } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronUp, Clock, Receipt, Utensils } from 'lucide-react'
 
 interface ActiveOrdersProps {
   orders: Order[]
+  pastOrders?: Order[]
   onRequestBill: () => void
+  onBrowseMenu?: () => void
 }
 
-export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
+export function ActiveOrders({ orders, pastOrders, onRequestBill, onBrowseMenu }: ActiveOrdersProps) {
   const [showBatches, setShowBatches] = useState(false)
 
   if (orders.length === 0) {
+    if (pastOrders && pastOrders.length > 0) {
+      const pastCompressed = compressTableOrders(pastOrders)
+      if (pastCompressed) {
+        return (
+          <div className="px-4 py-4 space-y-4 pb-36 max-w-lg mx-auto animate-fade-in">
+            <div className="bg-emerald-50 border border-emerald-200/80 rounded-2xl p-4 flex items-center justify-between shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-emerald-950">Table Order Settled</h3>
+                  <p className="text-xs text-emerald-800/90 font-medium mt-0.5">
+                    Your previous order was completed and paid. Thank you!
+                  </p>
+                </div>
+              </div>
+              {onBrowseMenu && (
+                <button
+                  onClick={onBrowseMenu}
+                  className="bg-[#14274E] text-white px-3.5 py-2 rounded-xl text-xs font-black interactive-button shrink-0 ml-2 shadow-xs cursor-pointer"
+                >
+                  Order Again
+                </button>
+              )}
+            </div>
+
+            {/* Consolidated Dishes for past order */}
+            <div className="bg-white rounded-2xl shadow-sm border border-[#9BA4B4]/20 overflow-hidden interactive-card">
+              <div className="px-4 py-3 border-b border-[#9BA4B4]/15 bg-[#F1F6F9]/50 flex items-center justify-between">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-[#14274E] flex items-center gap-1.5">
+                  <Utensils className="w-3.5 h-3.5 text-[#E9C46A]" />
+                  Settled Dishes Summary
+                </span>
+                <span className="text-xs font-bold text-[#9BA4B4]">
+                  {pastCompressed.totalItemCount} pcs
+                </span>
+              </div>
+
+              <div className="divide-y divide-[#9BA4B4]/15 px-4">
+                {pastCompressed.items.map((item) => (
+                  <div key={item.itemId} className="py-3 flex items-center justify-between gap-3 hover:bg-[#F1F6F9]/30 transition-colors rounded-xl px-1">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-6 h-6 rounded-lg bg-[#14274E]/10 text-[#14274E] font-black text-xs flex items-center justify-center shrink-0">
+                        {item.quantity}x
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-extrabold text-[#14274E] truncate">
+                          {item.name}
+                        </p>
+                        <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 inline-flex items-center gap-1 mt-0.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          Paid & Settled
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-sm font-black text-[#14274E]">
+                        ₱{item.total.toFixed(2)}
+                      </span>
+                      {item.quantity > 1 && (
+                        <p className="text-[10px] text-[#9BA4B4] font-medium">
+                          ₱{item.price.toFixed(2)} ea
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Grand Total Footer */}
+              <div className="px-4 py-3 bg-[#F1F6F9]/80 border-t border-[#9BA4B4]/20 flex items-center justify-between">
+                <div>
+                  <span className="text-xs text-[#9BA4B4] font-bold block">Total Paid</span>
+                  <span className="text-[11px] text-emerald-700 font-bold">Settled</span>
+                </div>
+                <span className="text-xl font-black text-[#14274E]">
+                  ₱{pastCompressed.totalBill.toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {/* Past Batches History */}
+            <div className="bg-white rounded-2xl border border-[#9BA4B4]/20 shadow-xs overflow-hidden">
+              <button
+                onClick={() => setShowBatches((prev) => !prev)}
+                className="w-full px-4 py-3 flex items-center justify-between text-left text-xs font-extrabold text-[#394867] hover:bg-[#F1F6F9] transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-[#9BA4B4]" />
+                  Order Batches History ({pastCompressed.rawOrders.length})
+                </span>
+                {showBatches ? (
+                  <ChevronUp className="w-4 h-4 text-[#9BA4B4]" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-[#9BA4B4]" />
+                )}
+              </button>
+
+              {showBatches && (
+                <div className="border-t border-[#9BA4B4]/15 divide-y divide-[#9BA4B4]/15 px-4 animate-fade-in">
+                  {pastCompressed.rawOrders.map((order, idx) => (
+                    <div key={order.orderId} className="py-2.5 first:pt-0 last:pb-0">
+                      <div className="flex justify-between items-center text-xs mb-1">
+                        <span className="font-bold text-[#14274E]">
+                          Batch #{pastCompressed.rawOrders.length - idx} (Order #{order.orderId})
+                        </span>
+                        <span className="font-semibold text-[#14274E]">
+                          ₱{order.totalBill.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] text-[#9BA4B4]">
+                        <span>{order.orderType}</span>
+                        <span className="bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 rounded text-[10px] font-bold">
+                          PAID
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      }
+    }
+
     return (
       <div className="py-20 text-center px-6">
         <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xs border border-[#9BA4B4]/20 text-[#9BA4B4]">
           <Receipt className="w-8 h-8" />
         </div>
         <h3 className="text-[#14274E] text-lg font-bold mb-2">No active orders</h3>
-        <p className="text-[#9BA4B4] text-sm font-medium max-w-xs mx-auto">
+        <p className="text-[#9BA4B4] text-sm font-medium max-w-xs mx-auto mb-6">
           Dishes and beverages you order will be tracked here in real-time.
         </p>
+        {onBrowseMenu && (
+          <button
+            onClick={onBrowseMenu}
+            className="bg-[#14274E] text-white px-5 py-2.5 rounded-xl text-xs font-bold interactive-button shadow-xs cursor-pointer"
+          >
+            Browse Menu
+          </button>
+        )}
       </div>
     )
   }
@@ -31,7 +168,7 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
     return null
   }
 
-  // Check if any order is fully SERVED to highlight bill out, or can bill out anytime after order placed
+  // Check if any order is fully SERVED or COMPLETED to highlight bill out
   const canBillOut = compressed.canBillOut
 
   return (
@@ -91,7 +228,7 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
                     {item.servedCount > 0 && (
                       <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        {item.servedCount} Served
+                        {item.servedCount} {compressed.overallStatus === 'COMPLETED' ? 'Completed' : 'Served'}
                       </span>
                     )}
                     {item.preparingCount > 0 && (
@@ -165,7 +302,11 @@ export function ActiveOrders({ orders, onRequestBill }: ActiveOrdersProps) {
                 </div>
                 <div className="flex justify-between items-center text-[11px] text-[#9BA4B4]">
                   <span>{order.orderType}</span>
-                  <span className="bg-white px-2 py-0.5 rounded text-[10px] font-bold text-[#394867] border border-[#9BA4B4]/20">
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                    order.orderStatus === 'COMPLETED' || order.orderStatus === 'SERVED'
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+                      : 'bg-white text-[#394867] border-[#9BA4B4]/20'
+                  }`}>
                     {order.orderStatus}
                   </span>
                 </div>
