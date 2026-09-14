@@ -707,7 +707,14 @@ export async function deactivateEvent(eventId: number): Promise<void> {
   try {
     const { fetchAllLayoutPresets, setDefaultLayoutPreset } = await import('@/services/tableLayoutService')
     const presets = await fetchAllLayoutPresets()
-    const basePreset = presets.find((p) => p.LAYOUT_PRESET_ID === 2 || p.PRESET_NAME.toLowerCase().includes('main')) || presets[0]
+    const basePreset =
+      presets.find(
+        (p) =>
+          p.LAYOUT_PRESET_ID === 1 ||
+          p.LAYOUT_PRESET_ID === 2 ||
+          p.PRESET_NAME.toLowerCase().includes('main') ||
+          p.PRESET_NAME.toLowerCase().includes('default'),
+      ) || presets[0]
     if (basePreset) {
       await setDefaultLayoutPreset(basePreset.LAYOUT_PRESET_ID)
     }
@@ -715,10 +722,20 @@ export async function deactivateEvent(eventId: number): Promise<void> {
     console.warn('[eventService] Failed to revert default layout preset on event deactivate:', err)
   }
 
-  // 2. Revert Menu_Presets IS_DEFAULT to standard default menu (PRESET_ID = 1)
+  // 2. Revert Menu_Presets IS_DEFAULT to standard default menu
   try {
-    const { setDefaultMenuPreset } = await import('@/services/menuService')
-    await setDefaultMenuPreset(1)
+    const { fetchMenuPresets, setDefaultMenuPreset } = await import('@/services/menuService')
+    const menuPresets = await fetchMenuPresets()
+    const baseMenuPreset =
+      menuPresets.find(
+        (p) =>
+          p.PRESET_ID === 1 ||
+          p.PRESET_NAME.toLowerCase().includes('default') ||
+          p.PRESET_NAME.toLowerCase().includes('main'),
+      ) || menuPresets[0]
+    if (baseMenuPreset) {
+      await setDefaultMenuPreset(baseMenuPreset.PRESET_ID)
+    }
   } catch (err) {
     console.warn('[eventService] Failed to revert default menu preset on event deactivate:', err)
   }
@@ -749,11 +766,21 @@ export async function deactivateEvent(eventId: number): Promise<void> {
 // ─── Cancel Event ──────────────────────────────────────────────────────────────
 
 export async function cancelEvent(eventId: number, userEmail?: string | null): Promise<void> {
+  // If active, deactivate first to restore base presets
+  if (typeof window !== 'undefined' && localStorage.getItem('monolith_active_event_id') === String(eventId)) {
+    try {
+      await deactivateEvent(eventId)
+    } catch {
+      // Ignore
+    }
+  }
+
   try {
     const { error } = await supabase
       .from('Restaurant_Events')
       .update({
         IS_CANCELLED: true,
+        IS_ACTIVE: false,
         UPDATED_AT: new Date().toISOString(),
         UPDATED_BY: userEmail ?? null,
       })
@@ -768,6 +795,7 @@ export async function cancelEvent(eventId: number, userEmail?: string | null): P
     const index = fallbackAll.findIndex((e) => e.eventId === eventId)
     if (index !== -1) {
       fallbackAll[index].isCancelled = true
+      fallbackAll[index].isActive = false
       fallbackAll[index].updatedAt = new Date().toISOString()
       fallbackAll[index].updatedBy = userEmail ?? null
       saveFallbackEvents(fallbackAll)
@@ -778,11 +806,21 @@ export async function cancelEvent(eventId: number, userEmail?: string | null): P
 // ─── Soft Delete Event ─────────────────────────────────────────────────────────
 
 export async function deleteEvent(eventId: number, userEmail?: string | null): Promise<void> {
+  // If active, deactivate first to restore base presets
+  if (typeof window !== 'undefined' && localStorage.getItem('monolith_active_event_id') === String(eventId)) {
+    try {
+      await deactivateEvent(eventId)
+    } catch {
+      // Ignore
+    }
+  }
+
   try {
     const { error } = await supabase
       .from('Restaurant_Events')
       .update({
         DELETED_AT: new Date().toISOString(),
+        IS_ACTIVE: false,
         UPDATED_AT: new Date().toISOString(),
         UPDATED_BY: userEmail ?? null,
       })
@@ -797,6 +835,7 @@ export async function deleteEvent(eventId: number, userEmail?: string | null): P
     const index = fallbackAll.findIndex((e) => e.eventId === eventId)
     if (index !== -1) {
       fallbackAll[index].deletedAt = new Date().toISOString()
+      fallbackAll[index].isActive = false
       fallbackAll[index].updatedAt = new Date().toISOString()
       fallbackAll[index].updatedBy = userEmail ?? null
       saveFallbackEvents(fallbackAll)

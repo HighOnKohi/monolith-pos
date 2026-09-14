@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase'
 
-export type TableType = 1 | 2 | 3 | 4
+export type TableType = 1 | 2 | 3 | 4 | 5
 
 export interface TableTypeConfig {
   type: TableType
@@ -24,12 +24,12 @@ export const TABLE_TYPES: Record<TableType, TableTypeConfig> = {
   },
   2: {
     type: 2,
-    name: 'Rectangle Table',
+    name: 'Rectangle Table (Horizontal)',
     width: 3,
     height: 1,
     defaultCapacity: 8,
     shape: 'rectangle',
-    description: '1x3 Rectangle (8 Chairs)',
+    description: '3x1 Rectangle (8 Chairs)',
   },
   3: {
     type: 3,
@@ -48,6 +48,15 @@ export const TABLE_TYPES: Record<TableType, TableTypeConfig> = {
     defaultCapacity: 6,
     shape: 'big_circle',
     description: '2x2 Big Circle (6 Chairs)',
+  },
+  5: {
+    type: 5,
+    name: 'Rectangle Table (Vertical)',
+    width: 1,
+    height: 3,
+    defaultCapacity: 8,
+    shape: 'rectangle',
+    description: '1x3 Rectangle (8 Chairs)',
   },
 }
 
@@ -163,15 +172,15 @@ export async function createLayoutPreset(
 }
 
 export async function setDefaultLayoutPreset(presetId: number): Promise<void> {
-  // 1. Reset all to false
+  // 1. Reset other presets to IS_DEFAULT = false
   try {
     await supabase
       .schema('tables')
       .from('Table_Layout_Presets')
       .update({ IS_DEFAULT: false })
-      .neq('LAYOUT_PRESET_ID', 0)
-  } catch {
-    // Ignore
+      .neq('LAYOUT_PRESET_ID', presetId)
+  } catch (err) {
+    console.warn('[tableLayoutService] Notice when resetting IS_DEFAULT on Table_Layout_Presets:', err)
   }
 
   // 2. Set chosen preset as default
@@ -187,12 +196,46 @@ export async function setDefaultLayoutPreset(presetId: number): Promise<void> {
 
   // 3. Synchronize Restaurant_Tables with this preset's tables
   try {
-    const layoutTables = await fetchPresetLayout(presetId)
+    const [layoutTables, liveTables] = await Promise.all([
+      fetchPresetLayout(presetId),
+      fetchLiveRestaurantTables(),
+    ])
     if (layoutTables.length > 0) {
-      await savePresetLayout(presetId, layoutTables)
+      const capacityMap = new Map<number, number>()
+      for (const r of liveTables) {
+        capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
+      }
+      await savePresetLayout(presetId, layoutTables, capacityMap)
     }
   } catch (err) {
     console.warn('[tableLayoutService] Error applying layout tables on setDefaultLayoutPreset:', err)
+  }
+
+  // 4. Dispatch events & broadcast across tabs and devices
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('table-active-preset-id', String(presetId))
+    const detail = { type: 'table_layout_preset_changed', presetId }
+    window.dispatchEvent(new CustomEvent('table-layout-preset-changed', { detail: presetId }))
+    window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
+
+    try {
+      const bc = new BroadcastChannel('monolith_order_events')
+      bc.postMessage(detail)
+      bc.close()
+    } catch {
+      // Ignore
+    }
+
+    try {
+      const channel = supabase.channel('table-manager-live-sync')
+      void channel.send({
+        type: 'broadcast',
+        event: 'table_preset_changed',
+        payload: { presetId },
+      })
+    } catch {
+      // Ignore
+    }
   }
 }
 
@@ -410,10 +453,36 @@ export async function savePresetLayout(
     const existingByNum = new Map(existingRestaurantTables.map((t) => [t.TABLE_NUM, t]))
     const newTableNums = new Set(tables.map((t) => t.TABLE_NUM))
 
-    // A. Pass 1: Upsert / update active tables (capacities & layout coordinates)
+    // A. Pass 1: Calculate target capacities & clamp strictly to VENUE_MAX_CAPACITY (50)
+    const VENUE_MAX = 50
+    const targetCapacities = new Map<number, number>()
     for (const t of tables) {
       const typeConfig = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
-      const capacity = tableCapacities?.get(t.TABLE_NUM) ?? typeConfig.defaultCapacity
+      const existing = existingByNum.get(t.TABLE_NUM)
+      const cap = tableCapacities?.get(t.TABLE_NUM) ?? existing?.GUEST_CAPACITY ?? typeConfig.defaultCapacity
+      targetCapacities.set(t.TABLE_NUM, Math.max(1, cap))
+    }
+
+    // Enforce 50 max venue capacity limit across layout
+    let totalCap = Array.from(targetCapacities.values()).reduce((sum, c) => sum + c, 0)
+    if (totalCap > VENUE_MAX) {
+      const tableNums = Array.from(targetCapacities.keys())
+      for (let i = tableNums.length - 1; i >= 0 && totalCap > VENUE_MAX; i--) {
+        const num = tableNums[i]
+        const currentCap = targetCapacities.get(num)!
+        const canReduce = currentCap - 1
+        const excess = totalCap - VENUE_MAX
+        const reduction = Math.min(excess, canReduce)
+        if (reduction > 0) {
+          targetCapacities.set(num, currentCap - reduction)
+          totalCap -= reduction
+        }
+      }
+    }
+
+    // Upsert / update active tables (capacities & layout coordinates)
+    for (const t of tables) {
+      const capacity = targetCapacities.get(t.TABLE_NUM) ?? 4
       const existing = existingByNum.get(t.TABLE_NUM)
 
       if (existing) {

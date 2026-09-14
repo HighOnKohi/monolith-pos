@@ -41,17 +41,17 @@ export const CashierHeader: React.FC<CashierHeaderProps> = ({
         <button
           onClick={onOpenTableSelector}
           className={`service-interface-pill-btn service-interface-pill-table cursor-pointer ${
-            isMerged ? 'border-indigo-300 bg-indigo-50/50' : ''
+            isMerged ? 'border-dashed border-2 border-indigo-400 bg-indigo-50/50 shadow-xs' : ''
           }`}
           title="Select Table"
         >
           {isMerged ? (
-            <GitMerge className="w-3.5 h-3.5 text-indigo-600" />
+            <GitMerge className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
           ) : (
-            <LayoutGrid className="w-3.5 h-3.5 text-[#14274E]" />
+            <LayoutGrid className="w-3.5 h-3.5 text-[#14274E] shrink-0" />
           )}
           <span className="font-extrabold text-[#14274E]">
-            {selectedTableLabel || (selectedTable ? `Table ${selectedTable.TABLE_NUM || selectedTable.TABLE_ID}` : '—')}
+            {selectedTableLabel || (selectedTable ? (isMerged ? `Table #${selectedTable.TABLE_NUM || selectedTable.TABLE_ID}+` : `Table #${selectedTable.TABLE_NUM || selectedTable.TABLE_ID}`) : '—')}
           </span>
           {isMerged && (
             <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-indigo-100 text-indigo-700 border border-indigo-200">

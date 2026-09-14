@@ -94,13 +94,98 @@ export function cacheTables(tables: TableData[]): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function fetchAllTables(): Promise<TableData[]> {
-  const { data, error } = await supabase
-    .schema('tables').from('Restaurant_Tables')
-    .select('*')
-    .order('TABLE_NUM')
+  try {
+    // 1. Fetch presets to identify current default preset
+    const { data: presets } = await supabase
+      .schema('tables')
+      .from('Table_Layout_Presets')
+      .select('*')
+      .order('LAYOUT_PRESET_ID', { ascending: true })
 
-  if (error) throw error
-  return (data as TableData[]) ?? []
+    const defaultPreset = (presets ?? []).find((p: any) => p.IS_DEFAULT) ?? (presets ?? [])[0]
+
+    // 2. Fetch live Restaurant_Tables
+    const { data: liveData, error: liveError } = await supabase
+      .schema('tables')
+      .from('Restaurant_Tables')
+      .select('*')
+      .order('TABLE_NUM')
+
+    if (liveError) throw liveError
+    const liveTables = (liveData as TableData[]) ?? []
+
+    if (!defaultPreset) {
+      return liveTables
+    }
+
+    // 3. Fetch layout info for default preset
+    const { data: layoutData } = await supabase
+      .schema('tables')
+      .from('Table_Layout_Info')
+      .select('*')
+      .eq('LAYOUT_PRESET_ID', defaultPreset.LAYOUT_PRESET_ID)
+      .order('TABLE_NUM', { ascending: true })
+
+    const layoutTables = layoutData ?? []
+    if (layoutTables.length === 0) {
+      return liveTables
+    }
+
+    // Map each layout table to a TableData row matching live status
+    const liveByNum = new Map<number, TableData>()
+    for (const t of liveTables) {
+      liveByNum.set(t.TABLE_NUM, t)
+    }
+
+    const result: TableData[] = layoutTables.map((lt: any) => {
+      const tableNum = Number(lt.TABLE_NUM)
+      const live = liveByNum.get(tableNum)
+      const typeNum = Number(lt.TABLE_TYPE) || 1
+      const defaultCap = typeNum === 2 ? 2 : typeNum === 3 ? 6 : typeNum === 4 ? 8 : 4
+      const capacity = live?.GUEST_CAPACITY || defaultCap
+
+      // Resolve MERGE_GROUP_ID to live anchor TABLE_ID if available
+      let mergeGroupId: number | null = null
+      if (lt.MERGE_GROUP_ID != null) {
+        const anchorNum = Number(lt.MERGE_GROUP_ID)
+        const liveAnchor = liveByNum.get(anchorNum)
+        if (anchorNum !== tableNum) {
+          mergeGroupId = liveAnchor?.TABLE_ID ?? anchorNum
+        } else {
+          mergeGroupId = null
+        }
+      }
+
+      const tableId = live?.TABLE_ID ?? tableNum
+      return {
+        TABLE_ID: tableId,
+        TABLE_NUM: tableNum,
+        STATUS: (live?.STATUS || 'AVAILABLE') as TableStatus,
+        GUEST_CAPACITY: capacity,
+        CURRENT_GUEST_COUNT: live?.CURRENT_GUEST_COUNT ?? 0,
+        BILL_OUT_REQUESTED: Boolean(live?.BILL_OUT_REQUESTED),
+        MERGE_GROUP_ID: mergeGroupId,
+        IS_MERGE_MEMBER: lt.MERGE_GROUP_ID != null && Number(lt.MERGE_GROUP_ID) !== tableNum,
+        IS_MERGE_CAPTAIN: lt.MERGE_GROUP_ID != null && Number(lt.MERGE_GROUP_ID) === tableNum,
+        RESERVED_SINCE: live?.RESERVED_SINCE ?? null,
+        RESERVATION_NAME: live?.RESERVATION_NAME ?? null,
+        RESERVATION_PAX: live?.RESERVATION_PAX ?? null,
+        RESERVATION_NOTES: live?.RESERVATION_NOTES ?? null,
+        LAYOUT_X: Number(lt.X_POS ?? 0),
+        LAYOUT_Y: Number(lt.Y_POS ?? 0),
+      }
+    })
+
+    return result.sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
+  } catch (err) {
+    console.error('[tableService] Error fetching all tables:', err)
+    const { data } = await supabase
+      .schema('tables')
+      .from('Restaurant_Tables')
+      .select('*')
+      .order('TABLE_NUM')
+    return (data as TableData[]) ?? []
+  }
 }
 
 export async function fetchTablesByIds(ids: number[]): Promise<TableData[]> {

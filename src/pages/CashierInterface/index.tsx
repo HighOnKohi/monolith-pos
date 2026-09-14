@@ -103,13 +103,18 @@ export default function CashierInterface() {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') void load()
     }
+    const handlePresetChange = () => void load()
+
     document.addEventListener('visibilitychange', handleVisibility)
     window.addEventListener('focus', handleVisibility)
+    window.addEventListener('table-layout-preset-changed', handlePresetChange)
+    window.addEventListener('monolith-order-update', handlePresetChange)
 
     const channel = supabase
       .channel('cashier-interface-sync')
       .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Presets' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Info' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Orders' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Order_Items' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Bill_Requests' }, () => void load())
@@ -119,32 +124,131 @@ export default function CashierInterface() {
       unsubscribeBus()
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('focus', handleVisibility)
+      window.removeEventListener('table-layout-preset-changed', handlePresetChange)
+      window.removeEventListener('monolith-order-update', handlePresetChange)
       void supabase.removeChannel(channel)
     }
   }, [load])
 
-  // Tables group calculations
-  const groups = useMemo(() => {
-    const seen = new Set<number>()
-    return tables.flatMap((table) => {
-      if (seen.has(table.TABLE_ID)) return []
-      const group = resolveTableGroupByList(table.TABLE_ID, tables)
-      group.memberTableIds.forEach((id) => seen.add(id))
-      const summary = group.memberTableIds.reduce(
-        (result, id) => {
-          const item = summaries.get(id)
+  // Tables group calculations & hierarchy: Merge Groups first, then Standalone Tables
+  const { mergedGroups, standaloneTables, enabledTablesCount } = useMemo(() => {
+    const processedTableIds = new Set<number>()
+    const merged: Array<{
+      groupId: number
+      anchorTableNum: number
+      groupInfo: ReturnType<typeof resolveTableGroupByList>
+      groupSummary: { totalBill: number; activeOrderCount: number }
+      tables: Array<{
+        table: TableData
+        summary: { totalBill: number; activeOrderCount: number }
+        enabled: boolean
+      }>
+    }> = []
+    const standalone: Array<{
+      table: TableData
+      groupInfo: ReturnType<typeof resolveTableGroupByList>
+      summary: { totalBill: number; activeOrderCount: number }
+      enabled: boolean
+    }> = []
+
+    for (const table of tables) {
+      if (processedTableIds.has(table.TABLE_ID)) continue
+
+      const groupInfo = resolveTableGroupByList(table.TABLE_ID, tables)
+      if (groupInfo.isMerged) {
+        const memberTables = tables
+          .filter((t) => groupInfo.memberTableIds.includes(t.TABLE_ID))
+          .sort((a, b) => (a.TABLE_NUM || a.TABLE_ID) - (b.TABLE_NUM || b.TABLE_ID))
+
+        memberTables.forEach((t) => processedTableIds.add(t.TABLE_ID))
+
+        const groupSummary = groupInfo.memberTableIds.reduce(
+          (result, id) => {
+            const item = summaries.get(id)
+            return {
+              totalBill: result.totalBill + (item?.totalBill ?? 0),
+              activeOrderCount: result.activeOrderCount + (item?.activeOrderCount ?? 0),
+            }
+          },
+          { totalBill: 0, activeOrderCount: 0 },
+        )
+
+        const groupEnabled = groupSummary.activeOrderCount > 0
+
+        const tableItems = memberTables.map((t) => {
+          const tableSummary = summaries.get(t.TABLE_ID) ?? { totalBill: 0, activeOrderCount: 0 }
+          const enabled = groupEnabled || tableSummary.activeOrderCount > 0
           return {
-            totalBill: result.totalBill + (item?.totalBill ?? 0),
-            activeOrderCount: result.activeOrderCount + (item?.activeOrderCount ?? 0),
+            table: t,
+            summary: tableSummary,
+            enabled,
           }
-        },
-        { totalBill: 0, activeOrderCount: 0 },
-      )
-      return [{ table, group, summary }]
-    })
+        })
+
+        merged.push({
+          groupId: groupInfo.anchorTableId,
+          anchorTableNum: groupInfo.anchorTableNum,
+          groupInfo,
+          groupSummary,
+          tables: tableItems,
+        })
+      } else {
+        processedTableIds.add(table.TABLE_ID)
+        const tableSummary = summaries.get(table.TABLE_ID) ?? { totalBill: 0, activeOrderCount: 0 }
+        const enabled = tableSummary.activeOrderCount > 0
+        standalone.push({
+          table,
+          groupInfo,
+          summary: tableSummary,
+          enabled,
+        })
+      }
+    }
+
+    // Sort merge groups by their anchor table number ascending
+    merged.sort((a, b) => a.anchorTableNum - b.anchorTableNum)
+
+    // Sort standalone tables by their table number ascending
+    standalone.sort((a, b) => (a.table.TABLE_NUM || a.table.TABLE_ID) - (b.table.TABLE_NUM || b.table.TABLE_ID))
+
+    // Total count of accessible active tables
+    const activeCount = tables.filter((t) => {
+      const s = summaries.get(t.TABLE_ID)
+      if (s && s.activeOrderCount > 0) return true
+      const g = resolveTableGroupByList(t.TABLE_ID, tables)
+      if (g.isMerged) {
+        return g.memberTableIds.some((id) => (summaries.get(id)?.activeOrderCount ?? 0) > 0)
+      }
+      return false
+    }).length
+
+    return {
+      mergedGroups: merged,
+      standaloneTables: standalone,
+      enabledTablesCount: activeCount,
+    }
   }, [tables, summaries])
 
-  const selectedTableGroup = groups.find(({ group }) => group.anchorTableId === selectedId) ?? null
+  const selectedTableGroup = useMemo(() => {
+    if (!selectedId) return null
+    const group = resolveTableGroupByList(selectedId, tables)
+    const summary = group.memberTableIds.reduce(
+      (result, id) => {
+        const item = summaries.get(id)
+        return {
+          totalBill: result.totalBill + (item?.totalBill ?? 0),
+          activeOrderCount: result.activeOrderCount + (item?.activeOrderCount ?? 0),
+        }
+      },
+      { totalBill: 0, activeOrderCount: 0 },
+    )
+    const anchorTable =
+      tables.find((t) => t.TABLE_ID === group.anchorTableId) ||
+      tables.find((t) => t.TABLE_ID === selectedId) ||
+      null
+    return anchorTable ? { table: anchorTable, group, summary } : null
+  }, [selectedId, tables, summaries])
+
   const activeBillRequest = selectedTableGroup
     ? billRequests.find((request) => selectedTableGroup.group.memberTableIds.includes(request.tableId)) ?? null
     : null
@@ -401,8 +505,6 @@ export default function CashierInterface() {
     }
   }
 
-  const enabledTablesCount = groups.filter((g) => g.summary.activeOrderCount > 0).length
-
   return (
     <div className="cashier-interface-page staff-page">
       {error && <div className="ci-error">{error}</div>}
@@ -419,38 +521,96 @@ export default function CashierInterface() {
             </span>
           </div>
 
-          {/* Tables Cards Grid */}
-          <div className="ci-table-grid">
-            {groups.map(({ table, group, summary }) => {
-              const enabled = summary.activeOrderCount > 0
-              return (
-                <button
-                  key={table.TABLE_ID}
-                  type="button"
-                  disabled={!enabled}
-                  className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${group.isMerged ? 'is-merged' : ''} ${selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
-                    }`}
-                  onClick={() => void selectTable(group.anchorTableId)}
-                >
-                  <div className="ci-table-top">
-                    <span className="flex items-center gap-1.5">Table {group.memberTableNums.join(' + ')}</span>
-                    {group.isMerged && (
-                      <span className="ci-merged-badge">
-                        <GitMerge className="w-3 h-3" />
-                        Merged
-                      </span>
-                    )}
-                  </div>
-                  <div className={`tm-pax-row ${group.currentGuestCount >= group.capacity ? 'tm-pax-full' : ''}`}>
-                    <Users className="ci-icon" />
-                    <span>
-                      {group.currentGuestCount}/{group.capacity}
-                    </span>
-                  </div>
-                </button>
-              )
-            })}
-            {groups.length === 0 && <div className="ci-empty">No tables available.</div>}
+          {/* Tables Hierarchy */}
+          <div className="ci-tables-wrapper">
+            {/* 1. Merge Groups appear FIRST in hierarchy */}
+            {mergedGroups.map((groupItem) => (
+              <fieldset
+                key={`cashier-group-${groupItem.groupId}`}
+                className="ci-table-group-container"
+              >
+                <legend className="ci-table-group-legend">
+                  <GitMerge className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                  <span>Table Group</span>
+                </legend>
+                <div className="ci-table-group-grid">
+                  {groupItem.tables.map(({ table, enabled }) => {
+                    const isCardSelected = selectedId === table.TABLE_ID
+                    const isGroupMemberSelected =
+                      !isCardSelected &&
+                      Boolean(selectedTableGroup?.group.memberTableIds.includes(table.TABLE_ID))
+
+                    return (
+                      <button
+                        key={table.TABLE_ID}
+                        type="button"
+                        disabled={!enabled}
+                        className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${
+                          isCardSelected ? 'is-selected' : isGroupMemberSelected ? 'is-group-selected' : ''
+                        }`}
+                        onClick={() => void selectTable(table.TABLE_ID)}
+                      >
+                        <div className="ci-table-top">
+                          <span className="flex items-center gap-1.5 font-extrabold">
+                            Table #{table.TABLE_NUM || table.TABLE_ID}
+                          </span>
+                        </div>
+                        <div
+                          className={`tm-pax-row ${
+                            table.CURRENT_GUEST_COUNT >= table.GUEST_CAPACITY ? 'tm-pax-full' : ''
+                          }`}
+                        >
+                          <Users className="ci-icon" />
+                          <span>
+                            {table.CURRENT_GUEST_COUNT}/{table.GUEST_CAPACITY}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </fieldset>
+            ))}
+
+            {/* 2. Standalone Tables Grid */}
+            {standaloneTables.length > 0 && (
+              <div className="ci-table-grid">
+                {standaloneTables.map(({ table, enabled }) => {
+                  const isSelected = selectedId === table.TABLE_ID
+                  return (
+                    <button
+                      key={table.TABLE_ID}
+                      type="button"
+                      disabled={!enabled}
+                      className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${
+                        isSelected ? 'is-selected' : ''
+                      }`}
+                      onClick={() => void selectTable(table.TABLE_ID)}
+                    >
+                      <div className="ci-table-top">
+                        <span className="flex items-center gap-1.5 font-extrabold">
+                          Table #{table.TABLE_NUM || table.TABLE_ID}
+                        </span>
+                      </div>
+                      <div
+                        className={`tm-pax-row ${
+                          table.CURRENT_GUEST_COUNT >= table.GUEST_CAPACITY ? 'tm-pax-full' : ''
+                        }`}
+                      >
+                        <Users className="ci-icon" />
+                        <span>
+                          {table.CURRENT_GUEST_COUNT}/{table.GUEST_CAPACITY}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {mergedGroups.length === 0 && standaloneTables.length === 0 && (
+              <div className="ci-empty">No tables available.</div>
+            )}
           </div>
         </section>
 
