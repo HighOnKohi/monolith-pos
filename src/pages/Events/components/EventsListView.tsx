@@ -1,5 +1,5 @@
 import React from 'react'
-import { Eye, Pencil, Trash2, MapPin, User2, Users, Clock, Layout } from 'lucide-react'
+import { Pencil, Trash2, MapPin, User2, Users, Clock, Layout } from 'lucide-react'
 import type { RestaurantEvent } from '@/types/event'
 import {
   deriveEventStatus,
@@ -14,6 +14,7 @@ interface EventsListViewProps {
   onView: (event: RestaurantEvent) => void
   onEdit: (event: RestaurantEvent) => void
   onDelete: (event: RestaurantEvent) => void
+  onToggleActive?: (event: RestaurantEvent) => void
   canManageEvents: boolean
   loading?: boolean
 }
@@ -23,6 +24,7 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
   onView,
   onEdit,
   onDelete,
+  onToggleActive,
   canManageEvents,
   loading = false,
 }) => {
@@ -45,58 +47,53 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="h-full space-y-3">
       {/* ── Desktop Table ── */}
       <div className="hidden sm:block bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
         <table className="w-full text-left text-xs border-collapse">
           <thead>
             <tr className="border-b border-slate-100 bg-slate-50/70 text-[10px] font-black uppercase tracking-wider text-slate-400">
-              <th className="px-4 py-3">Event</th>
-              <th className="px-4 py-3">Date &amp; Time</th>
-              <th className="px-4 py-3">Location</th>
-              <th className="px-4 py-3">Category</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Created By</th>
-              <th className="px-4 py-3 text-right">Actions</th>
+              <th className="px-4 py-3 text-center">Event Name</th>
+              <th className="px-4 py-3 text-center">Date</th>
+              <th className="px-4 py-3 text-center">Time</th>
+              <th className="px-4 py-3 text-center">Location</th>
+              <th className="px-4 py-3 text-center">Category</th>
+              <th className="px-4 py-3 text-center">Guest Count</th>
+              <th className="px-4 py-3 text-center">Active</th>
+              <th className="px-4 py-3 text-right"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {events.map((event) => {
-              const status = deriveEventStatus(event)
-              const badge = getEventStatusBadge(status)
-              const catColor = event.color || getCategoryColor(event.category)
               const pax = event.maxPax ?? event.expectedAttendees ?? 50
 
               return (
-                <tr key={event.eventId} className="hover:bg-slate-50/60 transition-colors">
+                <tr key={event.eventId} onClick={() => onView(event)} className="hover:bg-slate-50/60 transition-colors cursor-pointer">
                   {/* Event Name & Category Dot */}
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: catColor }}
-                      />
-                      <div>
+                  <td className="px-4 py-3 text-center">
+                    <div className="flex items-center justify-center gap-2.5">
+                      <div className="text-center">
                         <p
-                          className="font-black text-[#14274E] truncate cursor-pointer hover:underline"
+                          className="font-bold text-[#14274E] truncate cursor-pointer hover:underline"
                           onClick={() => onView(event)}
                         >
                           {event.title}
                         </p>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <div className="flex items-center justify-center gap-2 mt-0.5 flex-wrap">
                           {event.organizer && (
                             <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
                               <User2 className="w-3 h-3" />
                               {event.organizer}
                             </span>
                           )}
-                          <span className="text-[10px] font-semibold text-slate-500 flex items-center gap-0.5">
-                            <Users className="w-3 h-3 text-slate-400" />
-                            {pax} Max Pax
-                          </span>
                           {event.presetId && (
                             <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
                               <Layout className="w-2.5 h-2.5" /> Linked Layout
+                            </span>
+                          )}
+                          {event.menuPresetId && (
+                            <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
+                              Linked Menu
                             </span>
                           )}
                         </div>
@@ -104,70 +101,69 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                     </div>
                   </td>
 
-                  {/* Date & Time */}
-                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                    <div className="font-bold">{formatEventDate(event.startAt)}</div>
-                    <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
-                      <Clock className="w-2.5 h-2.5" />
+                  {/* Date */}
+                  <td className="px-4 py-3 text-center">
+                    <div className="font-bold text-slate-600 whitespace-nowrap">
+                      {formatEventDate(event.startAt)}
+                    </div>
+                  </td>
+
+                  {/* Time */}
+                  <td className="px-4 py-3 text-center">
+                    <div className="font-bold text-slate-600 whitespace-nowrap">
                       {formatEventTime(event.startAt)} – {formatEventTime(event.endAt)}
                     </div>
                   </td>
 
                   {/* Location */}
-                  <td className="px-4 py-3 text-slate-500 max-w-[140px]">
-                    {event.location ? (
-                      <span className="flex items-center gap-1 truncate">
-                        <MapPin className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{event.location}</span>
-                      </span>
-                    ) : (
-                      <span className="text-slate-300">—</span>
-                    )}
+                  <td className="px-4 py-3 text-center max-w-[140px]">
+                    <div className="font-bold text-slate-600 truncate">
+                      {event.location || '—'}
+                    </div>
                   </td>
 
                   {/* Category */}
-                  <td className="px-4 py-3">
-                    <span
-                      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold"
-                      style={{
-                        backgroundColor: `${catColor}18`,
-                        color: catColor,
-                        border: `1px solid ${catColor}30`,
-                      }}
-                    >
+                  <td className="px-4 py-3 text-center">
+                    <div className="font-bold text-slate-600 whitespace-nowrap">
                       {event.category}
-                    </span>
+                    </div>
                   </td>
 
-                  {/* Status */}
-                  <td className="px-4 py-3">
-                    <span
-                      className={[
-                        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border',
-                        badge.bg, badge.text, badge.border,
-                      ].join(' ')}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`} />
-                      {status}
-                    </span>
+                  {/* Guest Count */}
+                  <td className="px-4 py-3 text-center">
+                    <div className="font-bold text-slate-600 whitespace-nowrap">
+                      {pax}
+                    </div>
                   </td>
 
-                  {/* Created By */}
-                  <td className="px-4 py-3 text-slate-400 text-[10px]">
-                    {event.createdBy || '—'}
+                  {/* Active Toggle */}
+                  <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                    {canManageEvents ? (
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={Boolean(event.isActive)}
+                        onClick={() => onToggleActive?.(event)}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                          event.isActive ? 'bg-[#14274E]' : 'bg-slate-200 hover:bg-slate-300'
+                        }`}
+                        title={event.isActive ? 'Active event (Click to deactivate)' : 'Inactive (Click to activate)'}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                            event.isActive ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    ) : (
+                      <span className={`inline-block w-2.5 h-2.5 rounded-full ${event.isActive ? 'bg-emerald-500 ring-4 ring-emerald-100' : 'bg-slate-300'}`} />
+                    )}
                   </td>
 
                   {/* Actions */}
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
-                      <button
-                        onClick={() => onView(event)}
-                        className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors cursor-pointer"
-                        title="View event"
-                        aria-label="View event"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                      </button>
                       {canManageEvents && (
                         <>
                           <button
@@ -253,27 +249,46 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                         <span>Linked Table Layout</span>
                       </div>
                     )}
+                    {event.menuPresetId && (
+                      <div className="flex items-center gap-1 text-amber-700 font-bold">
+                        <span>Linked Menu Preset</span>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="flex items-center justify-between mt-2">
-                    <span
-                      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold"
-                      style={{
-                        backgroundColor: `${catColor}18`,
-                        color: catColor,
-                        border: `1px solid ${catColor}30`,
-                      }}
-                    >
-                      {event.category}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => onView(event)}
-                        className="p-2 rounded-xl bg-slate-100 text-slate-600 cursor-pointer"
-                        aria-label="View"
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold"
+                        style={{
+                          backgroundColor: `${catColor}18`,
+                          color: catColor,
+                          border: `1px solid ${catColor}30`,
+                        }}
                       >
-                        <Eye className="w-3.5 h-3.5" />
-                      </button>
+                        {event.category}
+                      </span>
+                      {canManageEvents && (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={Boolean(event.isActive)}
+                          onClick={() => onToggleActive?.(event)}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                            event.isActive ? 'bg-[#14274E]' : 'bg-slate-200'
+                          }`}
+                          title={event.isActive ? 'Active event' : 'Inactive'}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                              event.isActive ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
                       {canManageEvents && (
                         <>
                           <button

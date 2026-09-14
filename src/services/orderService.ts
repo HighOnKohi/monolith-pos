@@ -53,6 +53,7 @@ export async function createOrder(
   total: number,
   requestedFrom: 'Cashier' | 'Customer' = 'Customer',
   serverNote?: string,
+
   guestCount?: number,
 ): Promise<Order> {
   // Determine party size / guest count
@@ -60,6 +61,7 @@ export async function createOrder(
   if (!partySize || partySize <= 0) {
     try {
       const { data: tRow } = await supabase
+        .schema('tables')
         .from('Restaurant_Tables')
         .select('CURRENT_GUEST_COUNT')
         .eq('TABLE_ID', tableId)
@@ -106,6 +108,7 @@ export async function createOrder(
   // 3. Mark table as OCCUPIED if it was not already occupied/has_request
   try {
     const { data: tableData } = await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .select('STATUS')
       .eq('TABLE_ID', tableId)
@@ -113,6 +116,7 @@ export async function createOrder(
 
     if (tableData && tableData.STATUS !== 'OCCUPIED' && tableData.STATUS !== 'HAS_REQUEST') {
       await supabase
+        .schema('tables')
         .from('Restaurant_Tables')
         .update({ STATUS: 'OCCUPIED' })
         .eq('TABLE_ID', tableId)
@@ -271,6 +275,7 @@ export async function createOrderFromExisting(order: Order): Promise<void> {
   if (!partySize || partySize <= 0) {
     try {
       const { data: tRow } = await supabase
+        .schema('tables')
         .from('Restaurant_Tables')
         .select('CURRENT_GUEST_COUNT')
         .eq('TABLE_ID', order.tableId)
@@ -518,6 +523,7 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
   // Reset table status to AVAILABLE and clear guest count & bill request
   try {
     await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .update({
         STATUS: 'AVAILABLE',

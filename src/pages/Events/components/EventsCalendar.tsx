@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus, Clock } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, Clock } from 'lucide-react'
 import type { RestaurantEvent } from '@/types/event'
 import {
   getCalendarGrid,
@@ -13,7 +13,7 @@ interface EventsCalendarProps {
   events: RestaurantEvent[]
   onEventClick: (event: RestaurantEvent) => void
   onDateClick: (date: Date) => void
-  onAddEvent?: () => void
+  onRefresh?: () => void
   canManageEvents?: boolean
 }
 
@@ -28,7 +28,7 @@ export const EventsCalendar: React.FC<EventsCalendarProps> = ({
   events,
   onEventClick,
   onDateClick,
-  onAddEvent,
+  onRefresh,
   canManageEvents = true,
 }) => {
   const today = new Date()
@@ -86,7 +86,7 @@ export const EventsCalendar: React.FC<EventsCalendarProps> = ({
   }
 
   return (
-    <div className="w-full bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden flex flex-col shrink-0">
+    <div className="w-full h-full min-h-0 bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden flex flex-col">
       {/* ── Calendar Header Bar ── */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-slate-100 bg-white">
         {/* Month & Year Title */}
@@ -94,44 +94,35 @@ export const EventsCalendar: React.FC<EventsCalendarProps> = ({
           <h2 className="text-base sm:text-lg font-black text-[#14274E] tracking-tight">
             {MONTH_NAMES[month]} {year}
           </h2>
-          <span className="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-            {events.filter((e) => {
-              const d = new Date(e.startAt)
-              return d.getMonth() === month && d.getFullYear() === year && !e.isCancelled
-            }).length} active events
-          </span>
         </div>
 
         {/* Navigation Controls + Quick Add Button */}
         <div className="flex items-center gap-2 self-end sm:self-auto">
-          {canManageEvents && onAddEvent && (
+          {onRefresh && (
             <button
-              onClick={onAddEvent}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-bold shadow-2xs active:scale-98 transition-all cursor-pointer mr-1"
+              onClick={() => {
+                goToday()
+                onRefresh()
+              }}
+              className="p-1.5 rounded-lg text-slate-600 hover:bg-white hover:shadow-2xs transition-all cursor-pointer"
+              aria-label="Refresh events and return to current month"
+              title="Refresh"
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Event</span>
+              <RefreshCw className="w-4 h-4" />
             </button>
           )}
-
-          <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200/80">
+          <div className="flex items-center gap-2">
             <button
               onClick={prevMonth}
-              className="p-1.5 rounded-lg hover:bg-white hover:shadow-2xs text-slate-600 transition-all cursor-pointer"
+              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-50 transition-all cursor-pointer"
               aria-label="Previous month"
               title="Previous Month"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
-              onClick={goToday}
-              className="px-2.5 py-1 rounded-lg text-xs font-black text-slate-700 hover:bg-white hover:shadow-2xs transition-all cursor-pointer"
-            >
-              Today
-            </button>
-            <button
               onClick={nextMonth}
-              className="p-1.5 rounded-lg hover:bg-white hover:shadow-2xs text-slate-600 transition-all cursor-pointer"
+              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-50 transition-all cursor-pointer"
               aria-label="Next month"
               title="Next Month"
             >
@@ -164,7 +155,7 @@ export const EventsCalendar: React.FC<EventsCalendarProps> = ({
 
       {/* ── Calendar Dates Grid (Strict 7-column grid with 1px border gap) ── */}
       <div
-        className="w-full bg-slate-200/70"
+        className="w-full flex-1 min-h-0 bg-slate-200/70"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',

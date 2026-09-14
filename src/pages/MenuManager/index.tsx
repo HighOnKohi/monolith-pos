@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Search, Plus, Edit2, Trash2 } from 'lucide-react'
+import { Search, Plus, Edit2, Trash2, ChevronDown, Pencil } from 'lucide-react'
 import { useMenu } from '@/hooks/useMenu'
 import {
   createMenuItem,
@@ -8,28 +8,27 @@ import {
   updateMenuItem,
   updateCategory,
   deleteCategory,
-  createMenuItemGroup,
   fetchMenuItemGroups,
   updateMenuItemGroup,
   deleteMenuItemGroup,
-  type MenuItemGroup,
+  updateMenuPreset,
+  deleteMenuPreset,
+  type MenuItemGroup
 } from '@/services/menuService'
 import type { MenuItem, Category } from '@/types/menu'
 import { categoryIconMap, categoryIcons, NewMenuCategoryModal } from '@/components/menu/NewMenuCategoryModal'
 import { NewMenuItemModal, type NewMenuItemForm } from '@/components/menu/NewMenuItemModal'
-import { NewMenuGroupModal, type MenuGroupValue, type NewMenuGroupForm } from '@/components/menu/NewMenuGroupModal'
 import { ConfirmModal } from '@/components/menu/ConfirmModal'
 
 export default function MenuManagerPage() {
-  const { items, categories, loadState, setItems, setCategories, reload } = useMenu()
+  const { items, categories, loadState, setItems, setCategories, reload, presets, activePresetId, setActivePresetId, createPreset } = useMenu()
 
   const [activeCat, setActiveCat]             = useState<string>('all')
   const [editingItem, setEditingItem]         = useState<MenuItem | null>(null)
   const [isCategoryModalOpen, setCategoryModalOpen] = useState(false)
   const [editingCategory, setEditingCategory]       = useState<Category | null>(null)
   const [isItemModalOpen, setItemModalOpen]   = useState(false)
-  const [isGroupModalOpen, setGroupModalOpen] = useState(false)
-  const [editingGroup, setEditingGroup] = useState<MenuGroupValue | null>(null)
+  const [editingGroup, setEditingGroup] = useState<MenuItemGroup | null>(null)
   const [isEditModalOpen, setEditModalOpen]   = useState(false)
   const [groups, setGroups] = useState<MenuItemGroup[]>([])
   const [search, setSearch]             = useState('')
@@ -37,6 +36,9 @@ export default function MenuManagerPage() {
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
   const [selectedGroup, setSelectedGroup] = useState<MenuItemGroup | null>(null)
   const [availabilitySaving, setAvailabilitySaving] = useState<string | null>(null)
+  const [isPresetModalOpen, setPresetModalOpen] = useState(false)
+  const [isPresetDropdownOpen, setPresetDropdownOpen] = useState(false)
+  const [presetName, setPresetName] = useState('')
 
   // Confirm modal state
   const [confirmState, setConfirmState] = useState<{
@@ -51,25 +53,6 @@ export default function MenuManagerPage() {
   useEffect(() => {
     void fetchMenuItemGroups().then(setGroups).catch(() => setGroups([]))
   }, [])
-
-  async function submitGroup(form: NewMenuGroupForm) {
-    if (editingGroup) {
-      await updateMenuItemGroup(editingGroup.id, form)
-      showToast(`Updated "${form.name}".`, 'success')
-    } else {
-      await createMenuItemGroup(form)
-      showToast(`Added "${form.name}".`, 'success')
-    }
-    const updatedGroups = await fetchMenuItemGroups()
-    setGroups(updatedGroups)
-    if (editingGroup) {
-      const refreshed = updatedGroups.find((g) => g.id === editingGroup.id)
-      if (refreshed) {
-        setSelectedGroup(refreshed)
-      }
-    }
-    setEditingGroup(null)
-  }
 
   async function handleDeleteGroup(group: MenuItemGroup) {
     setConfirmState({
@@ -93,21 +76,25 @@ export default function MenuManagerPage() {
 
   // ── Filtered items ─────────────────────────────────────────────────────────
   const filtered = items.filter((item) => {
+    if (item.presetId !== activePresetId) return false
     if (search.trim() !== '') return item.name.toLowerCase().includes(search.toLowerCase())
     return activeCat === 'all' || item.categoryId === activeCat
   })
   const filteredGroups = groups.filter((group) => {
+    if (group.presetId !== activePresetId) return false
     if (search.trim() !== '') return group.name.toLowerCase().includes(search.toLowerCase())
     return activeCat === 'all' || group.categoryId === activeCat
   })
-  const categoryCounts = [...items, ...groups].reduce<Record<string, number>>((counts, item) => {
+  const presetItems = items.filter((item) => item.presetId === activePresetId)
+  const presetGroups = groups.filter((group) => group.presetId === activePresetId)
+  const categoryCounts = [...presetItems, ...presetGroups].reduce<Record<string, number>>((counts, item) => {
     const categoryId = 'categoryId' in item ? item.categoryId : ''
     if (categoryId) counts[categoryId] = (counts[categoryId] ?? 0) + 1
     return counts
   }, {})
   const displayCategories = categories.map((category) => ({
     ...category,
-    count: category.id === 'all' ? items.length + groups.length : categoryCounts[category.id] ?? 0,
+    count: category.id === 'all' ? presetItems.length + presetGroups.length : categoryCounts[category.id] ?? 0,
   }))
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
@@ -126,11 +113,38 @@ export default function MenuManagerPage() {
     setSelectedItem((current) => current?.id === item.id ? updated : current)
     try {
       await updateMenuItem(item.id, { isAvailable })
+      const updatedGroups = await fetchMenuItemGroups()
+      setGroups(updatedGroups)
+      setSelectedGroup((current) => {
+        if (!current) return current
+        return updatedGroups.find((group) => group.id === current.id) ?? current
+      })
       reload()
       showToast(`${item.name} is now ${isAvailable ? 'available' : 'not available'}.`, 'success')
     } catch (err: unknown) {
       setItems((current) => current.map((entry) => entry.id === item.id ? previous : entry))
       setSelectedItem((current) => current?.id === item.id ? previous : current)
+      showToast(err instanceof Error ? err.message : 'Failed to update availability.', 'error')
+    } finally {
+      setAvailabilitySaving(null)
+    }
+  }
+
+  async function handleGroupAvailabilityChange(group: MenuItemGroup, isAvailable: boolean) {
+    const previous = group
+    const updated = { ...group, status: isAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK' }
+    setAvailabilitySaving(group.id)
+    setGroups((current) => current.map((entry) => entry.id === group.id ? updated : entry))
+    setSelectedGroup((current) => current?.id === group.id ? updated : current)
+    try {
+      await updateMenuItem(group.id, { isAvailable })
+      const updatedGroups = await fetchMenuItemGroups()
+      setGroups(updatedGroups)
+      setSelectedGroup(updatedGroups.find((entry) => entry.id === group.id) ?? updated)
+      showToast(`${group.name} is now ${isAvailable ? 'available' : 'not available'}.`, 'success')
+    } catch (err: unknown) {
+      setGroups((current) => current.map((entry) => entry.id === group.id ? previous : entry))
+      setSelectedGroup((current) => current?.id === group.id ? previous : current)
       showToast(err instanceof Error ? err.message : 'Failed to update availability.', 'error')
     } finally {
       setAvailabilitySaving(null)
@@ -167,7 +181,9 @@ export default function MenuManagerPage() {
         dietaryType: form.dietaryType,
         isAvailable: form.isAvailable,
         imageUrl:    form.imageUrl,
-        description: form.description,
+        description:    form.description,
+        orderLimit:     form.orderLimit,
+        itemIds:        form.itemIds,
       })
       reload()
       showToast(`Updated "${form.name}" successfully!`, 'success')
@@ -208,7 +224,7 @@ export default function MenuManagerPage() {
       const temporaryCategory: Category = { id: temporaryId, name, icon, count: 0 }
       setCategories((current) => [...current, temporaryCategory])
       try {
-        await createCategory(name, icon)
+        await createCategory(name, icon, activePresetId)
         reload()
         showToast(`Added "${name}".`, 'success')
       } catch (err: unknown) {
@@ -253,28 +269,46 @@ export default function MenuManagerPage() {
   }
 
   async function submitDish(form: NewMenuItemForm) {
-    const temporaryId = `temporary-${Date.now()}`
-    const optimisticItem: MenuItem = {
-      id: temporaryId,
-      code: temporaryId,
-      name: form.name,
-      price: form.price,
-      categoryId: form.categoryId,
-      dietaryType: form.dietaryType,
-      imageUrl: form.imageUrl ?? '',
-      isAvailable: form.isAvailable,
-      isSoldOut: !form.isAvailable,
-      description: form.description,
-    }
-    setItems((current) => [...current, optimisticItem])
+    await createMenuItem({ ...form, presetId: activePresetId })
+    await reload()
+    showToast(`Added "${form.name}".`, 'success')
+  }
+
+  async function handleRenamePreset(presetId: number, currentName: string) {
+    const newName = window.prompt('Enter new name for menu preset:', currentName)
+    if (!newName || !newName.trim() || newName.trim() === currentName) return
     try {
-      await createMenuItem(form)
+      await updateMenuPreset(presetId, newName.trim())
       reload()
-      showToast(`Added "${form.name}".`, 'success')
+      showToast(`Preset renamed to "${newName.trim()}".`, 'success')
     } catch (err: unknown) {
-      setItems((current) => current.filter((item) => item.id !== temporaryId))
-      throw err
+      showToast(err instanceof Error ? err.message : 'Failed to rename preset.', 'error')
     }
+  }
+
+  async function handleDeletePreset(presetId: number, presetName: string) {
+    if (presets.length <= 1) {
+      showToast('Cannot delete the only remaining preset.', 'error')
+      return
+    }
+    setConfirmState({
+      title: `Delete Preset "${presetName}"?`,
+      message: `Are you sure you want to delete the preset "${presetName}"? Items in this preset will no longer be accessible.`,
+      onConfirm: async () => {
+        setConfirmState(null)
+        try {
+          await deleteMenuPreset(presetId)
+          const remaining = presets.filter((p) => p.PRESET_ID !== presetId)
+          if (remaining.length > 0 && activePresetId === presetId) {
+            setActivePresetId(remaining[0].PRESET_ID)
+          }
+          reload()
+          showToast(`Deleted preset "${presetName}".`, 'info')
+        } catch (err: unknown) {
+          showToast(err instanceof Error ? err.message : 'Failed to delete preset.', 'error')
+        }
+      },
+    })
   }
 
   const paginated = filtered
@@ -300,8 +334,63 @@ export default function MenuManagerPage() {
           </div>
           </div>
           <div className="menu-manager-header-actions">
+            <div className="menu-preset-dropdown">
+              <button type="button" className="menu-preset-dropdown-trigger" onClick={() => setPresetDropdownOpen((open) => !open)} aria-expanded={isPresetDropdownOpen}>
+                <span className="menu-preset-dropdown-label"><span className="menu-preset-dropdown-prefix">Preset: </span>{presets.find((preset) => preset.PRESET_ID === activePresetId)?.PRESET_NAME ?? 'Default'}</span>
+                <ChevronDown className={`menu-preset-dropdown-chevron ${isPresetDropdownOpen ? 'is-open' : ''}`} />
+              </button>
+              {isPresetDropdownOpen && (
+                <div className="menu-preset-dropdown-menu">
+                  <div className="menu-preset-dropdown-options">
+                    {presets.map((preset) => {
+                      const isSelected = preset.PRESET_ID === activePresetId
+                      return (
+                        <div
+                          key={preset.PRESET_ID}
+                          className={`menu-preset-dropdown-option group ${isSelected ? 'is-selected' : ''}`}
+                          onClick={() => { setActivePresetId(preset.PRESET_ID); setPresetDropdownOpen(false) }}
+                        >
+                          <span className="truncate flex-1">{preset.PRESET_NAME}</span>
+                          <div
+                            className={`menu-preset-dropdown-actions flex items-center gap-1 ${isSelected ? 'opacity-90' : 'opacity-0 group-hover:opacity-100'}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              title="Rename Preset"
+                              className="menu-preset-action-btn"
+                              onClick={() => {
+                                setPresetDropdownOpen(false)
+                                void handleRenamePreset(preset.PRESET_ID, preset.PRESET_NAME)
+                              }}
+                            >
+                              <Pencil className="w-2.5 h-2.5" />
+                            </button>
+                            {presets.length > 1 && (
+                              <button
+                                type="button"
+                                title="Delete Preset"
+                                className="menu-preset-action-btn delete"
+                                onClick={() => {
+                                  setPresetDropdownOpen(false)
+                                  void handleDeletePreset(preset.PRESET_ID, preset.PRESET_NAME)
+                                }}
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <button type="button" className="menu-preset-dropdown-footer" onClick={() => { setPresetDropdownOpen(false); setPresetModalOpen(true) }}>
+                    <Plus className="menu-preset-dropdown-plus" /> Create a new Preset
+                  </button>
+                </div>
+              )}
+            </div>
             <button type="button" className="menu-manager-add-category" onClick={handleAddCategory}><Plus className="menu-manager-plus-icon" /> Add Category</button>
-            <button type="button" className="menu-manager-add-group" onClick={() => setGroupModalOpen(true)}><Plus className="menu-item-add-icon" /> Add Group Item</button>
             <button type="button" className="menu-manager-add-item" onClick={handleAddDish}><Plus className="menu-item-add-icon" /> Add Item</button>
           </div>
         </div>
@@ -374,8 +463,25 @@ export default function MenuManagerPage() {
                   ].join(' ')}
                   onClick={() => { setSelectedGroup(group); setSelectedItem(null) }}
                 >
-                  <div className="menu-item-image-container h-32 w-full overflow-hidden"><img src={group.imageUrl} alt={group.name} className="menu-item-image h-full w-full object-cover" /></div>
-                  <div className="flex flex-col gap-1 pt-2"><p className="menu-item-name text-sm font-semibold text-[#14274E] line-clamp-2">{group.name}</p><div className="flex items-center justify-between"><span className="menu-item-price text-sm font-bold text-[#14274E]">₱{group.price.toFixed(2)}</span><span className="text-[10px] font-semibold text-[#14274E]">Group</span></div></div>
+                  {group.status === 'OUT_OF_STOCK' && (
+                    <div className="absolute top-2 right-2 z-10 rounded-md bg-[#C94A4A] px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                      SOLD OUT
+                    </div>
+                  )}
+                  <div className="menu-item-image-container h-32 w-full overflow-hidden">
+                    <img
+                      src={group.imageUrl}
+                      alt={group.name}
+                      className={`menu-item-image h-full w-full object-cover ${group.status === 'OUT_OF_STOCK' ? 'opacity-60 grayscale-[40%]' : ''}`}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1 pt-2">
+                    <p className="menu-item-name text-sm font-semibold text-[#14274E] line-clamp-2">{group.name}</p>
+                    <div className="flex items-center justify-between">
+                      <span className="menu-item-price text-sm font-bold text-[#14274E]">₱{group.price.toFixed(2)}</span>
+                      <span className="text-[10px] font-semibold text-[#14274E]">Group</span>
+                    </div>
+                  </div>
                 </div>
               ))}
               {paginated.map((item) => (
@@ -443,48 +549,77 @@ export default function MenuManagerPage() {
       <aside className="menu-manager-sidebar">
         {selectedGroup ? (
           <div className="menu-manager-sidebar-content">
-            <div className="menu-manager-sidebar-heading">
-              <h2>Group Details</h2>
+            <div className="menu-manager-sidebar-hero">
+              <img className="menu-manager-sidebar-image" src={selectedGroup.imageUrl} alt={selectedGroup.name} />
+              <div className="menu-manager-sidebar-title">
+                <div>
+                  <h3>{selectedGroup.name}</h3>
+                  <p className="menu-manager-sidebar-category">
+                    {categories.find(category => category.id === selectedGroup.categoryId)?.name ?? 'Uncategorized'}
+                  </p>
+                </div>
+                <strong>₱{selectedGroup.price.toFixed(2)}</strong>
+              </div>
             </div>
-            <img className="menu-manager-sidebar-image" src={selectedGroup.imageUrl} alt={selectedGroup.name} />
-            <h3>{selectedGroup.name}</h3>
-            <p className="menu-manager-sidebar-category">
-              {categories.find(category => category.id === selectedGroup.categoryId)?.name ?? 'Uncategorized'}
-            </p>
-            <p className="menu-manager-sidebar-price">₱{selectedGroup.price.toFixed(2)}</p>
-            <dl className="menu-manager-sidebar-details">
+            <div className="menu-manager-sidebar-summary">
+              <span>Description</span>
+              <p>{selectedGroup.description || 'No description available.'}</p>
+            </div>
+            <div className="menu-manager-sidebar-meta">
               <div>
-                <dt>Description</dt>
-                <dd>{selectedGroup.description || 'No description available.'}</dd>
+                <span>Dietary</span>
+                <strong>Varied</strong>
               </div>
               <div>
-                <dt>Items Included ({selectedGroup.itemNames.length})</dt>
-                <dd className="mt-1.5">
-                  <ul className="space-y-1.5">
-                    {selectedGroup.itemNames.map((name, idx) => (
-                      <li
-                        key={idx}
-                        className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200/80 text-xs font-bold text-[#14274E]"
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full bg-[#14274E]/80 shrink-0" />
-                        <span className="truncate">{name}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </dd>
+                <span>Menu type</span>
+                <strong>Item group</strong>
               </div>
-              <div>
-                <dt>Availability</dt>
-                <dd>{selectedGroup.status}</dd>
-              </div>
-            </dl>
+            </div>
+            {selectedGroup.itemNames.length > 0 && (
+              <section className="menu-manager-sidebar-included">
+                <div className="menu-manager-sidebar-section-title">
+                  <span>Items Included</span>
+                  <strong>{selectedGroup.itemNames.length}</strong>
+                </div>
+                <ul>
+                  {selectedGroup.itemNames.map((name, idx) => (
+                    <li
+                      key={selectedGroup.itemIds[idx] ?? name}
+                      className={selectedGroup.itemAvailability[idx] === false ? 'is-unavailable' : ''}
+                    >
+                      {selectedGroup.itemImages[idx] ? (
+                        <img src={selectedGroup.itemImages[idx]} alt="" />
+                      ) : (
+                        <span className="menu-manager-sidebar-item-placeholder" />
+                      )}
+                      <span className="menu-manager-sidebar-item-name">{name}</span>
+                      {selectedGroup.itemAvailability[idx] === false && (
+                        <strong className="menu-manager-sidebar-item-status">Sold Out</strong>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+            <label className="menu-sidebar-availability-toggle">
+              <span>Availability</span>
+              <span className="menu-sidebar-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={selectedGroup.status !== 'OUT_OF_STOCK'}
+                  disabled={availabilitySaving === selectedGroup.id}
+                  onChange={(event) => void handleGroupAvailabilityChange(selectedGroup, event.target.checked)}
+                />
+                <span>{selectedGroup.status !== 'OUT_OF_STOCK' ? 'Available' : 'Not Available'}</span>
+              </span>
+            </label>
             <footer className="menu-manager-sidebar-footer">
               <div className="menu-manager-sidebar-actions">
                 <button
                   type="button"
                   onClick={() => {
                     setEditingGroup(selectedGroup)
-                    setGroupModalOpen(true)
+                    setItemModalOpen(true)
                   }}
                 >
                   <Edit2 /> Edit
@@ -505,18 +640,32 @@ export default function MenuManagerPage() {
           </div>
         ) : (
           <div className="menu-manager-sidebar-content">
-            <div className="menu-manager-sidebar-heading">
-              <h2>Item Details</h2>
+            <div className="menu-manager-sidebar-hero">
+              <img className="menu-manager-sidebar-image" src={selectedItem.imageUrl} alt={selectedItem.name} />
+              <div className="menu-manager-sidebar-title">
+                <div>
+                  <h3>{selectedItem.name}</h3>
+                  <p className="menu-manager-sidebar-category">
+                    {categories.find(category => category.id === selectedItem.categoryId)?.name ?? 'Uncategorized'}
+                  </p>
+                </div>
+                <strong>₱{selectedItem.price.toFixed(2)}</strong>
+              </div>
             </div>
-            <img className="menu-manager-sidebar-image" src={selectedItem.imageUrl} alt={selectedItem.name} />
-            <h3>{selectedItem.name}</h3>
-            <p className="menu-manager-sidebar-category">{categories.find(category => category.id === selectedItem.categoryId)?.name ?? 'Uncategorized'}</p>
-            <p className="menu-manager-sidebar-price">₱{selectedItem.price.toFixed(2)}</p>
-            <dl className="menu-manager-sidebar-details">
-              <div><dt>Description</dt><dd>{selectedItem.description || 'No description available.'}</dd></div>
-              <div><dt>Dietary</dt><dd>{selectedItem.dietaryType === 'veg' ? 'Vegetarian' : 'Non-vegetarian'}</dd></div>
-              <div><dt>Availability</dt><dd>{selectedItem.isAvailable ? 'Available' : 'Not Available'}</dd></div>
-            </dl>
+            <div className="menu-manager-sidebar-summary">
+              <span>Description</span>
+              <p>{selectedItem.description || 'No description available.'}</p>
+            </div>
+            <div className="menu-manager-sidebar-meta">
+              <div>
+                <span>Dietary</span>
+                <strong>{selectedItem.dietaryType === 'veg' ? 'Vegetarian' : 'Non-vegetarian'}</strong>
+              </div>
+              <div>
+                <span>Menu type</span>
+                <strong>Single item</strong>
+              </div>
+            </div>
             <label className="menu-sidebar-availability-toggle">
               <span>Availability</span>
               <span className="menu-sidebar-toggle-row">
@@ -559,9 +708,14 @@ export default function MenuManagerPage() {
     <NewMenuItemModal
       isOpen={isEditModalOpen}
       categories={categories}
+      items={items}
       editItem={editingItem}
       onClose={() => { setEditModalOpen(false); setEditingItem(null) }}
-      onSubmit={submitEdit}
+      onSubmit={async (form) => {
+        await submitEdit(form)
+        setEditModalOpen(false)
+        setEditingItem(null)
+      }}
     />
 
     <NewMenuCategoryModal
@@ -570,21 +724,55 @@ export default function MenuManagerPage() {
       onClose={() => { setCategoryModalOpen(false); setEditingCategory(null) }}
       onSubmit={submitCategory}
     />
-    <NewMenuGroupModal
-      isOpen={isGroupModalOpen}
-      items={items}
-      categories={categories}
-      editGroup={editingGroup}
-      onClose={() => { setGroupModalOpen(false); setEditingGroup(null) }}
-      onSubmit={submitGroup}
-    />
     <NewMenuItemModal
       isOpen={isItemModalOpen}
       categories={categories}
+      items={items}
+      editGroup={editingGroup}
       defaultCategoryId={selectedCategoryId}
-      onClose={() => setItemModalOpen(false)}
-      onSubmit={submitDish}
+      onClose={() => { setItemModalOpen(false); setEditingGroup(null) }}
+      onSubmit={async (form) => {
+        if (editingGroup) {
+          await updateMenuItemGroup(editingGroup.id, {
+            name: form.name,
+            description: form.description ?? '',
+            price: form.price,
+            imageUrl: form.imageUrl,
+            status: form.isAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK',
+            orderLimit: form.orderLimit,
+            categoryId: form.categoryId,
+            itemIds: form.itemIds,
+          })
+          const updatedGroups = await fetchMenuItemGroups()
+          setGroups(updatedGroups)
+          setSelectedGroup(updatedGroups.find((group) => group.id === editingGroup.id) ?? null)
+          showToast(`Updated "${form.name}".`, 'success')
+        } else {
+          await submitDish(form)
+          }
+      }}
     />
+
+    {isPresetModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 animate-backdrop-fade" onClick={() => setPresetModalOpen(false)}>
+        <form className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl animate-modal-pop" onClick={(event) => event.stopPropagation()} onSubmit={async (event) => {
+          event.preventDefault()
+          if (!presetName.trim()) return
+          try {
+            const preset = await createPreset(presetName.trim())
+            setActivePresetId(preset.PRESET_ID)
+            setPresetName('')
+            setPresetModalOpen(false)
+            reload()
+            showToast(`Created preset "${preset.PRESET_NAME}".`, 'success')
+          } catch (err) { showToast(err instanceof Error ? err.message : 'Failed to create preset.', 'error') }
+        }}>
+          <h2 className="mb-3 text-lg font-bold text-[#14274E]">Create a new Preset</h2>
+          <input required value={presetName} onChange={(event) => setPresetName(event.target.value)} placeholder="Preset name" className="mb-2 w-full rounded-lg border p-2" />
+          <div className="flex justify-end gap-2"><button type="button" onClick={() => setPresetModalOpen(false)} className="rounded-lg px-3 py-2">Cancel</button><button type="submit" className="rounded-lg bg-[#14274E] px-3 py-2 text-white">Save</button></div>
+        </form>
+      </div>
+    )}
 
     <ConfirmModal
       isOpen={confirmState !== null}

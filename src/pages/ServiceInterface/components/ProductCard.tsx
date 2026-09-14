@@ -59,6 +59,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         </div>
       </div>
 
+      {item.isItemGroup && item.includedItemNames && item.includedItemNames.length > 0 && (
+        <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+          {item.includedItemNames.join(' • ')}
+        </p>
+      )}
+
       {/* Item Title */}
       <h4
         className="text-base font-extrabold text-[#14274E] mb-1 line-clamp-1 leading-snug"

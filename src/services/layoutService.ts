@@ -66,6 +66,7 @@ function mapPresetRow(row: Record<string, any>): LayoutPreset {
 
 export async function fetchAllPresets(): Promise<LayoutPreset[]> {
   const { data, error } = await supabase
+    .schema('tables')
     .from('Table_Layout_Presets')
     .select('*')
     .order('CREATED_AT', { ascending: false })
@@ -76,6 +77,7 @@ export async function fetchAllPresets(): Promise<LayoutPreset[]> {
 
 export async function fetchActivePreset(): Promise<LayoutPreset | null> {
   const { data, error } = await supabase
+    .schema('tables')
     .from('Table_Layout_Presets')
     .select('*')
     .eq('IS_ACTIVE', true)
@@ -87,6 +89,7 @@ export async function fetchActivePreset(): Promise<LayoutPreset | null> {
 
 export async function fetchPresetById(presetId: number): Promise<LayoutPreset | null> {
   const { data, error } = await supabase
+    .schema('tables')
     .from('Table_Layout_Presets')
     .select('*')
     .eq('PRESET_ID', presetId)
@@ -142,11 +145,11 @@ export async function createPreset(
     insertPayload['EVENT_ID'] = eventId
   }
 
-  let res = await supabase.from('Table_Layout_Presets').insert(insertPayload).select().single()
+  let res = await supabase.schema('tables').from('Table_Layout_Presets').insert(insertPayload).select().single()
 
   if (res.error && eventId != null && res.error.message.includes('EVENT_ID')) {
     delete insertPayload['EVENT_ID']
-    res = await supabase.from('Table_Layout_Presets').insert(insertPayload).select().single()
+    res = await supabase.schema('tables').from('Table_Layout_Presets').insert(insertPayload).select().single()
   }
 
   if (res.error || !res.data) throw res.error ?? new Error('Failed to create preset.')
@@ -207,6 +210,7 @@ export async function updatePreset(
   }
 
   let res = await supabase
+    .schema('tables')
     .from('Table_Layout_Presets')
     .update(payload)
     .eq('PRESET_ID', presetId)
@@ -216,6 +220,7 @@ export async function updatePreset(
   if (res.error && fields.eventId !== undefined && res.error.message.includes('EVENT_ID')) {
     delete payload['EVENT_ID']
     res = await supabase
+      .schema('tables')
       .from('Table_Layout_Presets')
       .update(payload)
       .eq('PRESET_ID', presetId)
@@ -236,6 +241,7 @@ export async function linkPresetToEvent(presetId: number, eventId: number | null
 
 export async function deletePreset(presetId: number): Promise<void> {
   const { error } = await supabase
+    .schema('tables')
     .from('Table_Layout_Presets')
     .delete()
     .eq('PRESET_ID', presetId)
@@ -248,20 +254,33 @@ export async function deletePreset(presetId: number): Promise<void> {
 export async function setActivePreset(presetId: number): Promise<LayoutPreset> {
   // Deactivate all presets
   await supabase
+    .schema('tables')
     .from('Table_Layout_Presets')
     .update({ IS_ACTIVE: false })
     .eq('IS_ACTIVE', true)
 
   // Activate the selected one
   const { data, error } = await supabase
+    .schema('tables')
     .from('Table_Layout_Presets')
     .update({ IS_ACTIVE: true, UPDATED_AT: new Date().toISOString() })
     .eq('PRESET_ID', presetId)
     .select()
     .single()
 
-  if (error || !data) throw error ?? new Error('Failed to activate preset.')
-  return data as LayoutPreset
+  if (error) throw error
+  return mapPresetRow(data)
+}
+
+/** Clear active status from all presets */
+export async function clearActivePreset(): Promise<void> {
+  const { error } = await supabase
+    .schema('tables')
+    .from('Table_Layout_Presets')
+    .update({ IS_ACTIVE: false })
+    .eq('IS_ACTIVE', true)
+
+  if (error) throw error
 }
 
 // ── Apply Preset Positions to Restaurant_Tables ──────────────────────────────
@@ -279,6 +298,7 @@ export async function applyPresetPositions(
   // Batch update positions
   for (const pos of positions) {
     await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .update({
         LAYOUT_X: pos.x,
@@ -289,13 +309,14 @@ export async function applyPresetPositions(
   }
 
   // Clear positions for tables not belonging to this preset
-  const { data: allTables } = await supabase.from('Restaurant_Tables').select('TABLE_ID')
+  const { data: allTables } = await supabase.schema('tables').from('Restaurant_Tables').select('TABLE_ID')
   if (allTables) {
     const unreferencedIds = allTables
       .map((t) => Number(t.TABLE_ID))
       .filter((id) => !activeIds.has(id))
     if (unreferencedIds.length > 0) {
       await supabase
+        .schema('tables')
         .from('Restaurant_Tables')
         .update({ LAYOUT_X: null, LAYOUT_Y: null })
         .in('TABLE_ID', unreferencedIds)
@@ -310,6 +331,7 @@ export async function batchUpdateTablePositions(
 ): Promise<void> {
   for (const pos of positions) {
     const { error } = await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .update({ LAYOUT_X: pos.x, LAYOUT_Y: pos.y })
       .eq('TABLE_ID', pos.tableId)
@@ -322,6 +344,7 @@ export async function batchUpdateTablePositions(
 export async function clearTablePositions(tableIds: number[]): Promise<void> {
   if (tableIds.length === 0) return
   const { error } = await supabase
+    .schema('tables')
     .from('Restaurant_Tables')
     .update({ LAYOUT_X: null, LAYOUT_Y: null })
     .in('TABLE_ID', tableIds)

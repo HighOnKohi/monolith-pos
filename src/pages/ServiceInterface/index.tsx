@@ -8,6 +8,7 @@ import {
   deleteOrder,
 } from '@/services/orderService'
 import { useMenu } from '@/hooks/useMenu'
+import { fetchServiceMenuItems } from '@/services/menuService'
 import type { BillRequest } from '@/types/bill'
 import type { Order } from '@/types/order'
 import type { MenuItem } from '@/types/menu'
@@ -62,7 +63,37 @@ export default function CashierPage() {
   }, [])
 
   // ── 3. Menu Data Hook ──
-  const { items: liveItems, categories } = useMenu()
+  const { categories, activePresetId } = useMenu()
+  const [liveItems, setLiveItems] = useState<MenuItem[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadServiceMenu = async () => {
+      try {
+        const serviceItems = await fetchServiceMenuItems()
+        if (!cancelled) setLiveItems(serviceItems)
+      } catch (error) {
+        console.error('[ServiceInterface] Failed to load grouped menu items:', error)
+      }
+    }
+
+    void loadServiceMenu()
+    const channel = supabase
+      .channel('service-menu-groups-sync')
+      .on('postgres_changes', { event: '*', schema: 'menu', table: 'Menu_Items' }, () => void loadServiceMenu())
+      .on('postgres_changes', { event: '*', schema: 'menu', table: 'Item_Groups' }, () => void loadServiceMenu())
+      .on('postgres_changes', { event: '*', schema: 'menu', table: 'Menu_Presets' }, () => void loadServiceMenu())
+      .subscribe()
+
+    const handleOrderUpdate = () => void loadServiceMenu()
+    window.addEventListener('monolith-order-update', handleOrderUpdate)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('monolith-order-update', handleOrderUpdate)
+      void supabase.removeChannel(channel)
+    }
+  }, [])
 
   // ── 4. Punch Cart State (for cashier order entry) ──
   const [punchCart, setPunchCart] = useState<CartItem[]>([])
@@ -97,6 +128,7 @@ export default function CashierPage() {
   const loadTables = useCallback(async (): Promise<TableItem[]> => {
     try {
       const { data, error } = await supabase
+        .schema('tables')
         .from('Restaurant_Tables')
         .select('*')
         .order('TABLE_NUM')
@@ -235,9 +267,9 @@ export default function CashierPage() {
       )
       .subscribe()
 
-    // Realtime subscription for Tables
+    // Realtime subscription for Tables & Presets
     const tablesChannel = supabase
-      .channel('cashier-tables-sync')
+      .channel('service-tables-sync')
       .on(
         'postgres_changes',
         { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
@@ -245,7 +277,20 @@ export default function CashierPage() {
           loadTables()
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'tables', table: 'Table_Layout_Presets' },
+        () => {
+          loadTables()
+        }
+      )
       .subscribe()
+
+    const handleOrderUpdate = () => {
+      loadTables()
+      loadInitialData()
+    }
+    window.addEventListener('monolith-order-update', handleOrderUpdate)
 
     // Realtime subscription for Assistance broadcasts
     const assistanceChannel = supabase
@@ -266,6 +311,7 @@ export default function CashierPage() {
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('monolith-order-update', handleOrderUpdate)
       supabase.removeChannel(billChannel)
       supabase.removeChannel(ordersChannel)
       supabase.removeChannel(tablesChannel)
@@ -385,6 +431,7 @@ export default function CashierPage() {
 
       // 3. Clear table bill-out requested and mark all member tables AVAILABLE
       await supabase
+        .schema('tables')
         .from('Restaurant_Tables')
         .update({
           BILL_OUT_REQUESTED: false,
@@ -557,6 +604,7 @@ export default function CashierPage() {
   // ── 8. Filtered Items & Pagination ──
   const filteredItems = useMemo(() => {
     const list = liveItems.filter((item) => {
+      if (item.presetId !== activePresetId) return false
       // 1. Search Query
       if (searchQuery) {
         const q = searchQuery.toLowerCase()
@@ -579,7 +627,8 @@ export default function CashierPage() {
       if (!a.isBestSeller && b.isBestSeller) return 1
       return 0
     })
-  }, [liveItems, searchQuery, selectedCategory])
+  }, [liveItems, searchQuery, selectedCategory, activePresetId])
+
 
   const currentCategoryName = useMemo(() => {
     if (selectedCategory === 'all') return 'All Menu'
@@ -664,42 +713,42 @@ export default function CashierPage() {
                 mobileActiveView === 'menu' ? 'flex' : 'hidden lg:flex',
               ].join(' ')}
             >
-          {/* Header count bar for Category */}
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80 shrink-0 text-xs text-slate-500">
-            <span className="service-interface-selected-category-label font-semibold">
-              <strong className="text-[#14274E] font-extrabold">{currentCategoryName}</strong>
-              <span className="ml-1.5 text-slate-400">({filteredItems.length} dish{filteredItems.length !== 1 ? 'es' : ''})</span>
-            </span>
-          </div>
+              {/* Header count bar for Category */}
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80 shrink-0 text-xs text-slate-500">
+                <span className="service-interface-selected-category-label font-semibold">
+                  <strong className="text-[#14274E] font-extrabold">{currentCategoryName}</strong>
+                  <span className="ml-1.5 text-slate-400">({filteredItems.length} dish{filteredItems.length !== 1 ? 'es' : ''})</span>
+                </span>
+              </div>
 
-          {/* Dishes Grid — Smoothly Scrollable */}
-          <div className="flex-1 overflow-y-auto pr-1 pb-4">
-            {filteredItems.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs py-16">
-                <span className="font-bold text-sm text-slate-600 mb-1">No dishes found</span>
-                <span>Try adjusting your search or category filter.</span>
+              {/* Dishes Grid — Smoothly Scrollable */}
+              <div className="flex-1 overflow-y-auto pr-1 pb-4">
+                {filteredItems.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs py-16">
+                    <span className="font-bold text-sm text-slate-600 mb-1">No dishes found</span>
+                    <span>Try adjusting your search or category filter.</span>
+                  </div>
+                ) : (
+                  <div
+                    key={selectedCategory}
+                    className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5 pb-6"
+                  >
+                    {filteredItems.map((item) => {
+                      const cartEntry = punchCart.find((ci) => ci.item.id === item.id)
+                      const quantityInCart = cartEntry ? cartEntry.quantity : 0
+                      return (
+                        <ProductCard
+                          key={item.id}
+                          item={item}
+                          quantityInCart={quantityInCart}
+                          onAddToCart={handleAddToCart}
+                          onDecreaseQty={handleDecreasePunchQty}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div
-                key={selectedCategory}
-                className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5 pb-6"
-              >
-                {filteredItems.map((item) => {
-                  const cartEntry = punchCart.find((ci) => ci.item.id === item.id)
-                  const quantityInCart = cartEntry ? cartEntry.quantity : 0
-                  return (
-                    <ProductCard
-                      key={item.id}
-                      item={item}
-                      quantityInCart={quantityInCart}
-                      onAddToCart={handleAddToCart}
-                      onDecreaseQty={handleDecreasePunchQty}
-                    />
-                  )
-                })}
-              </div>
-            )}
-          </div>
             </div>
           </div>
         </div>

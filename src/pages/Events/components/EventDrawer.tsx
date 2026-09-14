@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   X, Save, CalendarDays, MapPin, User2, Users, Phone, Mail,
-  Clock, FileText, Pencil, Trash2, Tag, Palette, BanIcon, Layout,
+  Clock, FileText, Pencil, Trash2, Tag, Palette, BanIcon, Layout, UtensilsCrossed,
 } from 'lucide-react'
 import type { RestaurantEvent, EventFormData, EventConflict } from '@/types/event'
 import { EVENT_CATEGORIES, EVENT_FORM_DEFAULTS } from '@/types/event'
 import { checkEventConflicts, checkDuplicateEventTitle } from '@/services/eventService'
-import { fetchAllPresets, type LayoutPreset } from '@/services/layoutService'
+import { fetchAllLayoutPresets, type TableLayoutPreset } from '@/services/tableLayoutService'
+import { fetchMenuPresets, type MenuPreset } from '@/services/menuService'
 import {
   deriveEventStatus,
   getEventStatusBadge,
@@ -81,14 +82,18 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
   const [conflicts, setConflicts] = useState<EventConflict[]>([])
   const [conflictLoading, setConflictLoading] = useState(false)
   const [conflictChecked, setConflictChecked] = useState(false)
-  const [presets, setPresets] = useState<LayoutPreset[]>([])
+  const [presets, setPresets] = useState<TableLayoutPreset[]>([])
+  const [menuPresets, setMenuPresets] = useState<MenuPreset[]>([])
 
-  // Load layout presets for linking
+  // Load layout & menu presets for linking
   useEffect(() => {
     if (!isOpen) return
-    fetchAllPresets()
+    fetchAllLayoutPresets()
       .then(setPresets)
       .catch(() => setPresets([]))
+    fetchMenuPresets()
+      .then(setMenuPresets)
+      .catch(() => setMenuPresets([]))
   }, [isOpen])
 
   // ESC key
@@ -115,6 +120,7 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
         endDate: defaultDate,
         location: 'Bill Shaw Restaurant',
         maxPax: '50',
+        menuPresetId: null,
       })
     } else if ((mode === 'edit' || mode === 'view') && event) {
       const pax = event.maxPax ?? event.expectedAttendees
@@ -132,6 +138,8 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
         maxPax: pax != null ? String(pax) : '50',
         expectedAttendees: pax != null ? String(pax) : '50',
         presetId: event.presetId ?? null,
+        menuPresetId: event.menuPresetId ?? null,
+        isActive: event.isActive ?? false,
         contactName: event.contactName ?? '',
         contactPhone: event.contactPhone ?? '',
         contactEmail: event.contactEmail ?? '',
@@ -210,6 +218,8 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
       errs.maxPax = 'Must be a whole number'
     } else if (paxStr && parseInt(paxStr, 10) <= 0) {
       errs.maxPax = 'Max Pax must be at least 1'
+    } else if (paxStr && parseInt(paxStr, 10) > 50) {
+      errs.maxPax = 'Max Pax cannot exceed venue capacity (50 guests max)'
     }
 
     if (form.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contactEmail)) {
@@ -267,7 +277,7 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
       />
 
       {/* Drawer */}
-      <div className="fixed inset-y-0 right-0 w-full max-w-xl bg-white shadow-2xl flex flex-col z-50 animate-in slide-in-from-right duration-250 border-l border-slate-200">
+      <div className="fixed left-1/2 top-1/2 w-[calc(100%-2rem)] max-w-xl max-h-[calc(100vh-2rem)] -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-2xl flex flex-col z-50 animate-in fade-in zoom-in-95 duration-250 border border-slate-200 overflow-hidden">
         {/* ── Drawer Header ── */}
         <div
           className="p-5 border-b border-slate-100 flex items-center justify-between shrink-0"
@@ -375,7 +385,14 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                   <DetailRow
                     icon={<Layout className="w-3.5 h-3.5" />}
                     label="Linked Table Layout"
-                    value={presets.find((p) => p.PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`}
+                    value={presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`}
+                  />
+                )}
+                {event.menuPresetId && (
+                  <DetailRow
+                    icon={<UtensilsCrossed className="w-3.5 h-3.5" />}
+                    label="Linked Menu Preset"
+                    value={menuPresets.find((m) => m.PRESET_ID === event.menuPresetId)?.PRESET_NAME ?? `Preset #${event.menuPresetId}`}
                   />
                 )}
               </div>
@@ -612,16 +629,17 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                 </div>
               </div>
 
-              {/* Max Pax & Linked Table Layout */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Max Pax & Presets */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1.5">
                   <label htmlFor="event-max-pax" className={FORM_LABEL_CLASS}>
-                    <Users className="w-3 h-3 inline mr-1" />Max Pax (Seating Limit) <span className="text-rose-500">*</span>
+                    <Users className="w-3 h-3 inline mr-1" />Max Pax <span className="text-rose-500">*</span>
                   </label>
                   <input
                     id="event-max-pax"
                     type="number"
                     min={1}
+                    max={50}
                     value={form.maxPax}
                     onChange={(e) => setField('maxPax', e.target.value)}
                     placeholder="e.g. 50"
@@ -631,7 +649,7 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                 </div>
                 <div className="space-y-1.5">
                   <label htmlFor="event-preset" className={FORM_LABEL_CLASS}>
-                    <Layout className="w-3 h-3 inline mr-1" />Linked Table Layout
+                    <Layout className="w-3 h-3 inline mr-1" />Table Layout
                   </label>
                   <select
                     id="event-preset"
@@ -639,10 +657,28 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                     onChange={(e) => setField('presetId', e.target.value ? Number(e.target.value) : null)}
                     className={formInputClass(false)}
                   >
-                    <option value="">None (Standard / Unlinked)</option>
+                    <option value="">None (Standard)</option>
                     {presets.map((p) => (
-                      <option key={p.PRESET_ID} value={p.PRESET_ID}>
-                        {p.PRESET_NAME} {p.IS_ACTIVE ? '(Active)' : ''}
+                      <option key={p.LAYOUT_PRESET_ID} value={p.LAYOUT_PRESET_ID}>
+                        {p.PRESET_NAME} {p.IS_DEFAULT ? '(Default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="event-menu-preset" className={FORM_LABEL_CLASS}>
+                    <UtensilsCrossed className="w-3 h-3 inline mr-1" />Menu Preset
+                  </label>
+                  <select
+                    id="event-menu-preset"
+                    value={form.menuPresetId ? String(form.menuPresetId) : ''}
+                    onChange={(e) => setField('menuPresetId', e.target.value ? Number(e.target.value) : null)}
+                    className={formInputClass(false)}
+                  >
+                    <option value="">None (Standard)</option>
+                    {menuPresets.map((m) => (
+                      <option key={m.PRESET_ID} value={m.PRESET_ID}>
+                        {m.PRESET_NAME}
                       </option>
                     ))}
                   </select>

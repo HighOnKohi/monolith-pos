@@ -71,7 +71,7 @@ export async function assertCapacityLimit(
     return
   }
 
-  const { data, error } = await supabase.from('Restaurant_Tables').select('GUEST_CAPACITY')
+  const { data, error } = await supabase.schema('tables').from('Restaurant_Tables').select('GUEST_CAPACITY')
   if (error) throw error
   const current = (data ?? []).reduce((sum, table) => sum + Number(table.GUEST_CAPACITY ?? 0), 0)
   if (current + additionalCapacity > limit) {
@@ -95,7 +95,7 @@ export function cacheTables(tables: TableData[]): void {
 
 export async function fetchAllTables(): Promise<TableData[]> {
   const { data, error } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('*')
     .order('TABLE_NUM')
 
@@ -106,7 +106,7 @@ export async function fetchAllTables(): Promise<TableData[]> {
 export async function fetchTablesByIds(ids: number[]): Promise<TableData[]> {
   if (ids.length === 0) return []
   const { data, error } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('*')
     .in('TABLE_ID', ids)
     .order('TABLE_NUM')
@@ -116,7 +116,7 @@ export async function fetchTablesByIds(ids: number[]): Promise<TableData[]> {
 
 export async function fetchTableWithOrders(tableId: number): Promise<TableWithOrders | null> {
   const { data: tableData, error: tableError } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('*')
     .eq('TABLE_ID', tableId)
     .maybeSingle()
@@ -172,14 +172,14 @@ export async function createTable(tableNum: number, capacity: number): Promise<T
   if (!Number.isInteger(tableNum) || tableNum < 1) throw new Error('Table number must be a positive integer.')
 
   const { data: existing } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('TABLE_ID')
     .eq('TABLE_NUM', tableNum)
     .maybeSingle()
   if (existing) throw new Error(`Table ${tableNum} already exists.`)
 
   const { data: lastTable } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('TABLE_ID')
     .order('TABLE_ID', { ascending: false })
     .limit(1)
@@ -187,7 +187,7 @@ export async function createTable(tableNum: number, capacity: number): Promise<T
   const nextTableId = Number(lastTable?.TABLE_ID ?? 0) + 1
 
   const { data, error } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .insert({
       TABLE_ID: nextTableId,
       TABLE_NUM: tableNum,
@@ -233,7 +233,7 @@ export async function batchCreateTables(
 
   // Find which nums already exist
   const { data: existingData } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('*')
     .in('TABLE_NUM', nums)
 
@@ -277,7 +277,7 @@ export async function batchCreateTables(
   // Update reactivated tables
   for (const table of reactivatedTables) {
     await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .update({ GUEST_CAPACITY: table.GUEST_CAPACITY, STATUS: 'AVAILABLE' })
       .eq('TABLE_ID', table.TABLE_ID)
   }
@@ -286,7 +286,7 @@ export async function batchCreateTables(
 
   if (toCreateItems.length > 0) {
     const { data: lastTable } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .select('TABLE_ID')
       .order('TABLE_ID', { ascending: false })
       .limit(1)
@@ -303,7 +303,7 @@ export async function batchCreateTables(
       MERGE_GROUP_ID: null,
     }))
 
-    const { data, error } = await supabase.from('Restaurant_Tables').insert(rows).select()
+    const { data, error } = await supabase.schema('tables').from('Restaurant_Tables').insert(rows).select()
     if (error) throw error
     if (data) createdList = [...createdList, ...(data as TableData[])]
   }
@@ -325,7 +325,7 @@ export async function updateTable(
   // Check if this table is part of a merge group (as anchor or secondary)
   const anchorId = current.MERGE_GROUP_ID ?? current.TABLE_ID
   const { data: secondariesData, error: secErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('*')
     .eq('MERGE_GROUP_ID', anchorId)
 
@@ -367,7 +367,7 @@ export async function updateTable(
   // Validate tableNum (tableNum applies to the specific table selected)
   if (fields.tableNum !== undefined && fields.tableNum !== current.TABLE_NUM) {
     const { data: dup } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .select('TABLE_ID')
       .eq('TABLE_NUM', fields.tableNum)
       .neq('TABLE_ID', tableId)
@@ -375,7 +375,7 @@ export async function updateTable(
     if (dup) throw new Error(`Table ${fields.tableNum} already exists.`)
 
     const { error: numErr } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .update({ TABLE_NUM: fields.tableNum })
       .eq('TABLE_ID', tableId)
     if (numErr) throw numErr
@@ -384,7 +384,7 @@ export async function updateTable(
   // Update capacity (only for non-merged single tables)
   if (fields.capacity !== undefined && !isMerged) {
     const { error: capErr } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .update({ GUEST_CAPACITY: fields.capacity })
       .eq('TABLE_ID', tableId)
     if (capErr) throw capErr
@@ -397,7 +397,7 @@ export async function updateTable(
     if (isMerged) {
       // For merged groups: store guest count on anchor table; ensure secondaries have 0
       const { error: anchorPaxErr } = await supabase
-        .from('Restaurant_Tables')
+        .schema('tables').from('Restaurant_Tables')
         .update({ CURRENT_GUEST_COUNT: newPax })
         .eq('TABLE_ID', anchorId)
       if (anchorPaxErr) throw anchorPaxErr
@@ -405,7 +405,7 @@ export async function updateTable(
       if (secondaries.length > 0) {
         const secIds = secondaries.map((s) => s.TABLE_ID)
         await supabase
-          .from('Restaurant_Tables')
+          .schema('tables').from('Restaurant_Tables')
           .update({ CURRENT_GUEST_COUNT: 0 })
           .in('TABLE_ID', secIds)
       }
@@ -413,7 +413,7 @@ export async function updateTable(
       // If newPax > 0 and group status was AVAILABLE or RESERVED, update all members to OCCUPIED
       if (newPax > 0 && (anchorTable.STATUS === 'AVAILABLE' || anchorTable.STATUS === 'RESERVED')) {
         const { error: statusErr } = await supabase
-          .from('Restaurant_Tables')
+          .schema('tables').from('Restaurant_Tables')
           .update({ STATUS: 'OCCUPIED' })
           .in('TABLE_ID', targetIds)
         if (statusErr) throw statusErr
@@ -425,7 +425,7 @@ export async function updateTable(
         payload.STATUS = 'OCCUPIED'
       }
       const { error: paxErr } = await supabase
-        .from('Restaurant_Tables')
+        .schema('tables').from('Restaurant_Tables')
         .update(payload)
         .eq('TABLE_ID', tableId)
       if (paxErr) throw paxErr
@@ -449,7 +449,7 @@ export async function setTableStatus(
   status: TableStatus,
 ): Promise<TableData[]> {
   const { data: current, error: fetchErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('TABLE_ID, TABLE_NUM, STATUS, CURRENT_GUEST_COUNT, MERGE_GROUP_ID')
     .eq('TABLE_ID', tableId)
     .maybeSingle()
@@ -460,7 +460,7 @@ export async function setTableStatus(
   // Resolve all tables belonging to the merge group
   const anchorId = current.MERGE_GROUP_ID ?? current.TABLE_ID
   const { data: secondaries } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('TABLE_ID')
     .eq('MERGE_GROUP_ID', anchorId)
 
@@ -502,7 +502,7 @@ export async function setTableStatus(
   }
 
   const { error: updateErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .update(payload)
     .in('TABLE_ID', targetIds)
 
@@ -535,7 +535,7 @@ export interface ReservationData {
 
 export async function reserveTable(tableId: number, reservation: ReservationData): Promise<TableData[]> {
   const { data: current, error: fetchErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('TABLE_ID, GUEST_CAPACITY, TABLE_NUM, STATUS, MERGE_GROUP_ID, RESERVED_SINCE')
     .eq('TABLE_ID', tableId)
     .maybeSingle()
@@ -559,7 +559,7 @@ export async function reserveTable(tableId: number, reservation: ReservationData
 
   const anchorId = (current as { MERGE_GROUP_ID: number | null }).MERGE_GROUP_ID ?? tableId
   const { data: members, error: membersErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('TABLE_ID')
     .eq('MERGE_GROUP_ID', anchorId)
   if (membersErr) throw membersErr
@@ -579,7 +579,7 @@ export async function reserveTable(tableId: number, reservation: ReservationData
   if (reservationError || !reservationRow) throw reservationError ?? new Error('Failed to save reservation.')
 
   const { error } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .update({ STATUS: 'RESERVED', RESERVED_SINCE: new Date().toISOString() })
     .in('TABLE_ID', targetIds)
 
@@ -589,7 +589,7 @@ export async function reserveTable(tableId: number, reservation: ReservationData
 
 export async function cancelReservation(tableId: number): Promise<TableData[]> {
   const { data: current, error: fetchErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('MERGE_GROUP_ID')
     .eq('TABLE_ID', tableId)
     .maybeSingle()
@@ -598,14 +598,14 @@ export async function cancelReservation(tableId: number): Promise<TableData[]> {
 
   const anchorId = current.MERGE_GROUP_ID ?? tableId
   const { data: members, error: membersErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('TABLE_ID')
     .eq('MERGE_GROUP_ID', anchorId)
   if (membersErr) throw membersErr
 
   const targetIds = [anchorId, ...(members ?? []).map((member) => Number(member.TABLE_ID))]
   const { error } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .update({
       STATUS: 'AVAILABLE',
       RESERVED_SINCE: null,
@@ -639,7 +639,7 @@ export async function deleteTables(tableIds: number[]): Promise<BulkDeleteResult
     }
 
     const { data: secondaries } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .select('TABLE_ID')
       .eq('MERGE_GROUP_ID', table.TABLE_ID)
 
@@ -661,7 +661,7 @@ export async function deleteTables(tableIds: number[]): Promise<BulkDeleteResult
   }
 
   if (toDelete.length > 0) {
-    const { error } = await supabase.from('Restaurant_Tables').delete().in('TABLE_ID', toDelete)
+    const { error } = await supabase.schema('tables').from('Restaurant_Tables').delete().in('TABLE_ID', toDelete)
     if (error) throw error
     result.deleted.push(...toDelete)
   }
@@ -701,7 +701,7 @@ export async function bulkEditTables(
       }
 
       const { data, error } = await supabase
-        .from('Restaurant_Tables')
+        .schema('tables').from('Restaurant_Tables')
         .update({ GUEST_CAPACITY: fields.capacity })
         .eq('TABLE_ID', table.TABLE_ID)
         .select()
@@ -757,7 +757,7 @@ export async function previewMerge(tableIds: number[]): Promise<MergePreview> {
   }
 
   const { data: tables, error } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('*')
     .in('TABLE_ID', tableIds)
     .order('TABLE_NUM')
@@ -771,7 +771,7 @@ export async function previewMerge(tableIds: number[]): Promise<MergePreview> {
 
   if (tableIds.length > 0) {
     const { data: secondaries } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .select('TABLE_ID')
       .in('MERGE_GROUP_ID', tableIds)
     ;(secondaries ?? []).forEach((s) => allMemberIds.add(Number(s.TABLE_ID)))
@@ -779,14 +779,14 @@ export async function previewMerge(tableIds: number[]): Promise<MergePreview> {
   if (groupIds.length > 0) {
     allMemberIds = new Set([...allMemberIds, ...groupIds])
     const { data: siblings } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .select('TABLE_ID')
       .in('MERGE_GROUP_ID', groupIds)
     ;(siblings ?? []).forEach((s) => allMemberIds.add(Number(s.TABLE_ID)))
   }
 
   const { data: allData } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('*')
     .in('TABLE_ID', [...allMemberIds])
     .order('TABLE_NUM')
@@ -844,7 +844,7 @@ export async function mergeTables(tableIds: number[]): Promise<TableData[]> {
   // 2. Update primary
   const hasBillOut = preview.allMembers.some((t) => Boolean(t.BILL_OUT_REQUESTED))
   const { error: primaryErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .update({
       GUEST_CAPACITY: preview.totalCapacity,
       CURRENT_GUEST_COUNT: preview.totalSeatedPax,
@@ -858,7 +858,7 @@ export async function mergeTables(tableIds: number[]): Promise<TableData[]> {
   // 3. Update secondaries
   if (secondaryIds.length > 0) {
     const { error: secErr } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .update({ MERGE_GROUP_ID: primaryId, STATUS: 'AVAILABLE', CURRENT_GUEST_COUNT: 0, BILL_OUT_REQUESTED: false })
       .in('TABLE_ID', secondaryIds)
     if (secErr) throw secErr
@@ -877,7 +877,7 @@ export async function mergeTables(tableIds: number[]): Promise<TableData[]> {
  */
 export async function unmergeTables(primaryTableId: number): Promise<TableData[]> {
   const { data: secondaries, error: secFetchErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('*')
     .eq('MERGE_GROUP_ID', primaryTableId)
 
@@ -889,7 +889,7 @@ export async function unmergeTables(primaryTableId: number): Promise<TableData[]
   const secondaryIds = secondaryList.map((t) => t.TABLE_ID)
 
   const { error: releaseErr } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .update({ MERGE_GROUP_ID: null, STATUS: 'AVAILABLE', CURRENT_GUEST_COUNT: 0 })
     .in('TABLE_ID', secondaryIds)
   if (releaseErr) throw releaseErr
@@ -897,14 +897,14 @@ export async function unmergeTables(primaryTableId: number): Promise<TableData[]
   // Restore primary capacity if it was combined
   const secTotalCap = secondaryList.reduce((sum, s) => sum + (s.GUEST_CAPACITY || 0), 0)
   const { data: primary } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .select('GUEST_CAPACITY')
     .eq('TABLE_ID', primaryTableId)
     .single()
   if (primary && secTotalCap > 0) {
     const restoredCap = Math.max(1, (primary.GUEST_CAPACITY || 0) - secTotalCap)
     await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .update({ GUEST_CAPACITY: restoredCap })
       .eq('TABLE_ID', primaryTableId)
   }
@@ -933,7 +933,7 @@ export async function saveTableMerge(captainId: number, memberIds: number[]): Pr
     .map((table) => table.TABLE_ID)
 
   const { error: clearError } = await supabase
-    .from('Restaurant_Tables')
+    .schema('tables').from('Restaurant_Tables')
     .update({ MERGE_GROUP_ID: null, IS_MERGE_MEMBER: false, IS_MERGE_CAPTAIN: false })
     .in('TABLE_ID', affectedIds)
 
@@ -941,14 +941,14 @@ export async function saveTableMerge(captainId: number, memberIds: number[]): Pr
 
   if (memberIds.length > 0) {
     const { error: captainError } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .update({ MERGE_GROUP_ID: null, IS_MERGE_MEMBER: false, IS_MERGE_CAPTAIN: true })
       .eq('TABLE_ID', captainId)
 
     if (captainError) throw captainError
 
     const { error: memberError } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .update({ MERGE_GROUP_ID: captainId, IS_MERGE_MEMBER: true, IS_MERGE_CAPTAIN: false })
       .in('TABLE_ID', memberIds)
 
@@ -1050,7 +1050,7 @@ export async function syncTableMergeGroups(
   // 1. Reset standalone tables
   if (toMakeStandalone.length > 0) {
     const { error } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .update({
         MERGE_GROUP_ID: null,
         IS_MERGE_CAPTAIN: false,
@@ -1068,7 +1068,7 @@ export async function syncTableMergeGroups(
   // 2. Set captain tables
   if (toMakeCaptain.length > 0) {
     const { error } = await supabase
-      .from('Restaurant_Tables')
+      .schema('tables').from('Restaurant_Tables')
       .update({
         MERGE_GROUP_ID: null,
         IS_MERGE_CAPTAIN: true,
@@ -1087,7 +1087,7 @@ export async function syncTableMergeGroups(
   for (const [anchorId, memberIds] of toMakeMemberByAnchor.entries()) {
     if (memberIds.length > 0) {
       const { error } = await supabase
-        .from('Restaurant_Tables')
+        .schema('tables').from('Restaurant_Tables')
         .update({
           MERGE_GROUP_ID: anchorId,
           IS_MERGE_CAPTAIN: false,

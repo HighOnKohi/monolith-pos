@@ -128,6 +128,7 @@ export function resolveTableGroupByList(
  */
 export async function resolveTableGroup(targetTableId: number): Promise<TableGroupInfo> {
   const { data: targetData, error: targetErr } = await supabase
+    .schema('tables')
     .from('Restaurant_Tables')
     .select('*')
     .eq('TABLE_ID', targetTableId)
@@ -156,6 +157,7 @@ export async function resolveTableGroup(targetTableId: number): Promise<TableGro
   if (target.MERGE_GROUP_ID !== null && target.MERGE_GROUP_ID !== undefined) {
     const anchorId = target.MERGE_GROUP_ID
     const { data: membersData } = await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .select('*')
       .or(`TABLE_ID.eq.${anchorId},MERGE_GROUP_ID.eq.${anchorId}`)
@@ -168,6 +170,7 @@ export async function resolveTableGroup(targetTableId: number): Promise<TableGro
 
   // Case 2: Target may be the anchor for secondaries
   const { data: secondariesData } = await supabase
+    .schema('tables')
     .from('Restaurant_Tables')
     .select('*')
     .eq('MERGE_GROUP_ID', target.TABLE_ID)

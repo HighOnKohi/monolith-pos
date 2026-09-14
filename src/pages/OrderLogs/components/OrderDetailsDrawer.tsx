@@ -6,7 +6,6 @@ import {
   XCircle,
   AlertCircle,
   Tag,
-  Ticket,
 } from 'lucide-react'
 import {
   fetchOrderDetails,
@@ -167,12 +166,7 @@ export const OrderDetailsDrawer: React.FC<OrderDetailsDrawerProps> = ({
                   Order #{order.orderId}
                 </span>
                 {renderStatusBadge(order.orderStatus)}
-                {order.orderType === 'TICKET' ? (
-                  <span className="text-xs font-bold text-amber-900 bg-amber-50 px-2.5 py-0.5 rounded-md border border-amber-200/80 inline-flex items-center gap-1">
-                    <Ticket className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Ticket Order</span>
-                  </span>
-                ) : order.isMerged ? (
+                {order.isMerged ? (
                   <span className="text-xs font-bold text-indigo-900 bg-indigo-50 px-2.5 py-0.5 rounded-md border border-indigo-200/80">
                     {order.mergedGroupLabel || `Table ${order.tableNum}`}
                   </span>

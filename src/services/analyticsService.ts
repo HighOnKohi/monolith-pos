@@ -276,30 +276,10 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
           ITEM_NAME,
           ITEM_PRICE,
           CATEGORY_ID,
+          IS_ITEM_GROUP,
           Menu_Categories (
             CATEGORY_ID,
             CATEGORY_NAME
-          )
-        ),
-        Menu_Item_Groups (
-          MENU_GROUP_ID,
-          GROUP_NAME,
-          GROUP_PRICE,
-          GROUP_IMAGE_URL,
-          GROUP_DESCRIPTION,
-          CATEGORY_ID,
-          Menu_Categories (
-            CATEGORY_ID,
-            CATEGORY_NAME
-          ),
-          Item_Groups (
-            ITEM_ID,
-            Menu_Items (
-              ITEM_ID,
-              ITEM_NAME,
-              ITEM_PRICE,
-              CATEGORY_ID
-            )
           )
         )
       )
@@ -338,20 +318,19 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     let totalBill = 0
     const items: ProcessedTicketItem[] = rawItems.map((oi) => {
       const menuItem = oi['Menu_Items'] as Record<string, unknown> | undefined
-      const groupItem = oi['Menu_Item_Groups'] as Record<string, unknown> | undefined
-      const isGroup = Boolean(oi['ITEM_GROUP_ID'])
+      const isGroup = menuItem?.['IS_ITEM_GROUP'] === true || Boolean(oi['ITEM_GROUP_ID'])
 
       let name = 'Unknown Item'
       let price = 0
       let categoryName = 'Uncategorized'
       let categoryId = 0
 
-      if (isGroup && groupItem) {
-        name = String(groupItem['GROUP_NAME'] ?? 'Group Combo')
-        price = Number(groupItem['GROUP_PRICE'] ?? 0)
-        const catObj = groupItem['Menu_Categories'] as Record<string, unknown> | undefined
+      if (isGroup && menuItem) {
+        name = String(menuItem['ITEM_NAME'] ?? 'Group Combo')
+        price = Number(menuItem['ITEM_PRICE'] ?? 0)
+        const catObj = menuItem['Menu_Categories'] as Record<string, unknown> | undefined
         categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'Meal Packages'
-        categoryId = Number(groupItem['CATEGORY_ID'] ?? 0)
+        categoryId = Number(menuItem['CATEGORY_ID'] ?? 0)
       } else if (menuItem) {
         name = String(menuItem['ITEM_NAME'] ?? 'Dish')
         price = Number(menuItem['ITEM_PRICE'] ?? 0)
@@ -531,13 +510,15 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
 
   // 3b. Fetch full menu catalog (items + groups) to track zero-sales and underperforming items
   const { data: catalogItemsData, error: catalogError } = await supabase
+    .schema('menu')
     .from('Menu_Items')
     .select(`
       ITEM_ID,
       ITEM_NAME,
       ITEM_PRICE,
       CATEGORY_ID,
-      IS_AVAILABLE,
+      ITEM_STATUS,
+      IS_ITEM_GROUP,
       Menu_Categories (
         CATEGORY_ID,
         CATEGORY_NAME
@@ -549,18 +530,21 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   }
 
   const { data: catalogGroupsData, error: catalogGroupsError } = await supabase
-    .from('Menu_Item_Groups')
+    .schema('menu')
+    .from('Menu_Items')
     .select(`
-      MENU_GROUP_ID,
-      GROUP_NAME,
-      GROUP_PRICE,
+      ITEM_ID,
+      ITEM_NAME,
+      ITEM_PRICE,
       CATEGORY_ID,
-      GROUP_STATUS,
+      ITEM_STATUS,
+      IS_ITEM_GROUP,
       Menu_Categories (
         CATEGORY_ID,
         CATEGORY_NAME
       )
     `)
+    .eq('IS_ITEM_GROUP', true)
 
   if (catalogGroupsError) {
     console.warn('[analyticsService] Warning fetching menu item groups catalog:', catalogGroupsError)
@@ -769,7 +753,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       const id = Number(raw['ITEM_ID'])
       const name = String(raw['ITEM_NAME'] || 'Unknown Item')
       const price = Number(raw['ITEM_PRICE'] || 0)
-      const isAvail = raw['IS_AVAILABLE'] !== false
+      const isAvail = raw['ITEM_STATUS'] !== 'OUT_OF_STOCK'
       const catObj = raw['Menu_Categories'] as Record<string, unknown> | null
       const catName = catObj ? String(catObj['CATEGORY_NAME']) : 'Uncategorized'
 
@@ -791,14 +775,14 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     }
   }
 
-  // 5b. Seed with menu group packages/combos (offset ID by 100000 to prevent collisions)
+  // 5b. Seed with menu group packages/combos
   if (catalogGroupsData && catalogGroupsData.length > 0) {
     for (const raw of catalogGroupsData as Array<Record<string, unknown>>) {
-      const gid = Number(raw['MENU_GROUP_ID'])
-      const id = 100000 + gid
-      const name = String(raw['GROUP_NAME'] || 'Group Combo')
-      const price = Number(raw['GROUP_PRICE'] || 0)
-      const isAvail = raw['GROUP_STATUS'] !== 'UNAVAILABLE'
+      const gid = Number(raw['ITEM_ID'])
+      const id = gid
+      const name = String(raw['ITEM_NAME'] || 'Group Combo')
+      const price = Number(raw['ITEM_PRICE'] || 0)
+      const isAvail = raw['ITEM_STATUS'] !== 'OUT_OF_STOCK'
       const catObj = raw['Menu_Categories'] as Record<string, unknown> | null
       const catName = catObj ? String(catObj['CATEGORY_NAME']) : 'Meal Packages'
 
@@ -867,7 +851,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   for (const t of completedTicketsList) {
     for (const item of t.items) {
       const isGroup = item.isGroup
-      const aggId = isGroup ? 100000 + (item.itemGroupId || 0) : (item.itemId || 0)
+      const aggId = isGroup ? (item.itemId || item.itemGroupId || 0) : (item.itemId || 0)
       if (!aggId) continue
 
       let existing = itemAggMap.get(aggId)
