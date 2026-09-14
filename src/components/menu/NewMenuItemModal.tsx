@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ImagePlus, Replace, Trash2, X } from 'lucide-react'
 import type { Category, DietaryType, MenuItem } from '@/types/menu'
+import type { MenuItemGroup } from '@/services/menuService'
 import { uploadMenuItemImage } from '@/services/storageService'
 
 export interface NewMenuItemForm {
@@ -11,6 +12,8 @@ export interface NewMenuItemForm {
   price: number
   isAvailable: boolean
   description?: string
+  orderLimit: number
+  itemIds: string[]
 }
 
 interface NewMenuItemModalProps {
@@ -18,14 +21,16 @@ interface NewMenuItemModalProps {
   categories: Category[]
   defaultCategoryId?: string
   editItem?: MenuItem | null
+  editGroup?: MenuItemGroup | null
+  items?: MenuItem[]
   onClose: () => void
   onSubmit: (form: NewMenuItemForm) => Promise<void> | void
 }
 
 export const NewMenuItemModal = memo(function NewMenuItemModal({
-  isOpen, categories, defaultCategoryId, editItem, onClose, onSubmit,
+  isOpen, categories, defaultCategoryId, editItem, editGroup, items = [], onClose, onSubmit,
 }: NewMenuItemModalProps) {
-  const isEditMode = Boolean(editItem)
+  const isEditMode = Boolean(editItem || editGroup)
 
   const selectableCategories = useMemo(
     () => categories.filter((c) => c.id !== 'all'),
@@ -36,6 +41,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
   const [form, setForm] = useState({
     imageUrl: '', name: '', categoryId: defaultCategoryId ?? '',
     dietaryType: 'veg' as DietaryType, priceRaw: '', isAvailable: true, description: '',
+    orderLimitRaw: '0', itemIds: [] as string[],
   })
   const [imageFile, setImageFile]     = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -66,15 +72,17 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
     setFieldErrors({})
     setUploadError(null)
 
-    if (editItem) {
+    if (editItem || editGroup) {
       setForm({
-        imageUrl:    editItem.imageUrl ?? '',
-        name:        editItem.name,
-        categoryId:  editItem.categoryId,
-        dietaryType: editItem.dietaryType,
-        priceRaw:    editItem.price > 0 ? editItem.price.toString() : '',
-        isAvailable: editItem.isAvailable,
-        description: editItem.description ?? '',
+        imageUrl: editItem?.imageUrl ?? editGroup?.imageUrl ?? '',
+        name: editItem?.name ?? editGroup?.name ?? '',
+        categoryId: editItem?.categoryId ?? editGroup?.categoryId ?? firstCategoryId,
+        dietaryType: editItem?.dietaryType ?? 'veg',
+        priceRaw: String(editItem?.price ?? editGroup?.price ?? ''),
+        isAvailable: editItem?.isAvailable ?? editGroup?.status === 'AVAILABLE',
+        description: editItem?.description ?? editGroup?.description ?? '',
+        orderLimitRaw: String(editGroup?.orderLimit ?? 0),
+        itemIds: editGroup?.itemIds ?? [],
       })
       setImageFile(null)
     } else {
@@ -82,10 +90,11 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         imageUrl: '', name: '',
         categoryId:  defaultCategoryId ?? firstCategoryId,
         dietaryType: 'veg', priceRaw: '', isAvailable: true, description: '',
+        orderLimitRaw: '0', itemIds: [],
       })
       setImageFile(null)
     }
-  }, [isOpen, editItem, defaultCategoryId, firstCategoryId])
+  }, [isOpen, editItem, editGroup, defaultCategoryId, firstCategoryId])
 
   if (!isOpen) return null
 
@@ -122,6 +131,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     const price = Number(form.priceRaw.replace(/,/g, '').replace(/\.$/, ''))
+    const orderLimit = Number(form.orderLimitRaw.replace(/,/g, ''))
 
     const errors: { name?: string; price?: string } = {}
     if (!form.name.trim())                         errors.name  = 'Name is required.'
@@ -147,6 +157,8 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         price,
         isAvailable: form.isAvailable,
         description: form.description,
+        orderLimit: Number.isFinite(orderLimit) && orderLimit >= 0 ? orderLimit : 0,
+        itemIds: form.itemIds,
       })
       onClose()
     } catch (err: unknown) {
@@ -251,7 +263,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
           </div>
 
           {/* Row 2 — price + availability */}
-          <div className="menu-item-row menu-item-secondary-row">
+          <div className="menu-item-row menu-item-secondary-row" aria-label="Price and availability">
             <label className="menu-modal-field">
               <span>Price {fieldErrors.price && <span className="menu-modal-inline-error">{fieldErrors.price}</span>}</span>
               <div className={`menu-modal-price-wrap ${fieldErrors.price ? 'has-error' : ''}`}>
@@ -283,6 +295,27 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
             </fieldset>
           </div>
 
+          <label className="menu-modal-field">
+            <span>Order limit</span>
+            <input type="number" min="0" step="1" value={form.orderLimitRaw} onChange={(event) => update('orderLimitRaw', event.target.value)} disabled={isSaving} />
+          </label>
+
+          {items.length > 0 && (
+            <fieldset className="menu-group-item-picker">
+              <legend>Group items (optional)</legend>
+              <div className="menu-group-item-list">
+                {items.filter((item) => item.id !== editItem?.id).map((item) => (
+                  <label key={item.id} className="menu-group-item-option">
+                    <input type="checkbox" checked={form.itemIds.includes(item.id)} onChange={(event) => update('itemIds', event.target.checked ? [...form.itemIds, item.id] : form.itemIds.filter((id) => id !== item.id))} disabled={isSaving} />
+                    <img src={item.imageUrl} alt="" />
+                    <span>{item.name}</span>
+                    <strong>₱{item.price.toFixed(2)}</strong>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+
           {error && <p className="menu-modal-error" role="alert">{error}</p>}
         </div>
 
@@ -293,7 +326,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
               ? 'Uploading image...'
               : isSaving
                 ? (isEditMode ? 'Saving...' : 'Adding...')
-                : (isEditMode ? 'Save changes' : 'Add dish')}
+                : (isEditMode ? 'Save changes' : (form.itemIds.length > 0 ? 'Add group item' : 'Add dish'))}
           </button>
         </footer>
       </form>

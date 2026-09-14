@@ -133,10 +133,30 @@ function saveFallbackEvents(events: RestaurantEvent[]): void {
 function mapRow(row: Record<string, any>): RestaurantEvent {
   // Read PRESET_ID from column or fallback tag in NOTES: "[PRESET_ID:123]"
   let presetId: number | null = row['PRESET_ID'] != null ? Number(row['PRESET_ID']) : null
+  let menuPresetId: number | null = row['MENU_PRESET_ID'] != null ? Number(row['MENU_PRESET_ID']) : null
+  let isActive = Boolean(row['IS_ACTIVE'])
+
   const notes = row['NOTES'] ?? null
-  if (presetId == null && typeof notes === 'string') {
-    const match = notes.match(/\[PRESET_ID:(\d+)\]/)
-    if (match) presetId = Number(match[1])
+  if (typeof notes === 'string') {
+    if (presetId == null) {
+      const matchP = notes.match(/\[PRESET_ID:(\d+)\]/)
+      if (matchP) presetId = Number(matchP[1])
+    }
+    if (menuPresetId == null) {
+      const matchM = notes.match(/\[MENU_PRESET_ID:(\d+)\]/)
+      if (matchM) menuPresetId = Number(matchM[1])
+    }
+    if (!isActive && notes.includes('[IS_ACTIVE:true]')) {
+      isActive = true
+    }
+  }
+
+  // Also check local storage active event ID
+  if (typeof window !== 'undefined') {
+    const activeStoredId = localStorage.getItem('monolith_active_event_id')
+    if (activeStoredId && String(row['EVENT_ID']) === activeStoredId) {
+      isActive = true
+    }
   }
 
   const pax = row['EXPECTED_ATTENDEES'] != null ? Number(row['EXPECTED_ATTENDEES']) : null
@@ -154,6 +174,8 @@ function mapRow(row: Record<string, any>): RestaurantEvent {
     maxPax: pax,
     expectedAttendees: pax,
     presetId,
+    menuPresetId,
+    isActive,
     contactName: row['CONTACT_NAME'] ?? null,
     contactPhone: row['CONTACT_PHONE'] ?? null,
     contactEmail: row['CONTACT_EMAIL'] ?? null,
@@ -359,16 +381,17 @@ export async function createEvent(
     : (data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : 50)
 
   let notesVal = data.notes.trim() || null
-  if (data.presetId) {
-    if (!notesVal) {
-      notesVal = `[PRESET_ID:${data.presetId}]`
-    } else if (!notesVal.includes(`[PRESET_ID:${data.presetId}]`)) {
-      notesVal = `${notesVal.replace(/\[PRESET_ID:\d+\]/g, '').trim()}\n[PRESET_ID:${data.presetId}]`.trim()
-    }
+  const tags: string[] = []
+  if (data.presetId) tags.push(`[PRESET_ID:${data.presetId}]`)
+  if (data.menuPresetId) tags.push(`[MENU_PRESET_ID:${data.menuPresetId}]`)
+  if (data.isActive) tags.push('[IS_ACTIVE:true]')
+
+  if (tags.length > 0) {
+    const cleanNotes = (notesVal || '').replace(/\[(PRESET_ID|MENU_PRESET_ID|IS_ACTIVE):[^\]]+\]/g, '').trim()
+    notesVal = cleanNotes ? `${cleanNotes}\n${tags.join('\n')}` : tags.join('\n')
   }
 
   try {
-    // Try inserting with PRESET_ID first
     const insertObj: Record<string, unknown> = {
       TITLE: data.title.trim(),
       DESCRIPTION: data.description.trim() || null,
@@ -388,26 +411,26 @@ export async function createEvent(
       UPDATED_BY: userEmail ?? null,
     }
 
-    if (data.presetId != null) {
-      insertObj['PRESET_ID'] = data.presetId
-    }
+    if (data.presetId != null) insertObj['PRESET_ID'] = data.presetId
+    if (data.menuPresetId != null) insertObj['MENU_PRESET_ID'] = data.menuPresetId
+    if (data.isActive != null) insertObj['IS_ACTIVE'] = data.isActive
 
     let res = await supabase.from('Restaurant_Events').insert(insertObj).select().single()
 
-    // If PRESET_ID column doesn't exist yet, retry without it (the tag is stored in NOTES)
-    if (res.error && data.presetId != null && res.error.message.includes('PRESET_ID')) {
+    if (res.error) {
+      // Remove optional columns if not present in schema
       delete insertObj['PRESET_ID']
+      delete insertObj['MENU_PRESET_ID']
+      delete insertObj['IS_ACTIVE']
       res = await supabase.from('Restaurant_Events').insert(insertObj).select().single()
     }
 
-    if (res.error) {
-      throw res.error
-    }
+    if (res.error) throw res.error
 
     isUsingFallbackStorage = false
     return mapRow(res.data)
   } catch (err) {
-    console.warn('[eventService] Supabase createEvent failed, saving to localStorage fallback:', err)
+    console.warn('[eventService] Supabase createEvent fallback:', err)
     isUsingFallbackStorage = true
     const fallbackAll = getFallbackEvents()
     const newId = Date.now()
@@ -424,6 +447,8 @@ export async function createEvent(
       maxPax: maxPaxVal,
       expectedAttendees: maxPaxVal,
       presetId: data.presetId ?? null,
+      menuPresetId: data.menuPresetId ?? null,
+      isActive: Boolean(data.isActive),
       contactName: data.contactName.trim() || null,
       contactPhone: data.contactPhone.trim() || null,
       contactEmail: data.contactEmail.trim() || null,
@@ -472,15 +497,13 @@ export async function updateEvent(
     : (data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : 50)
 
   let notesVal = data.notes.trim() || null
-  if (data.presetId) {
-    if (!notesVal) {
-      notesVal = `[PRESET_ID:${data.presetId}]`
-    } else if (!notesVal.includes(`[PRESET_ID:${data.presetId}]`)) {
-      notesVal = `${notesVal.replace(/\[PRESET_ID:\d+\]/g, '').trim()}\n[PRESET_ID:${data.presetId}]`.trim()
-    }
-  } else if (notesVal) {
-    notesVal = notesVal.replace(/\[PRESET_ID:\d+\]/g, '').trim() || null
-  }
+  const tags: string[] = []
+  if (data.presetId) tags.push(`[PRESET_ID:${data.presetId}]`)
+  if (data.menuPresetId) tags.push(`[MENU_PRESET_ID:${data.menuPresetId}]`)
+  if (data.isActive) tags.push('[IS_ACTIVE:true]')
+
+  const cleanNotes = (notesVal || '').replace(/\[(PRESET_ID|MENU_PRESET_ID|IS_ACTIVE):[^\]]+\]/g, '').trim()
+  notesVal = tags.length > 0 ? (cleanNotes ? `${cleanNotes}\n${tags.join('\n')}` : tags.join('\n')) : (cleanNotes || null)
 
   try {
     const updateObj: Record<string, unknown> = {
@@ -501,9 +524,9 @@ export async function updateEvent(
       UPDATED_BY: userEmail ?? null,
     }
 
-    if (data.presetId !== undefined) {
-      updateObj['PRESET_ID'] = data.presetId
-    }
+    if (data.presetId !== undefined) updateObj['PRESET_ID'] = data.presetId
+    if (data.menuPresetId !== undefined) updateObj['MENU_PRESET_ID'] = data.menuPresetId
+    if (data.isActive !== undefined) updateObj['IS_ACTIVE'] = data.isActive
 
     let res = await supabase
       .from('Restaurant_Events')
@@ -512,8 +535,10 @@ export async function updateEvent(
       .select()
       .single()
 
-    if (res.error && data.presetId !== undefined && res.error.message.includes('PRESET_ID')) {
+    if (res.error) {
       delete updateObj['PRESET_ID']
+      delete updateObj['MENU_PRESET_ID']
+      delete updateObj['IS_ACTIVE']
       res = await supabase
         .from('Restaurant_Events')
         .update(updateObj)
@@ -522,14 +547,12 @@ export async function updateEvent(
         .single()
     }
 
-    if (res.error) {
-      throw res.error
-    }
+    if (res.error) throw res.error
 
     isUsingFallbackStorage = false
     return mapRow(res.data)
   } catch (err) {
-    console.warn('[eventService] Supabase updateEvent failed, updating in localStorage fallback:', err)
+    console.warn('[eventService] Supabase updateEvent fallback:', err)
     isUsingFallbackStorage = true
     const fallbackAll = getFallbackEvents()
     const index = fallbackAll.findIndex((e) => e.eventId === eventId)
@@ -549,6 +572,8 @@ export async function updateEvent(
       maxPax: maxPaxVal,
       expectedAttendees: maxPaxVal,
       presetId: data.presetId ?? null,
+      menuPresetId: data.menuPresetId ?? null,
+      isActive: data.isActive !== undefined ? Boolean(data.isActive) : fallbackAll[index].isActive,
       contactName: data.contactName.trim() || null,
       contactPhone: data.contactPhone.trim() || null,
       contactEmail: data.contactEmail.trim() || null,
@@ -559,6 +584,101 @@ export async function updateEvent(
     fallbackAll[index] = updated
     saveFallbackEvents(fallbackAll)
     return updated
+  }
+}
+
+// ─── Activate Event (Switches Linked Table Layout & Menu Preset) ───────────────
+
+export async function activateEvent(event: RestaurantEvent): Promise<void> {
+  // 1. Mark this event as active and clear other active events in storage
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('monolith_active_event_id', String(event.eventId))
+  }
+
+  // 2. If event has linked Table Layout Preset, apply & toggle IS_DEFAULT in Table_Layout_Presets
+  if (event.presetId) {
+    try {
+      const { setDefaultLayoutPreset } = await import('@/services/tableLayoutService')
+      await setDefaultLayoutPreset(event.presetId)
+    } catch (err) {
+      console.warn('[eventService] Failed to set default layout preset on event activate:', err)
+    }
+  }
+
+  // 3. If event has linked Menu Preset, toggle IS_DEFAULT in Menu_Presets
+  if (event.menuPresetId) {
+    try {
+      const { setDefaultMenuPreset } = await import('@/services/menuService')
+      await setDefaultMenuPreset(event.menuPresetId)
+    } catch (err) {
+      console.warn('[eventService] Failed to set default menu preset on event activate:', err)
+    }
+  }
+
+  // 4. Update database state for Restaurant_Events
+  try {
+    await supabase
+      .from('Restaurant_Events')
+      .update({ IS_ACTIVE: false })
+      .neq('EVENT_ID', event.eventId)
+
+    await supabase
+      .from('Restaurant_Events')
+      .update({ IS_ACTIVE: true })
+      .eq('EVENT_ID', event.eventId)
+  } catch {
+    // Ignore db column absence
+  }
+
+  // 5. Broadcast realtime notification across all interfaces
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('monolith-order-update', {
+      detail: { type: 'event_activated', eventId: event.eventId, presetId: event.presetId, menuPresetId: event.menuPresetId }
+    }))
+  }
+}
+
+export async function deactivateEvent(eventId: number): Promise<void> {
+  if (typeof window !== 'undefined') {
+    if (localStorage.getItem('monolith_active_event_id') === String(eventId)) {
+      localStorage.removeItem('monolith_active_event_id')
+    }
+  }
+
+  // 1. Revert Table_Layout_Presets IS_DEFAULT to standard default layout
+  try {
+    const { fetchAllLayoutPresets, setDefaultLayoutPreset } = await import('@/services/tableLayoutService')
+    const presets = await fetchAllLayoutPresets()
+    const basePreset = presets.find((p) => p.LAYOUT_PRESET_ID === 2 || p.PRESET_NAME.toLowerCase().includes('main')) || presets[0]
+    if (basePreset) {
+      await setDefaultLayoutPreset(basePreset.LAYOUT_PRESET_ID)
+    }
+  } catch (err) {
+    console.warn('[eventService] Failed to revert default layout preset on event deactivate:', err)
+  }
+
+  // 2. Revert Menu_Presets IS_DEFAULT to standard default menu (PRESET_ID = 1)
+  try {
+    const { setDefaultMenuPreset } = await import('@/services/menuService')
+    await setDefaultMenuPreset(1)
+  } catch (err) {
+    console.warn('[eventService] Failed to revert default menu preset on event deactivate:', err)
+  }
+
+  // 3. Update database state
+  try {
+    await supabase
+      .from('Restaurant_Events')
+      .update({ IS_ACTIVE: false })
+      .eq('EVENT_ID', eventId)
+  } catch {
+    // Ignore
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('monolith-order-update', {
+      detail: { type: 'event_deactivated', eventId }
+    }))
   }
 }
 

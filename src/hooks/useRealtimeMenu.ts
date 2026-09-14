@@ -23,7 +23,7 @@ export function useRealtimeMenu(
       .channel('menu-items-realtime')
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'Menu_Items' },
+        { event: 'UPDATE', schema: 'menu', table: 'Menu_Items' },
         (payload) => {
           const row = payload.new as Record<string, unknown>
           const itemId = String(row['ITEM_ID'])

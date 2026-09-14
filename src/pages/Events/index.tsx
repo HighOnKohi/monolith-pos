@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { CalendarDays, List, RefreshCw, AlertCircle, CalendarX, Plus } from 'lucide-react'
+import { CalendarDays, List, AlertCircle, CalendarX, Plus } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
 import type { RestaurantEvent, EventFilterParams, EventFormData } from '@/types/event'
@@ -10,30 +10,19 @@ import {
   updateEvent,
   deleteEvent,
   cancelEvent,
+  activateEvent,
+  deactivateEvent,
   isEventServiceUsingFallback,
 } from '@/services/eventService'
-import {
-  computeEventStats,
-  // deriveEventStatus,
-  filterEvents,
-  type EventCardType,
-} from './utils/eventUtils'
-import { EventsSummaryCards } from './components/EventsSummaryCards'
+import { filterEvents } from './utils/eventUtils'
 import { EventsFilterBar } from './components/EventsFilterBar'
 import { EventsCalendar } from './components/EventsCalendar'
 import { EventsListView } from './components/EventsListView'
 import { EventDrawer, type EventDrawerMode } from './components/EventDrawer'
 import { EventDeleteModal } from './components/EventDeleteModal'
+import { EventActivateModal } from './components/EventActivateModal'
 
 type ViewMode = 'calendar' | 'list'
-
-const CARD_LABELS: Record<EventCardType, string> = {
-  total: 'Total Events',
-  upcoming: 'Upcoming Events',
-  today: "Today's Events",
-  thisWeek: "This Week's Events",
-  ongoing: 'Ongoing Events',
-}
 
 export default function EventsPage() {
   const { user } = useAuth()
@@ -78,9 +67,8 @@ export default function EventsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // ── Filters & Active Summary Card ──
+  // ── Filters ──
   const [filters, setFilters] = useState<EventFilterParams>(EVENT_FILTER_DEFAULTS)
-  const [activeCard, setActiveCard] = useState<EventCardType | null>('total')
 
   // ── View Mode ──
   const [viewMode, setViewMode] = useState<ViewMode>('calendar')
@@ -105,6 +93,13 @@ export default function EventsPage() {
     event: null,
   })
   const [deleteLoading, setDeleteLoading] = useState(false)
+
+  // ── Activate Modal ──
+  const [activateModal, setActivateModal] = useState<{ open: boolean; event: RestaurantEvent | null }>({
+    open: false,
+    event: null,
+  })
+  const [activateLoading, setActivateLoading] = useState(false)
 
   // ── Fallback Storage State ──
   const [isFallback, setIsFallback] = useState(false)
@@ -147,72 +142,15 @@ export default function EventsPage() {
     }
   }, [loadEvents])
 
-  // ── Stats (Always computed from all events) ──
-  const stats = useMemo(() => computeEventStats(events), [events])
-
   // ── Filtered Events for display (Instant client-side filtering) ──
   const displayedEvents = useMemo(() => filterEvents(events, filters), [events, filters])
 
-  // ── Summary Card Click Handler (Switches to List and filters to card's events) ──
-  const handleCardClick = (type: EventCardType) => {
-    setViewMode('list')
-    // Toggle off if already active and not total
-    if (activeCard === type && type !== 'total') {
-      setActiveCard('total')
-      setFilters(EVENT_FILTER_DEFAULTS)
-      return
-    }
-
-    setActiveCard(type)
-    if (type === 'total') {
-      setFilters(EVENT_FILTER_DEFAULTS)
-    } else if (type === 'upcoming') {
-      setFilters({
-        ...EVENT_FILTER_DEFAULTS,
-        dateFilter: 'upcoming',
-        status: 'Scheduled',
-      })
-    } else if (type === 'today') {
-      setFilters({
-        ...EVENT_FILTER_DEFAULTS,
-        dateFilter: 'today',
-      })
-    } else if (type === 'thisWeek') {
-      setFilters({
-        ...EVENT_FILTER_DEFAULTS,
-        dateFilter: 'this_week',
-      })
-    } else if (type === 'ongoing') {
-      setFilters({
-        ...EVENT_FILTER_DEFAULTS,
-        status: 'Ongoing',
-      })
-    }
-  }
-
   // ── Filter Handlers ──
   const handleFilterChange = (f: Partial<EventFilterParams>) => {
-    setFilters((prev) => {
-      const next = { ...prev, ...f }
-      if (next.status === 'Ongoing' && next.dateFilter === 'all') {
-        setActiveCard('ongoing')
-      } else if (next.dateFilter === 'today' && next.status === 'All') {
-        setActiveCard('today')
-      } else if (next.dateFilter === 'this_week' && next.status === 'All') {
-        setActiveCard('thisWeek')
-      } else if (next.dateFilter === 'upcoming' || next.status === 'Scheduled') {
-        setActiveCard('upcoming')
-      } else if (next.dateFilter === 'all' && next.status === 'All' && next.category === 'All' && !next.searchQuery) {
-        setActiveCard('total')
-      } else {
-        setActiveCard(null)
-      }
-      return next
-    })
+    setFilters((prev) => ({ ...prev, ...f }))
   }
 
   const handleClearFilters = () => {
-    setActiveCard('total')
     setFilters(EVENT_FILTER_DEFAULTS)
   }
 
@@ -260,6 +198,8 @@ export default function EventsPage() {
       maxPax: pax,
       expectedAttendees: pax,
       presetId: data.presetId ?? null,
+      menuPresetId: data.menuPresetId ?? null,
+      isActive: previous?.isActive ?? false,
       contactName: data.contactName.trim() || null,
       contactPhone: data.contactPhone.trim() || null,
       contactEmail: data.contactEmail.trim() || null,
@@ -337,8 +277,42 @@ export default function EventsPage() {
     }
   }
 
+  const handleToggleActive = (event: RestaurantEvent) => {
+    if (event.isActive) {
+      void handleDeactivateConfirm(event)
+    } else {
+      setActivateModal({ open: true, event })
+    }
+  }
+
+  const handleActivateConfirm = async () => {
+    if (!activateModal.event) return
+    const target = activateModal.event
+    setActivateLoading(true)
+    try {
+      await activateEvent(target)
+      showToast(`Event "${target.title}" activated: Layout & Menu presets applied!`)
+      setActivateModal({ open: false, event: null })
+      await loadEvents()
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to activate event.', 'error')
+    } finally {
+      setActivateLoading(false)
+    }
+  }
+
+  const handleDeactivateConfirm = async (event: RestaurantEvent) => {
+    try {
+      await deactivateEvent(event.eventId)
+      showToast(`Event "${event.title}" deactivated.`)
+      await loadEvents()
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to deactivate event.', 'error')
+    }
+  }
+
   return (
-    <div className="events-page-container staff-page flex flex-col gap-3.5 sm:gap-4 pb-12">
+    <div className="events-page events-page-container staff-page flex flex-col gap-3.5 sm:gap-4 pb-12">
       {/* ── Toast ── */}
       {toast && (
         <div
@@ -353,67 +327,32 @@ export default function EventsPage() {
         </div>
       )}
 
-      {/* ── Page Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-xs shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[#14274E] text-[#E9C46A] flex items-center justify-center shadow-xs shrink-0">
-            <CalendarDays className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-black text-[#14274E] tracking-tight">Events</h1>
-            <p className="text-xs text-slate-500 font-medium">
-              Schedule, manage, and track restaurant events and reservations
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-          {/* View Switcher integrated in Header */}
-          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1 shrink-0">
-            <button
-              onClick={() => setViewMode('calendar')}
-              className={[
-                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer',
-                viewMode === 'calendar'
-                  ? 'bg-white text-[#14274E] shadow-xs'
-                  : 'text-slate-500 hover:text-slate-700',
-              ].join(' ')}
-            >
-              <CalendarDays className="w-3.5 h-3.5" />
-              <span>Calendar</span>
-            </button>
-            <button
-              onClick={() => setViewMode('list')}
-              className={[
-                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer',
-                viewMode === 'list'
-                  ? 'bg-white text-[#14274E] shadow-xs'
-                  : 'text-slate-500 hover:text-slate-700',
-              ].join(' ')}
-            >
-              <List className="w-3.5 h-3.5" />
-              <span>List</span>
-            </button>
-          </div>
-
-          {canManageEvents && (
-            <button
-              id="header-add-event-btn"
-              onClick={handleAddEvent}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs active:scale-98 transition-all cursor-pointer shrink-0"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Event</span>
-            </button>
-          )}
-
+      <div className="flex items-center self-start shrink-0">
+        <div className={`events-view-toggle flex items-center gap-1 bg-slate-100 rounded-xl p-1 ${viewMode === 'list' ? 'events-view-toggle-list' : ''}`}>
+          <span className="events-view-toggle-indicator" />
           <button
-            onClick={() => loadEvents()}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 transition-all cursor-pointer shrink-0"
+            onClick={() => setViewMode('calendar')}
+            className={[
+              'inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all cursor-pointer',
+              viewMode === 'calendar'
+                ? 'text-[#E9C46A]'
+                : 'text-slate-500 hover:text-slate-700',
+            ].join(' ')}
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Refresh</span>
+            <CalendarDays className="w-4 h-4" />
+            <span>Calendar</span>
+          </button>
+          <button
+            onClick={() => setViewMode('list')}
+            className={[
+              'inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all cursor-pointer',
+              viewMode === 'list'
+                ? 'text-[#E9C46A]'
+                : 'text-slate-500 hover:text-slate-700',
+            ].join(' ')}
+          >
+            <List className="w-4 h-4" />
+            <span>Events</span>
           </button>
         </div>
       </div>
@@ -430,42 +369,13 @@ export default function EventsPage() {
         </div>
       )}
 
-      {/* ── Summary Cards (Clickable to show list of said events) ── */}
-      <EventsSummaryCards
-        stats={stats}
-        loading={loading}
-        activeCard={activeCard}
-        onCardClick={handleCardClick}
-      />
-
-      {/* ── Filter Bar ── */}
-      <EventsFilterBar
-        filters={filters}
-        onFilterChange={handleFilterChange}
-        onClearFilters={handleClearFilters}
-        onAddEvent={handleAddEvent}
-        canManageEvents={canManageEvents}
-      />
-
-      {/* ── Active Card Filter Banner (List View) ── */}
-      {viewMode === 'list' && activeCard && activeCard !== 'total' && (
-        <div className="flex items-center justify-between px-4 py-2.5 bg-blue-50/80 border border-blue-200/80 rounded-2xl text-xs shrink-0 animate-in fade-in duration-150">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
-            <span className="text-slate-600 font-medium">
-              Showing list of <strong className="text-[#14274E] font-black">{CARD_LABELS[activeCard]}</strong>
-            </span>
-            <span className="text-[10px] font-black bg-white text-blue-700 px-2 py-0.5 rounded-full border border-blue-200 shadow-2xs">
-              {displayedEvents.length} {displayedEvents.length === 1 ? 'event' : 'events'}
-            </span>
-          </div>
-          <button
-            onClick={() => handleCardClick('total')}
-            className="text-[11px] font-black text-[#14274E] hover:text-blue-800 hover:underline cursor-pointer"
-          >
-            Show All Events
-          </button>
-        </div>
+      {viewMode === 'list' && (
+        <EventsFilterBar
+          filters={filters}
+          onFilterChange={handleFilterChange}
+          onAddEvent={handleAddEvent}
+          canManageEvents={canManageEvents}
+        />
       )}
 
       {/* ── Error Banner ── */}
@@ -488,15 +398,17 @@ export default function EventsPage() {
       {!error && (
         <>
           {viewMode === 'calendar' ? (
-            <EventsCalendar
-              events={displayedEvents}
-              onEventClick={handleViewEvent}
-              onDateClick={handleDateClick}
-              onAddEvent={handleAddEvent}
-              canManageEvents={canManageEvents}
-            />
+            <div key="calendar" className="events-view-content flex-1 min-h-0 flex">
+              <EventsCalendar
+                events={displayedEvents}
+                onEventClick={handleViewEvent}
+                onDateClick={handleDateClick}
+                onRefresh={loadEvents}
+                canManageEvents={canManageEvents}
+              />
+            </div>
           ) : (
-            <>
+            <div key="events" className="events-view-content flex-1 min-h-0 overflow-y-auto">
               {displayedEvents.length === 0 && !loading ? (
                 <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs p-12 text-center">
                   <div className="flex flex-col items-center gap-3">
@@ -542,11 +454,12 @@ export default function EventsPage() {
                   onView={handleViewEvent}
                   onEdit={handleEditEvent}
                   onDelete={handleDeleteRequest}
+                  onToggleActive={handleToggleActive}
                   canManageEvents={canManageEvents}
                   loading={loading}
                 />
               )}
-            </>
+            </div>
           )}
         </>
       )}
@@ -574,6 +487,15 @@ export default function EventsPage() {
         loading={deleteLoading}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteModal({ open: false, event: null })}
+      />
+
+      {/* ── Activate Confirmation Modal ── */}
+      <EventActivateModal
+        isOpen={activateModal.open}
+        event={activateModal.event}
+        loading={activateLoading}
+        onConfirm={handleActivateConfirm}
+        onCancel={() => setActivateModal({ open: false, event: null })}
       />
     </div>
   )

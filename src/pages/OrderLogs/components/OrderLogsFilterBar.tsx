@@ -223,7 +223,6 @@ export const OrderLogsFilterBar: React.FC<OrderLogsFilterBarProps> = ({
             <option value="ALL">All Sources</option>
             <option value="Cashier">Cashier Station</option>
             <option value="Customer">Customer App</option>
-            <option value="Ticketing">Ticketing Interface</option>
           </select>
 
           {/* Table Selector */}

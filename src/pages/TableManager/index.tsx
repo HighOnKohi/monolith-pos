@@ -1,1928 +1,1324 @@
-/**
- * TableManager — Phase 3: Floor-Plan Editor
- *
- * Architecture:
- * - Three-panel layout: TablePalette (left) | FloorPlanEditor (center) | TableInspector (right)
- * - useFloorPlanState hook manages visual editor state (positions, zoom, drag, history)
- * - DB data layer preserved from Phase 2: realtime + polling, targeted patches
- * - Operational flows (status, reservations, merge, QR, billing, assistance) unchanged
- * - Layout positions stored in Restaurant_Tables.LAYOUT_X/LAYOUT_Y
- * - Layout presets stored in Table_Layout_Presets
- */
-
-import {
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from 'react'
-import { useBlocker } from 'react-router-dom'
-import {
-  Plus,
-  X,
-  AlertTriangle,
-  CheckCircle2,
-  TableProperties,
-  Minus,
-  Lock,
-} from 'lucide-react'
-import { Button } from '@/components/ui/Button'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
-import { resolveTableAssistance } from '@/services/assistanceService'
-import { resolveBillOutRequest, fetchAllBillRequests } from '@/services/billService'
-import type { BillRequest } from '@/types/bill'
-import { TableAlertsBanner } from '@/components/alerts/TableAlertsBanner'
-import { TableQrPreview } from '@/components/table-qr/TableQrPreview'
-import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
 import {
-  fetchAllTables,
-  fetchOrderSummariesForIds,
-  getCachedTables,
-  cacheTables,
-  batchCreateTables,
-  updateTable,
-  deleteTables,
-  setTableStatus,
-  syncTableMergeGroups,
-  type TableData,
-  type TableStatus,
-} from '@/services/tableService'
-import {
-  fetchAllPresets,
-  createPreset,
-  setActivePreset,
-  batchUpdateTablePositions,
-  clearTablePositions,
-  updatePreset,
-  deletePreset,
-  type LayoutPreset,
-} from '@/services/layoutService'
-import { fetchEvents } from '@/services/eventService'
-import type { RestaurantEvent } from '@/types/event'
-import { useFloorPlanState } from './useFloorPlanState'
-import { FloorPlanEditor } from './FloorPlanEditor'
-import { FloorPlanToolbar } from './FloorPlanToolbar'
-import { TablePalette } from './TablePalette'
-import { TableInspector } from './TableInspector'
-import { GridSettingsModal } from './GridSettingsModal'
-import { SavePresetModal, ConfirmLoadModal, ConfirmDeletePresetModal } from './PresetModal'
-import { findGroupForTable, calculateEffectiveCapacity, disburseCapacities, calculateMergeGroups, type MergeGroup } from '@/utils/floorPlan/adjacency'
-import { findFirstAvailablePosition } from '@/utils/floorPlan/collision'
-import type { FloorConfig } from '@/utils/floorPlan/grid'
-import { calculateCustomTemplateDistribution, type TemplateDistributionTarget } from '@/utils/floorPlan/distribution'
-import { fetchAllTableTemplates, getLocalTemplates, type TableTemplate } from '@/services/templateService'
-import { ConnectedDistributionSliders } from './ConnectedDistributionSliders'
-import { getStoredTableDimensions, saveStoredTableDimensions, type EditorTable } from './useFloorPlanState'
+  fetchAllLayoutPresets,
+  fetchPresetLayout,
+  fetchLiveRestaurantTables,
+  savePresetLayout,
+  createLayoutPreset,
+  updateLayoutPresetName,
+  updateTableCapacity,
+  updateTableStatus,
+  updateTableGuestCount,
+  deleteLayoutPreset,
+  TABLE_TYPES,
+  type TableLayoutPreset,
+  type TableLayoutInfo,
+  type RestaurantTableData,
+  type MergedTableNode,
+  type TableType,
+} from '@/services/tableLayoutService'
+import { TableVisual, TableShapeIcon } from './components/TableVisual'
+import { TableManagerHeader } from './components/TableManagerHeader'
+import { FloatingLayoutControls } from './components/FloatingLayoutControls'
+import { TableManagerSidebar } from './components/TableManagerSidebar'
+import { NewPresetModal } from './components/NewPresetModal'
+import { ConfirmModal } from './components/ConfirmModal'
+import { RenamePresetModal } from './components/RenamePresetModal'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types / helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface ToastMsg { text: string; type: 'success' | 'error' | 'info' }
-interface OrderSummary { totalBill: number; activeOrderCount: number }
-
-const OCCUPIED_STATUSES: TableStatus[] = ['OCCUPIED', 'HAS_REQUEST']
-
-/** Apply a list of updated rows into an existing table array (targeted patch). */
-function patchTables(prev: TableData[], updated: TableData[]): TableData[] {
-  const map = new Map(updated.map((t) => [t.TABLE_ID, t]))
-  return prev.map((t) => map.get(t.TABLE_ID) ?? t)
+interface DragState {
+  tableNum: number
+  startMouseX: number
+  startMouseY: number
+  startTableX: number
+  startTableY: number
+  currentX: number
+  currentY: number
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PaxStepper
-// ─────────────────────────────────────────────────────────────────────────────
+export interface ChairSuppressionInfo {
+  top?: boolean | boolean[]
+  bottom?: boolean | boolean[]
+  left?: boolean
+  right?: boolean
+  radial?: boolean[]
+  suppressedCount: number
+}
 
-interface PaxStepperProps { value: number; min?: number; max?: number; onChange: (v: number) => void; disabled?: boolean; id?: string }
+export function calculateSuppressionForLayout(tables: TableLayoutInfo[]): Map<number, ChairSuppressionInfo> {
+  const map = new Map<number, ChairSuppressionInfo>()
+  const cellMap = new Map<string, number>()
 
-function PaxStepper({ value, min = 0, max = 999, onChange, disabled, id }: PaxStepperProps) {
-  const [raw, setRaw] = useState(String(value))
-  const isFocusedRef = useRef(false)
-
-  useEffect(() => {
-    if (!isFocusedRef.current) {
-      setRaw(String(value))
-    }
-  }, [value])
-
-  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const text = e.target.value
-    setRaw(text)
-    if (text === '') return
-    const n = parseInt(text, 10)
-    if (!isNaN(n)) {
-      if (n >= min && n <= max) {
-        onChange(n)
-      } else if (n > max) {
-        onChange(max)
+  for (const t of tables) {
+    const cfg = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
+    for (let dx = 0; dx < cfg.width; dx++) {
+      for (let dy = 0; dy < cfg.height; dy++) {
+        cellMap.set(`${t.X_POS + dx},${t.Y_POS + dy}`, t.TABLE_NUM)
       }
     }
   }
 
-  function handleBlur() {
-    isFocusedRef.current = false
-    const n = parseInt(raw, 10)
-    if (isNaN(n) || n < min) {
-      setRaw(String(min))
-      onChange(min)
-    } else if (n > max) {
-      setRaw(String(max))
-      onChange(max)
-    } else {
-      setRaw(String(n))
-      onChange(n)
-    }
-  }
+  for (const t of tables) {
+    let suppressedCount = 0
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      const n = parseInt(raw, 10)
-      if (isNaN(n) || n < min) {
-        setRaw(String(min))
-        onChange(min)
-      } else if (n > max) {
-        setRaw(String(max))
-        onChange(max)
-      } else {
-        setRaw(String(n))
-        onChange(n)
-      }
-      ;(e.target as HTMLInputElement).blur()
-    }
-  }
+    if (t.TABLE_TYPE === 1 || t.TABLE_TYPE === 3) {
+      const topCell = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
+      const bottomCell = cellMap.get(`${t.X_POS},${t.Y_POS + 1}`)
+      const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
+      const rightCell = cellMap.get(`${t.X_POS + 1},${t.Y_POS}`)
 
-  return (
-    <div className="tm-stepper">
-      <button
-        type="button"
-        className="tm-stepper-btn"
-        onClick={() => {
-          const next = Math.max(min, value - 1)
-          setRaw(String(next))
-          onChange(next)
-        }}
-        disabled={disabled || value <= min}
-      >
-        <Minus className="w-3 h-3" />
-      </button>
-      <input
-        id={id}
-        type="number"
-        className="tm-stepper-val"
-        value={raw}
-        min={min}
-        max={max}
-        disabled={disabled}
-        onFocus={(e) => {
-          isFocusedRef.current = true
-          e.target.select()
-        }}
-        onChange={handleInputChange}
-        onBlur={handleBlur}
-        onKeyDown={handleKeyDown}
-      />
-      <button
-        type="button"
-        className="tm-stepper-btn"
-        onClick={() => {
-          const next = Math.min(max, value + 1)
-          setRaw(String(next))
-          onChange(next)
-        }}
-        disabled={disabled || value >= max}
-      >
-        <Plus className="w-3 h-3" />
-      </button>
-    </div>
-  )
-}
+      // A chair disappears if its position overlaps with any other table
+      const top = Boolean(topCell && topCell !== t.TABLE_NUM)
+      const bottom = Boolean(bottomCell && bottomCell !== t.TABLE_NUM)
+      const left = Boolean(leftCell && leftCell !== t.TABLE_NUM)
+      const right = Boolean(rightCell && rightCell !== t.TABLE_NUM)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ConfirmDialog (modal) — reused from Phase 2
-// ─────────────────────────────────────────────────────────────────────────────
+      if (top) suppressedCount++
+      if (bottom) suppressedCount++
+      if (left) suppressedCount++
+      if (right) suppressedCount++
 
-interface ConfirmDialogProps {
-  title: string; description: string; confirmLabel: string
-  confirmVariant?: 'danger' | 'primary'
-  onConfirm: () => void; onCancel: () => void
-  loading?: boolean; children?: ReactNode
-}
-
-function ConfirmDialog({ title, description, confirmLabel, confirmVariant = 'danger', onConfirm, onCancel, loading, children }: ConfirmDialogProps) {
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel() }
-    document.addEventListener('keydown', h)
-    return () => document.removeEventListener('keydown', h)
-  }, [onCancel])
-
-  return (
-    <div className="tm-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onCancel() }}>
-      <div className="tm-modal tm-modal-sm">
-        <div className="tm-modal-header">
-          <div>
-            <div className="tm-modal-title"><AlertTriangle className="w-4 h-4 text-amber-500" />{title}</div>
-            <p className="tm-modal-desc">{description}</p>
-          </div>
-          <button onClick={onCancel} className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"><X className="w-4 h-4" /></button>
-        </div>
-        {children && <div className="tm-modal-body">{children}</div>}
-        <div className="tm-modal-footer">
-          <button onClick={onCancel} className="px-3 py-1.5 text-sm font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors">Cancel</button>
-          <Button variant={confirmVariant} size="sm" loading={loading} onClick={onConfirm}>{confirmLabel}</Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-// AddTablesModal — batch creation with customizable distribution & saved templates
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface AddTablesModalProps {
-  onClose: () => void
-  onCreated: (tables: TableData[], createdTemplates?: TableTemplate[]) => void
-  existingNums: number[]
-  maxCapacity?: number
-  currentEffectivePax?: number
-  effectiveMaxPax?: number
-}
-
-function AddTablesModal({
-  onClose,
-  onCreated,
-  existingNums,
-  maxCapacity = 50,
-  currentEffectivePax,
-  effectiveMaxPax = 50,
-}: AddTablesModalProps) {
-  const nextAvailableNum = Math.max(1, ...(existingNums.length > 0 ? [Math.max(...existingNums) + 1] : [1]))
-  const [startNum, setStartNum] = useState(nextAvailableNum)
-  const [targetPax, setTargetPax] = useState(Math.min(effectiveMaxPax, Math.max(2, maxCapacity)))
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  // Saved table templates (Standard + Custom)
-  const [templates, setTemplates] = useState<TableTemplate[]>(() => getLocalTemplates())
-
-  useEffect(() => {
-    void fetchAllTableTemplates().then((all) => {
-      if (all.length > 0) setTemplates(all)
-    })
-  }, [])
-
-  // Active template IDs for distribution
-  const [activeTemplateIds, setActiveTemplateIds] = useState<string[]>(() => {
-    const local = getLocalTemplates()
-    const has4 = local.some((t) => t.id === 'tmpl-4top')
-    const has2 = local.some((t) => t.id === 'tmpl-2top')
-    if (has4 && has2) return ['tmpl-4top', 'tmpl-2top']
-    return local.slice(0, 2).map((t) => t.id)
-  })
-
-  // Proportional percentages (sum to 100%)
-  const [percentages, setPercentages] = useState<Record<string, number>>(() => {
-    return { 'tmpl-4top': 80, 'tmpl-2top': 20 }
-  })
-
-  // Toggle template inclusion
-  function handleToggleTemplate(templateId: string) {
-    if (activeTemplateIds.includes(templateId)) {
-      if (activeTemplateIds.length <= 1) return
-      const nextActive = activeTemplateIds.filter((id) => id !== templateId)
-      setActiveTemplateIds(nextActive)
-
-      const remainingSum = nextActive.reduce((s, id) => s + (percentages[id] ?? 0), 0)
-      const nextPct: Record<string, number> = {}
-      if (remainingSum > 0) {
-        let allocated = 0
-        nextActive.forEach((id, idx) => {
-          if (idx === nextActive.length - 1) {
-            nextPct[id] = Math.max(0, 100 - allocated)
-          } else {
-            const share = Math.round(((percentages[id] ?? 0) / remainingSum * 100) / 5) * 5
-            nextPct[id] = share
-            allocated += share
-          }
-        })
-      } else {
-        const base = Math.floor(100 / nextActive.length / 5) * 5
-        let allocated = 0
-        nextActive.forEach((id, idx) => {
-          if (idx === nextActive.length - 1) {
-            nextPct[id] = Math.max(0, 100 - allocated)
-          } else {
-            nextPct[id] = base
-            allocated += base
-          }
-        })
-      }
-      setPercentages(nextPct)
-    } else {
-      const nextActive = [...activeTemplateIds, templateId]
-      setActiveTemplateIds(nextActive)
-
-      const newShare = 20
-      const rem = 100 - newShare
-      const prevSum = activeTemplateIds.reduce((s, id) => s + (percentages[id] ?? 0), 0)
-      const nextPct: Record<string, number> = { [templateId]: newShare }
-
-      let allocated = 0
-      activeTemplateIds.forEach((id, idx) => {
-        if (idx === activeTemplateIds.length - 1) {
-          nextPct[id] = Math.max(0, rem - allocated)
-        } else {
-          const ratio = prevSum > 0 ? (percentages[id] ?? 0) / prevSum : 1 / activeTemplateIds.length
-          const share = Math.round((rem * ratio) / 5) * 5
-          nextPct[id] = share
-          allocated += share
-        }
+      map.set(t.TABLE_NUM, { top, bottom, left, right, suppressedCount })
+    } else if (t.TABLE_TYPE === 2) {
+      const topMask = [0, 1, 2].map((dx) => {
+        const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS - 1}`)
+        return Boolean(c && c !== t.TABLE_NUM)
       })
-      setPercentages(nextPct)
+      const bottomMask = [0, 1, 2].map((dx) => {
+        const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS + 1}`)
+        return Boolean(c && c !== t.TABLE_NUM)
+      })
+      const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
+      const rightCell = cellMap.get(`${t.X_POS + 3},${t.Y_POS}`)
+      const left = Boolean(leftCell && leftCell !== t.TABLE_NUM)
+      const right = Boolean(rightCell && rightCell !== t.TABLE_NUM)
+
+      suppressedCount += topMask.filter(Boolean).length
+      suppressedCount += bottomMask.filter(Boolean).length
+      if (left) suppressedCount++
+      if (right) suppressedCount++
+
+      map.set(t.TABLE_NUM, { top: topMask, bottom: bottomMask, left, right, suppressedCount })
+    } else if (t.TABLE_TYPE === 4) {
+      const top1 = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
+      const top2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS - 1}`)
+      const topOcc = Boolean((top1 && top1 !== t.TABLE_NUM) || (top2 && top2 !== t.TABLE_NUM))
+
+      const tr = cellMap.get(`${t.X_POS + 2},${t.Y_POS}`)
+      const trOcc = Boolean(tr && tr !== t.TABLE_NUM)
+
+      const br = cellMap.get(`${t.X_POS + 2},${t.Y_POS + 1}`)
+      const brOcc = Boolean(br && br !== t.TABLE_NUM)
+
+      const bot1 = cellMap.get(`${t.X_POS},${t.Y_POS + 2}`)
+      const bot2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS + 2}`)
+      const botOcc = Boolean((bot1 && bot1 !== t.TABLE_NUM) || (bot2 && bot2 !== t.TABLE_NUM))
+
+      const bl = cellMap.get(`${t.X_POS - 1},${t.Y_POS + 1}`)
+      const blOcc = Boolean(bl && bl !== t.TABLE_NUM)
+
+      const tl = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
+      const tlOcc = Boolean(tl && tl !== t.TABLE_NUM)
+
+      const radial = [topOcc, trOcc, brOcc, botOcc, blOcc, tlOcc]
+      suppressedCount = radial.filter(Boolean).length
+      map.set(t.TABLE_NUM, { radial, suppressedCount })
     }
   }
 
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', h)
-    return () => document.removeEventListener('keydown', h)
-  }, [onClose])
-
-  const activeTargets: TemplateDistributionTarget[] = useMemo(() => {
-    return activeTemplateIds.map((id) => {
-      const tmpl = templates.find((t) => t.id === id)
-      return {
-        templateId: id,
-        seats: tmpl?.seats ?? 4,
-        percentage: percentages[id] ?? 0,
-      }
-    })
-  }, [activeTemplateIds, templates, percentages])
-
-  const plan = useMemo(() => {
-    return calculateCustomTemplateDistribution(targetPax, activeTargets, maxCapacity)
-  }, [targetPax, activeTargets, maxCapacity])
-
-  const preview = useMemo(() => {
-    const existSet = new Set(existingNums)
-    const templateMap = new Map(templates.map((t) => [t.id, t]))
-    const items = plan.orderedTemplateIds.map((tmplId, i) => {
-      const tmpl = templateMap.get(tmplId)
-      const cap = tmpl?.seats ?? 4
-      const num = startNum + i
-      return { num, capacity: cap, template: tmpl, exists: existSet.has(num) }
-    })
-    const toCreate = items.filter((item) => !item.exists)
-    const toSkip = items.filter((item) => item.exists)
-    return { items, toCreate, toSkip }
-  }, [startNum, plan.orderedTemplateIds, existingNums, templates])
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError('')
-    if (startNum < 1) { setError('Starting table number must be at least 1.'); return }
-    if (targetPax < 2 || targetPax > maxCapacity) {
-      setError(`Target pax must be between 2 and ${maxCapacity}.`)
-      return
-    }
-    if (preview.toCreate.length === 0) {
-      setError('All table numbers in this range already exist.')
-      return
-    }
-    setLoading(true)
-    try {
-      const capacities = preview.toCreate.map((item) => item.capacity)
-      const templatesForTables = preview.toCreate.map((item) => item.template!).filter(Boolean)
-      const result = await batchCreateTables(startNum, capacities, 4, currentEffectivePax, effectiveMaxPax)
-      onCreated(result.created, templatesForTables)
-      onClose()
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create tables.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const createdPax = preview.toCreate.reduce((s, item) => s + item.capacity, 0)
-
-  return (
-    <div className="tm-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <form className="tm-modal max-w-xl" onSubmit={handleSubmit} noValidate>
-        <div className="tm-modal-header">
-          <div>
-            <div className="tm-modal-title"><Plus className="w-4 h-4" />Add Tables</div>
-            <p className="tm-modal-desc">Customize automatic distribution with snapping sliders across any saved table types.</p>
-          </div>
-          <button type="button" onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="tm-modal-body space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="tm-field-label">Starting Table Number</label>
-              <PaxStepper
-                value={startNum}
-                min={1}
-                max={999}
-                onChange={(v) => {
-                  setStartNum(v)
-                  setError('')
-                }}
-              />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="tm-field-label mb-0">Target Pax</label>
-                <span className="text-[0.68rem] text-slate-500 font-semibold">
-                  Max {maxCapacity} Pax
-                </span>
-              </div>
-              <PaxStepper
-                value={targetPax}
-                min={2}
-                max={maxCapacity}
-                onChange={(v) => {
-                  setTargetPax(v)
-                  setError('')
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Connected Snapping Sliders */}
-          <ConnectedDistributionSliders
-            templates={templates}
-            activeTemplateIds={activeTemplateIds}
-            percentages={percentages}
-            templateCounts={plan.templateCounts}
-            onPercentagesChange={setPercentages}
-            onToggleTemplate={handleToggleTemplate}
-          />
-
-          {plan.totalPax > 0 && !plan.exact && (
-            <p className="text-[0.68rem] text-amber-700 font-semibold">
-              Target adjusted from {targetPax} to {plan.totalPax} Pax to fit complete tables.
-            </p>
-          )}
-
-          {preview.items.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <p className="tm-field-label mb-0">Preview ({plan.totalTables} Tables · {plan.totalPax} Pax)</p>
-                <span className="text-[0.68rem] text-slate-500 font-medium">
-                  {preview.toCreate.length} to create
-                </span>
-              </div>
-              <div className="tm-preview-pills max-h-28 overflow-y-auto">
-                {preview.items.map((item) => (
-                  <span
-                    key={item.num}
-                    className={`tm-preview-pill ${item.exists ? 'skip' : 'new'}`}
-                    title={`Table ${item.num} (${item.capacity} seats · ${item.template?.label ?? ''})`}
-                  >
-                    {item.num} <span className="text-[0.6rem] font-normal opacity-75">({item.capacity}p)</span>
-                  </span>
-                ))}
-              </div>
-              {preview.toSkip.length > 0 && (
-                <p className="tm-error-text mt-1.5">
-                  {preview.toSkip.length} table(s) already exist and will be skipped.
-                </p>
-              )}
-              {preview.toCreate.length > 0 && (
-                <p className="text-[0.7rem] text-emerald-700 font-semibold mt-1">
-                  {preview.toCreate.length} new table(s) will be created ({createdPax} Pax).
-                </p>
-              )}
-            </div>
-          )}
-
-          {error && <p className="tm-error-text">{error}</p>}
-        </div>
-
-        <div className="tm-modal-footer">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors">
-            Cancel
-          </button>
-          <Button type="submit" variant="primary" size="sm" loading={loading} disabled={preview.toCreate.length === 0}>
-            Add {preview.toCreate.length} Table{preview.toCreate.length !== 1 ? 's' : ''} ({createdPax} Pax)
-          </Button>
-        </div>
-      </form>
-    </div>
-  )
+  return map
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main page — Floor Plan Editor
-// ─────────────────────────────────────────────────────────────────────────────
+export function resolveConnectedMergeGroups(
+  tables: TableLayoutInfo[],
+  areAdjacent: (t1: TableLayoutInfo, t2: TableLayoutInfo) => boolean,
+): TableLayoutInfo[] {
+  const n = tables.length
+  if (n === 0) return []
+  const adj: number[][] = Array.from({ length: n }, () => [])
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (areAdjacent(tables[i], tables[j])) {
+        adj[i].push(j)
+        adj[j].push(i)
+      }
+    }
+  }
 
-export default function TableManagerPage() {
-  // ── Core data ──
-  const [tables, setTables] = useState<TableData[]>(() => getCachedTables() ?? [])
-  const [billRequests, setBillRequests] = useState<BillRequest[]>([])
-  const [orderSummaries, setOrderSummaries] = useState<Map<number, OrderSummary>>(new Map())
-  const [events, setEvents] = useState<RestaurantEvent[]>([])
+  const visited = new Array(n).fill(false)
+  const result = [...tables]
 
-  // ── Floor plan editor state ──
-  const floorPlan = useFloorPlanState()
+  for (let i = 0; i < n; i++) {
+    if (!visited[i]) {
+      const component: number[] = []
+      const queue = [i]
+      visited[i] = true
 
-  // ── Presets ──
-  const [presets, setPresets] = useState<LayoutPreset[]>([])
+      while (queue.length > 0) {
+        const curr = queue.shift()!
+        component.push(curr)
+        for (const neighbor of adj[curr]) {
+          if (!visited[neighbor]) {
+            visited[neighbor] = true
+            queue.push(neighbor)
+          }
+        }
+      }
+
+      if (component.length >= 2) {
+        const minTableNum = Math.min(...component.map((idx) => tables[idx].TABLE_NUM))
+        for (const idx of component) {
+          result[idx] = { ...result[idx], MERGE_GROUP_ID: minTableNum }
+        }
+      } else {
+        result[component[0]] = { ...result[component[0]], MERGE_GROUP_ID: null }
+      }
+    }
+  }
+
+  return result
+}
+
+export default function TableManager() {
+  // Presets & Layout State
+  const [presets, setPresets] = useState<TableLayoutPreset[]>([])
   const [activePresetId, setActivePresetId] = useState<number | null>(null)
+  const [layoutTables, setLayoutTables] = useState<TableLayoutInfo[]>([])
+  const [restaurantTables, setRestaurantTables] = useState<RestaurantTableData[]>([])
 
-  // ── Modals ──
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null) // table ID to delete
-  const [showRemoveAllConfirm, setShowRemoveAllConfirm] = useState(false)
-  const [showGridSettings, setShowGridSettings] = useState(false)
-  const [showSavePreset, setShowSavePreset] = useState(false)
-  const [confirmLoadPreset, setConfirmLoadPreset] = useState<LayoutPreset | null>(null)
-  const [renamePreset, setRenamePreset] = useState<LayoutPreset | null>(null)
-  const [deletePresetConfirm, setDeletePresetConfirm] = useState<LayoutPreset | null>(null)
-  const [qrModalTable, setQrModalTable] = useState<TableData | null>(null)
+  // Editor State
+  const [isEditMode, setIsEditMode] = useState(false)
+  const [selectedTableNum, setSelectedTableNum] = useState<number | null>(null)
+  const [isDirty, setIsDirty] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
 
-  // ── Loading states ──
-  const [savingCapacity, setSavingCapacity] = useState(false)
-  const [savingPreset, setSavingPreset] = useState(false)
-  const [deleteLoading, setDeleteLoading] = useState(false)
-  const [savingLayout, setSavingLayout] = useState(false)
-  const [isSwitchingLayout, setIsSwitchingLayout] = useState(false)
-  const [switchingLayoutName, setSwitchingLayoutName] = useState('')
-  const [switchingPresetId, setSwitchingPresetId] = useState<number | null>(null)
-  const navigationBlocker = useBlocker(floorPlan.isDirty)
+  // Dragging & Container Dimension State
+  const [dragState, setDragState] = useState<DragState | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerDimensions, setContainerDimensions] = useState({ width: 800, height: 600 })
 
-  // Block all keyboard interaction across window while switching layouts
-  useEffect(() => {
-    if (!isSwitchingLayout) return
-    const blockKeyboard = (e: KeyboardEvent) => {
-      e.stopPropagation()
-      e.preventDefault()
-    }
-    window.addEventListener('keydown', blockKeyboard, { capture: true })
-    window.addEventListener('keyup', blockKeyboard, { capture: true })
-    window.addEventListener('keypress', blockKeyboard, { capture: true })
-    return () => {
-      window.removeEventListener('keydown', blockKeyboard, { capture: true })
-      window.removeEventListener('keyup', blockKeyboard, { capture: true })
-      window.removeEventListener('keypress', blockKeyboard, { capture: true })
-    }
-  }, [isSwitchingLayout])
+  // Modals & Toast
+  const [newPresetModalOpen, setNewPresetModalOpen] = useState(false)
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean
+    title: string
+    message: string
+    confirmLabel?: string
+    cancelLabel?: string
+    variant?: 'danger' | 'warning' | 'primary'
+    onConfirm: () => void
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  })
+  const [renameModal, setRenameModal] = useState<{
+    isOpen: boolean
+    presetId: number | null
+    currentName: string
+  }>({
+    isOpen: false,
+    presetId: null,
+    currentName: '',
+  })
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
 
-  // ── Toast ──
-  const [toast, setToast] = useState<ToastMsg | null>(null)
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // ── Mutation guard ──
-  const isMutatingRef = useRef(false)
-  const initializedRef = useRef(false)
-
-  function showToast(text: string, type: ToastMsg['type'] = 'success') {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    setToast({ text, type })
-    toastTimerRef.current = setTimeout(() => setToast(null), 3000)
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
   }
 
-  const layoutTableIds = useMemo(
-    () => new Set(floorPlan.positions.map((p) => p.tableId)),
-    [floorPlan.positions],
-  )
+  // Compute dynamic cell size and dimensions (~30% reduced grid count for venue capacity 50)
+  const cellSize = useMemo(() => {
+    if (containerDimensions.height <= 0) return 48
+    // 13 vertical divisions ensures generous, clear table sizes and minimal unused grid space
+    return Math.max(24, Math.floor(containerDimensions.height / 13))
+  }, [containerDimensions.height])
 
-  const layoutTables = useMemo(
-    () => tables.filter((t) => layoutTableIds.has(t.TABLE_ID)),
-    [tables, layoutTableIds],
-  )
+  const gridWidth = useMemo(() => {
+    if (containerDimensions.width <= 0) return 24
+    return Math.max(8, Math.floor(containerDimensions.width / cellSize))
+  }, [containerDimensions.width, cellSize])
 
-  const layoutTableNums = useMemo(
-    () => layoutTables.map((t) => t.TABLE_NUM),
-    [layoutTables],
-  )
+  const gridHeight = useMemo(() => {
+    if (containerDimensions.height <= 0) return 13
+    return Math.max(6, Math.floor(containerDimensions.height / cellSize))
+  }, [containerDimensions.height, cellSize])
 
-  const existingTableNums = layoutTableNums
+  // Chair suppression map computed reactively
+  const chairSuppressionMap = useMemo(() => {
+    return calculateSuppressionForLayout(layoutTables)
+  }, [layoutTables])
 
-  const activePreset = useMemo(
-    () => presets.find((p) => p.PRESET_ID === activePresetId) ?? null,
-    [presets, activePresetId],
-  )
+  // Total allocated capacity across current tables (Venue Max = 50)
+  const VENUE_MAX_CAPACITY = 50
+  const totalAllocatedCapacity = useMemo(() => {
+    return layoutTables.reduce((sum, t) => {
+      const live = restaurantTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
+      const supp = chairSuppressionMap.get(t.TABLE_NUM)
+      const suppCount = supp?.suppressedCount ?? 0
+      const defaultCap = TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4
+      return sum + (live?.GUEST_CAPACITY ?? Math.max(1, defaultCap - suppCount))
+    }, 0)
+  }, [layoutTables, restaurantTables, chairSuppressionMap])
 
-  const activeLinkedEvent = useMemo(() => {
-    if (!activePreset) return null
-    return events.find((e) =>
-      (activePreset.EVENT_ID && e.eventId === activePreset.EVENT_ID) ||
-      (e.presetId && e.presetId === activePreset.PRESET_ID)
-    ) ?? null
-  }, [activePreset, events])
+  // Helper to synchronize Restaurant_Tables capacity with layout and strictly clamp to VENUE_MAX_CAPACITY (50)
+  const syncRestaurantTablesWithLayout = useCallback((
+    newLayout: TableLayoutInfo[],
+    suppMap: Map<number, ChairSuppressionInfo>,
+    prevLiveTables: RestaurantTableData[],
+  ): RestaurantTableData[] => {
+    // 1. For each table in newLayout, calculate its target capacity
+    const mapped: RestaurantTableData[] = newLayout.map((t) => {
+      const existing = prevLiveTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
+      const supp = suppMap.get(t.TABLE_NUM)
+      const suppCount = supp?.suppressedCount ?? 0
+      const defaultCap = TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4
+      const maxTableCap = Math.max(1, defaultCap - suppCount)
 
-  const effectiveMaxPax = useMemo(() => {
-    if (activeLinkedEvent && activeLinkedEvent.maxPax && activeLinkedEvent.maxPax > 0) {
-      return activeLinkedEvent.maxPax
-    }
-    return 50
-  }, [activeLinkedEvent])
+      // Retain existing capacity if available and clamp to maxTableCap, or default to maxTableCap
+      const prevCap = existing ? existing.GUEST_CAPACITY : maxTableCap
+      const initialCap = Math.max(1, Math.min(prevCap, maxTableCap))
 
-  const hasActiveOrders = useMemo(() => {
-    const hasOccupiedTable = layoutTables.some(
-      (t) => OCCUPIED_STATUSES.includes(t.STATUS) || (t.CURRENT_GUEST_COUNT ?? 0) > 0 || t.BILL_OUT_REQUESTED,
-    )
-    const hasOrdersInProgress = Array.from(orderSummaries.entries()).some(
-      ([tableId, s]) => layoutTableIds.has(tableId) && s.activeOrderCount > 0,
-    )
-    const hasActiveBills = billRequests.some((r) => layoutTableIds.has(r.tableId))
-    return Boolean(hasOccupiedTable || hasOrdersInProgress || hasActiveBills)
-  }, [layoutTables, layoutTableIds, orderSummaries, billRequests])
-
-  // ── Selected table for inspector ──
-  const inspectorTable = useMemo(
-    () => (floorPlan.selectedTableId !== null
-      ? tables.find((t) => t.TABLE_ID === floorPlan.selectedTableId) ?? null
-      : null),
-    [tables, floorPlan.selectedTableId],
-  )
-
-  const inspectorPosition = useMemo(
-    () => (floorPlan.selectedTableId !== null
-      ? floorPlan.positions.find((p) => p.tableId === floorPlan.selectedTableId) ?? null
-      : null),
-    [floorPlan.positions, floorPlan.selectedTableId],
-  )
-
-  const inspectorMergeGroup = useMemo(
-    () => (floorPlan.selectedTableId !== null
-      ? findGroupForTable(floorPlan.selectedTableId, floorPlan.mergeGroups)
-      : null),
-    [floorPlan.selectedTableId, floorPlan.mergeGroups],
-  )
-
-  const inspectorOrderSummary = useMemo(() => {
-    if (!inspectorTable) return undefined
-    if (!inspectorMergeGroup || inspectorMergeGroup.memberIds.length <= 1) {
-      return orderSummaries.get(inspectorTable.TABLE_ID)
-    }
-    return inspectorMergeGroup.memberIds.reduce(
-      (acc, id) => {
-        const s = orderSummaries.get(id)
-        return {
-          activeOrderCount: acc.activeOrderCount + (s?.activeOrderCount ?? 0),
-          totalBill: acc.totalBill + (s?.totalBill ?? 0),
-        }
-      },
-      { activeOrderCount: 0, totalBill: 0 },
-    )
-  }, [inspectorTable, inspectorMergeGroup, orderSummaries])
-
-  // ── Load order summaries ──
-  const loadSummariesForTables = useCallback(async (tableList: TableData[]) => {
-    const occupiedIds = tableList
-      .filter((t) => OCCUPIED_STATUSES.includes(t.STATUS))
-      .map((t) => t.TABLE_ID)
-    const summaries = await fetchOrderSummariesForIds(occupiedIds)
-    setOrderSummaries((prev) => {
-      if (prev.size === summaries.size) {
-        let same = true
-        for (const [id, s] of summaries.entries()) {
-          const p = prev.get(id)
-          if (!p || p.activeOrderCount !== s.activeOrderCount || p.totalBill !== s.totalBill) {
-            same = false
-            break
-          }
-        }
-        if (same) return prev
+      return {
+        TABLE_ID: existing?.TABLE_ID ?? t.TABLE_NUM,
+        TABLE_NUM: t.TABLE_NUM,
+        STATUS: (existing?.STATUS ?? 'AVAILABLE') as RestaurantTableData['STATUS'],
+        GUEST_CAPACITY: initialCap,
+        CURRENT_GUEST_COUNT: existing?.CURRENT_GUEST_COUNT ?? 0,
+        RESERVED_SINCE: existing?.RESERVED_SINCE ?? null,
+        BILL_OUT_REQUESTED: existing?.BILL_OUT_REQUESTED ?? false,
+        MERGE_GROUP_ID: t.MERGE_GROUP_ID,
       }
-      return summaries
     })
+
+    // 2. Strictly enforce VENUE_MAX_CAPACITY (50) across all tables
+    let currentTotal = mapped.reduce((sum, r) => sum + r.GUEST_CAPACITY, 0)
+    if (currentTotal > VENUE_MAX_CAPACITY) {
+      for (let i = mapped.length - 1; i >= 0 && currentTotal > VENUE_MAX_CAPACITY; i--) {
+        const canReduce = mapped[i].GUEST_CAPACITY - 1
+        const excess = currentTotal - VENUE_MAX_CAPACITY
+        const reduction = Math.min(excess, canReduce)
+        if (reduction > 0) {
+          mapped[i].GUEST_CAPACITY -= reduction
+          currentTotal -= reduction
+        }
+      }
+    }
+
+    return mapped
   }, [])
 
-  // ── Initial full load ──
-  const loadAll = useCallback(async () => {
-    try {
-      const [data, bReqs, eventList] = await Promise.all([
-        fetchAllTables(),
-        fetchAllBillRequests(),
-        fetchEvents().catch(() => [] as RestaurantEvent[]),
-      ])
-      setBillRequests(bReqs)
-      setEvents(eventList)
-      cacheTables(data)
-      setTables((prev) => {
-        if (prev.length === data.length) {
-          const same = prev.every((oldT, i) => {
-            const n = data[i]
-            return (
-              n &&
-              oldT.TABLE_ID === n.TABLE_ID &&
-              oldT.STATUS === n.STATUS &&
-              oldT.GUEST_CAPACITY === n.GUEST_CAPACITY &&
-              oldT.CURRENT_GUEST_COUNT === n.CURRENT_GUEST_COUNT &&
-              oldT.BILL_OUT_REQUESTED === n.BILL_OUT_REQUESTED &&
-              oldT.RESERVATION_NAME === n.RESERVATION_NAME
-            )
-          })
-          if (same) return prev
+  // Track container resize to keep 100% fit without scrollbars
+  useEffect(() => {
+    if (!containerRef.current) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect
+        if (width > 0 && height > 0) {
+          setContainerDimensions({ width, height })
         }
-        return data
-      })
-      await loadSummariesForTables(data)
-
-      // Initialize floor plan positions (only once)
-      if (!initializedRef.current) {
-        initializedRef.current = true
-
-        // Load presets
-        let activePresetForInit: LayoutPreset | null = null
-        try {
-          const allPresets = await fetchAllPresets()
-          setPresets(allPresets)
-          const active = allPresets.find((p) => p.IS_ACTIVE)
-          if (active) {
-            setActivePresetId(active.PRESET_ID)
-            activePresetForInit = active
-
-            // Sync active preset's merge groups to Restaurant_Tables if out of sync
-            if (active.MERGE_GROUPS && active.MERGE_GROUPS.length > 0) {
-              const hasUnsynced = active.MERGE_GROUPS.some((g) => {
-                const anchor = data.find((t) => t.TABLE_ID === g.anchorId)
-                return !anchor || !anchor.IS_MERGE_CAPTAIN
-              })
-              if (hasUnsynced) {
-                try {
-                  const synced = await syncTableMergeGroups(
-                    active.MERGE_GROUPS,
-                    data.map((t) => t.TABLE_ID),
-                    data,
-                  )
-                  setTables(synced)
-                  cacheTables(synced)
-                } catch (syncErr) {
-                  console.error('[TableManager] Failed to auto-sync active preset merge groups:', syncErr)
-                }
-              }
-            }
-          }
-        } catch (err) {
-          console.error('[TableManager] Failed to load presets:', err)
-        }
-
-        const initialConfig = activePresetForInit
-          ? {
-              widthBlocks: activePresetForInit.FLOOR_WIDTH_BLOCKS ?? 20,
-              heightBlocks: activePresetForInit.FLOOR_HEIGHT_BLOCKS ?? 16,
-              tableSizeBlocks: activePresetForInit.TABLE_SIZE_BLOCKS ?? 2,
-              spacingBlocks: activePresetForInit.TABLE_SPACING_BLOCKS ?? 1,
-              snapEnabled: activePresetForInit.SNAP_TO_GRID ?? true,
-            }
-          : undefined
-
-        const allowedTableIds = activePresetForInit?.LAYOUT_DATA
-          ? new Set(activePresetForInit.LAYOUT_DATA.map((item) => item.tableId))
-          : undefined
-
-        floorPlan.initializeFromTables(data, initialConfig, allowedTableIds)
-        floorPlan.markClean()
       }
+    })
+    ro.observe(containerRef.current)
+    return () => ro.disconnect()
+  }, [])
+
+  // ── 1. Initial Data Load ──
+  const loadInitialData = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const [allPresets, liveTables] = await Promise.all([
+        fetchAllLayoutPresets(),
+        fetchLiveRestaurantTables(),
+      ])
+      setPresets(allPresets)
+      setRestaurantTables(liveTables)
+
+      if (allPresets.length > 0) {
+        const defaultPreset = allPresets.find((p) => p.IS_DEFAULT) || allPresets[0]
+        setActivePresetId(defaultPreset.LAYOUT_PRESET_ID)
+        const layoutData = await fetchPresetLayout(defaultPreset.LAYOUT_PRESET_ID)
+        setLayoutTables(layoutData)
+      } else {
+        const created = await createLayoutPreset('Main Dining Hall', gridWidth, gridHeight, true)
+        setPresets([created])
+        setActivePresetId(created.LAYOUT_PRESET_ID)
+        setLayoutTables([])
+      }
+      setIsDirty(false)
     } catch (err) {
-      console.error('[TableManager] Load error:', err)
+      console.error('Error loading table manager data:', err)
+      showToast('Failed to load table layouts', 'error')
+    } finally {
+      setIsLoading(false)
     }
-  }, [loadSummariesForTables, floorPlan])
+  }, [gridWidth, gridHeight])
 
   useEffect(() => {
-    void loadAll()
-  }, [loadAll])
+    loadInitialData()
+  }, [loadInitialData])
 
-  // ── Realtime subscriptions ──
+  // ── 2. Realtime Subscription to Live Tables & Presets ──
   useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && !isMutatingRef.current) void loadAll()
-    }
-    document.addEventListener('visibilitychange', handleVisibility)
-
     const channel = supabase
-      .channel('tm-phase3-tables')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Tables' }, async (payload) => {
-        if (payload.eventType === 'UPDATE') {
-          const updated = payload.new as TableData
-          setTables((prev) => {
-            const next = prev.map((t) => t.TABLE_ID === updated.TABLE_ID ? updated : t)
-            cacheTables(next)
-            return next
-          })
-          const oldStatus = (payload.old as Partial<TableData>).STATUS as TableStatus | undefined
-          const newStatus = updated.STATUS
-          const wasOccupied = oldStatus && OCCUPIED_STATUSES.includes(oldStatus)
-          const isNowOccupied = OCCUPIED_STATUSES.includes(newStatus)
-          if (wasOccupied || isNowOccupied) {
-            const summaries = await fetchOrderSummariesForIds([updated.TABLE_ID])
-            setOrderSummaries((prev) => {
-              const next = new Map(prev)
-              const s = summaries.get(updated.TABLE_ID)
-              if (s) next.set(updated.TABLE_ID, s)
-              else next.delete(updated.TABLE_ID)
-              return next
-            })
-          }
-        } else if (payload.eventType === 'INSERT') {
-          const inserted = payload.new as TableData
-          setTables((prev) => {
-            if (prev.some((t) => t.TABLE_ID === inserted.TABLE_ID)) return prev
-            const next = [...prev, inserted].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
-            cacheTables(next)
-            return next
-          })
-          // Auto-place new table on floor plan
-          floorPlan.addTable(inserted)
-        } else if (payload.eventType === 'DELETE') {
-          const deletedId = (payload.old as { TABLE_ID: number }).TABLE_ID
-          setTables((prev) => {
-            const next = prev.filter((t) => t.TABLE_ID !== deletedId)
-            cacheTables(next)
-            return next
-          })
-          floorPlan.removeTable(deletedId)
-        }
-      })
+      .channel('table-manager-live-sync')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
-        async (payload) => {
-          const newRow = payload.new as Record<string, unknown> | null
-          const oldRow = payload.old as Record<string, unknown> | null
-          const targetTableId = Number(newRow?.['TABLE_ID'] || oldRow?.['TABLE_ID'])
-          if (targetTableId) {
-            const summaries = await fetchOrderSummariesForIds([targetTableId])
-            setOrderSummaries((prev) => {
-              const next = new Map(prev)
-              const s = summaries.get(targetTableId)
-              if (s) next.set(targetTableId, s)
-              else next.delete(targetTableId)
-              return next
-            })
-          }
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'Bill_Requests' },
-        () => {
-          void fetchAllBillRequests().then(setBillRequests)
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Events' },
+        { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
         async () => {
-          const evts = await fetchEvents().catch(() => [])
-          setEvents(evts)
+          try {
+            const updated = await fetchLiveRestaurantTables()
+            setRestaurantTables(updated)
+          } catch (err) {
+            console.error('Error in live tables realtime sync:', err)
+          }
         },
       )
-      .on('broadcast', { event: 'assistance_request' }, (payload) => {
-        const { tableId, tableIds } = (payload.payload ?? {}) as { tableId?: number; tableIds?: number[] }
-        const ids = tableIds && tableIds.length > 0 ? tableIds : (tableId ? [tableId] : [])
-        if (ids.length > 0) {
-          setTables((prev) => prev.map((t) => ids.includes(t.TABLE_ID) ? { ...t, STATUS: 'HAS_REQUEST' } : t))
-        }
-      })
-      .on('broadcast', { event: 'assistance_resolved' }, (payload) => {
-        const { tableId, tableIds } = (payload.payload ?? {}) as { tableId?: number; tableIds?: number[] }
-        const ids = tableIds && tableIds.length > 0 ? tableIds : (tableId ? [tableId] : [])
-        if (ids.length > 0) {
-          setTables((prev) => prev.map((t) => ids.includes(t.TABLE_ID) ? { ...t, STATUS: 'OCCUPIED', BILL_OUT_REQUESTED: false } : t))
-        }
-      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'tables', table: 'Table_Layout_Presets' },
+        async () => {
+          try {
+            const allPresets = await fetchAllLayoutPresets()
+            setPresets(allPresets)
+            const defaultPreset = allPresets.find((p) => p.IS_DEFAULT) || allPresets[0]
+            if (defaultPreset && !isDirty) {
+              setActivePresetId(defaultPreset.LAYOUT_PRESET_ID)
+              const [layoutData, live] = await Promise.all([
+                fetchPresetLayout(defaultPreset.LAYOUT_PRESET_ID),
+                fetchLiveRestaurantTables(),
+              ])
+              setLayoutTables(layoutData)
+              setRestaurantTables(live)
+            }
+          } catch (err) {
+            console.error('Error in presets realtime sync:', err)
+          }
+        },
+      )
       .subscribe()
 
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibility)
-      void supabase.removeChannel(channel)
+    const handleBroadcastSync = async (e: Event) => {
+      try {
+        const detail = (e as CustomEvent<{ type?: string; presetId?: number }>).detail
+        const [allPresets, live] = await Promise.all([
+          fetchAllLayoutPresets(),
+          fetchLiveRestaurantTables(),
+        ])
+        setPresets(allPresets)
+        setRestaurantTables(live)
+
+        const targetPresetId = detail?.presetId || allPresets.find((p) => p.IS_DEFAULT)?.LAYOUT_PRESET_ID
+        if (targetPresetId && !isDirty) {
+          setActivePresetId(targetPresetId)
+          const layoutData = await fetchPresetLayout(targetPresetId)
+          setLayoutTables(layoutData)
+        }
+      } catch (err) {
+        console.warn('Error handling broadcast sync in TableManager:', err)
+      }
     }
-  }, [loadAll, floorPlan])
+    window.addEventListener('monolith-order-update', handleBroadcastSync)
 
-  // ── Table operations ──────────────────────────────────────────────────────
+    return () => {
+      void supabase.removeChannel(channel)
+      window.removeEventListener('monolith-order-update', handleBroadcastSync)
+    }
+  }, [isDirty])
 
-  async function handleAddTable(capacity: number, widthBlocks?: number, heightBlocks?: number) {
-    if (totalSeats + capacity > effectiveMaxPax) {
-      showToast(`Cannot add table: remaining seating budget is ${Math.max(0, effectiveMaxPax - totalSeats)} Pax.`, 'error')
+  // ── 3. Switch Active Preset ──
+  const performSelectPreset = async (presetId: number) => {
+    setIsLoading(true)
+    try {
+      setActivePresetId(presetId)
+      setSelectedTableNum(null)
+      const layoutData = await fetchPresetLayout(presetId)
+      setLayoutTables(layoutData)
+      setIsDirty(false)
+    } catch (err) {
+      console.error('Failed to load preset layout:', err)
+      showToast('Failed to load preset layout', 'error')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleSelectPreset = (presetId: number) => {
+    if (presetId === activePresetId) return
+    if (isDirty) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'Unsaved Changes',
+        message: 'You have unsaved changes on the current layout. Discard changes and switch preset?',
+        confirmLabel: 'Discard & Switch',
+        variant: 'warning',
+        onConfirm: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }))
+          void performSelectPreset(presetId)
+        },
+      })
       return
     }
-    isMutatingRef.current = true
-    try {
-      const nextNum = Math.max(0, ...layoutTableNums) + 1
-      const result = await batchCreateTables(nextNum, 1, capacity, totalSeats, effectiveMaxPax)
-      if (result.created.length > 0) {
-        const newTable = result.created[0]
-        setTables((prev) => {
-          const newIds = new Set(result.created.map((t) => t.TABLE_ID))
-          return [...prev.filter((t) => !newIds.has(t.TABLE_ID)), ...result.created].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
-        })
-        floorPlan.addTable(newTable, widthBlocks, heightBlocks)
-        floorPlan.setSelectedTableId(newTable.TABLE_ID)
-        showToast(`Table ${newTable.TABLE_NUM} added (${capacity} Pax).`, 'success')
-      }
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      isMutatingRef.current = false
-    }
+    void performSelectPreset(presetId)
   }
 
-  async function handleCapacityChange(tableId: number, capacity: number): Promise<boolean> {
-    setSavingCapacity(true)
-    isMutatingRef.current = true
-    try {
-      const updated = await updateTable(tableId, { capacity })
-      setTables((prev) => patchTables(prev, updated))
-      showToast('Capacity updated.', 'success')
-      return true
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-      return false
-    } finally {
-      setSavingCapacity(false)
-      isMutatingRef.current = false
-    }
+  // ── 4. Rename Preset ──
+  const handleRenamePreset = (presetId: number, currentName: string) => {
+    setRenameModal({
+      isOpen: true,
+      presetId,
+      currentName,
+    })
   }
 
-  async function handleStatusChange(tableId: number, status: TableStatus) {
-    isMutatingRef.current = true
-    try {
-      const updated = await setTableStatus(tableId, status)
-      setTables((prev) => patchTables(prev, updated))
-      if (OCCUPIED_STATUSES.includes(status)) {
-        const summaries = await fetchOrderSummariesForIds([tableId])
-        setOrderSummaries((prev) => new Map([...prev, ...summaries]))
-      }
-      showToast(`Table marked as ${status.toLowerCase().replace('_', ' ')}.`, 'success')
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      isMutatingRef.current = false
-    }
+  const handleConfirmRename = async (newName: string) => {
+    if (!renameModal.presetId) return
+    const id = renameModal.presetId
+    await updateLayoutPresetName(id, newName)
+    setPresets((prev) =>
+      prev.map((p) =>
+        p.LAYOUT_PRESET_ID === id ? { ...p, PRESET_NAME: newName } : p,
+      ),
+    )
+    showToast(`Preset renamed to "${newName}"`, 'success')
   }
 
-  async function handleDeleteTable(tableId: number) {
-    setDeleteLoading(true)
-    isMutatingRef.current = true
-    try {
-      // Check if table is used in any other saved preset
-      const isUsedInOtherPreset = presets.some(
-        (p) => p.PRESET_ID !== activePresetId && p.LAYOUT_DATA?.some((item) => item.tableId === tableId),
-      )
-
-      if (isUsedInOtherPreset) {
-        // Only remove from current layout: clear positions in DB and local state
-        await clearTablePositions([tableId])
-        setTables((prev) =>
-          prev.map((t) => (t.TABLE_ID === tableId ? { ...t, LAYOUT_X: null, LAYOUT_Y: null } : t)),
-        )
-        floorPlan.removeTable(tableId)
-        showToast('Table removed from current layout.', 'success')
-        setShowDeleteConfirm(null)
-        return
-      }
-
-      const result = await deleteTables([tableId])
-      if (result.deleted.length > 0) {
-        setTables((prev) => prev.filter((t) => !result.deleted.includes(t.TABLE_ID)))
-        setOrderSummaries((prev) => { const next = new Map(prev); result.deleted.forEach(id => next.delete(id)); return next })
-        floorPlan.removeTable(tableId)
-        showToast('Table deleted.', 'success')
-      }
-      if (result.blocked.length > 0) {
-        showToast(result.blocked[0].reason, 'error')
-      }
-      setShowDeleteConfirm(null)
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      setDeleteLoading(false)
-      isMutatingRef.current = false
-    }
+  // ── 5. Delete Preset ──
+  const handleDeletePreset = (presetId: number) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Floor Plan',
+      message: 'Are you sure you want to delete this floor plan preset? This action cannot be undone.',
+      confirmLabel: 'Delete Preset',
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }))
+        try {
+          await deleteLayoutPreset(presetId)
+          const remaining = presets.filter((p) => p.LAYOUT_PRESET_ID !== presetId)
+          setPresets(remaining)
+          if (remaining.length > 0) {
+            void performSelectPreset(remaining[0].LAYOUT_PRESET_ID)
+          }
+          showToast('Layout preset deleted', 'success')
+        } catch (err) {
+          showToast('Failed to delete preset', 'error')
+        }
+      },
+    })
   }
 
-  async function handleRemoveAllTables() {
-    setDeleteLoading(true)
-    isMutatingRef.current = true
-    try {
-      const placedTableIds = floorPlan.positions.map((p) => p.tableId)
-      if (placedTableIds.length === 0) {
-        setShowRemoveAllConfirm(false)
-        return
-      }
+  // ── 5b. Discard Changes ──
+  const handleDiscardChanges = () => {
+    if (!activePresetId || !isDirty) return
+    setConfirmModal({
+      isOpen: true,
+      title: 'Discard Changes',
+      message: 'Are you sure you want to discard all unsaved layout changes and reload the last saved floor plan?',
+      confirmLabel: 'Discard Changes',
+      variant: 'warning',
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }))
+        setIsLoading(true)
+        try {
+          const layoutData = await fetchPresetLayout(activePresetId)
+          setLayoutTables(layoutData)
+          setIsDirty(false)
+          showToast('Layout changes discarded', 'info')
+        } catch (err) {
+          showToast('Failed to revert layout', 'error')
+        } finally {
+          setIsLoading(false)
+        }
+      },
+    })
+  }
 
-      // Find which placed tables are used in other presets
-      const usedInOtherPresets = new Set<number>()
-      for (const p of presets) {
-        if (p.PRESET_ID !== activePresetId && p.LAYOUT_DATA) {
-          for (const item of p.LAYOUT_DATA) {
-            if (placedTableIds.includes(item.tableId)) {
-              usedInOtherPresets.add(item.tableId)
+  // ── 6. Create New Preset ──
+  const handleCreatePreset = async (name: string, isDef: boolean) => {
+    const created = await createLayoutPreset(name, gridWidth, gridHeight, isDef)
+    setPresets((prev) => {
+      if (isDef) {
+        return [...prev.map((p) => ({ ...p, IS_DEFAULT: false })), created]
+      }
+      return [...prev, created]
+    })
+    setActivePresetId(created.LAYOUT_PRESET_ID)
+    setLayoutTables([])
+    setIsDirty(false)
+    showToast(`Preset "${name}" created`, 'success')
+  }
+
+  // ── 7. Add Table from Floating Controls ──
+  const handleAddTable = (type: TableType) => {
+    if (!activePresetId) return
+    const typeConfig = TABLE_TYPES[type]
+
+    // Check venue capacity
+    const remainingVenueCap = VENUE_MAX_CAPACITY - totalAllocatedCapacity
+    if (remainingVenueCap <= 0) {
+      showToast('Cannot add table: Maximum venue capacity (50 seats) reached', 'error')
+      return
+    }
+
+    const assignedCapacity = Math.min(typeConfig.defaultCapacity, remainingVenueCap)
+
+    // Find highest assigned TABLE_NUM
+    const existingNums = layoutTables.map((t) => t.TABLE_NUM)
+    const nextTableNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1
+
+    // Find first available cell on grid
+    let placedX = 1
+    let placedY = 1
+    let foundSpot = false
+
+    const occupiedCells = new Set<string>()
+    for (const t of layoutTables) {
+      const cfg = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
+      for (let dx = 0; dx < cfg.width; dx++) {
+        for (let dy = 0; dy < cfg.height; dy++) {
+          occupiedCells.add(`${t.X_POS + dx},${t.Y_POS + dy}`)
+        }
+      }
+    }
+
+    for (let y = 0; y <= gridHeight - typeConfig.height; y++) {
+      for (let x = 0; x <= gridWidth - typeConfig.width; x++) {
+        let collides = false
+        for (let dx = 0; dx < typeConfig.width; dx++) {
+          for (let dy = 0; dy < typeConfig.height; dy++) {
+            if (occupiedCells.has(`${x + dx},${y + dy}`)) {
+              collides = true
+              break
             }
           }
+          if (collides) break
+        }
+        if (!collides) {
+          placedX = x
+          placedY = y
+          foundSpot = true
+          break
+        }
+      }
+      if (foundSpot) break
+    }
+
+    const newTable: TableLayoutInfo = {
+      INFO_ID: `info-${activePresetId}-${nextTableNum}-${Date.now()}`,
+      LAYOUT_PRESET_ID: activePresetId,
+      TABLE_NUM: nextTableNum,
+      TABLE_TYPE: type,
+      MERGE_GROUP_ID: null,
+      X_POS: placedX,
+      Y_POS: placedY,
+    }
+
+    setLayoutTables((prev) => [...prev, newTable])
+    setRestaurantTables((prev) => [
+      ...prev,
+      {
+        TABLE_ID: nextTableNum,
+        TABLE_NUM: nextTableNum,
+        STATUS: 'AVAILABLE',
+        GUEST_CAPACITY: assignedCapacity,
+        CURRENT_GUEST_COUNT: 0,
+        RESERVED_SINCE: null,
+        BILL_OUT_REQUESTED: false,
+        MERGE_GROUP_ID: null,
+      },
+    ])
+    setSelectedTableNum(nextTableNum)
+    setIsDirty(true)
+    showToast(`Added ${typeConfig.name} #${nextTableNum} (${assignedCapacity} seats)`, 'info')
+  }
+
+  // ── 8. Change Table Type (With Automatic Collision Resolution) ──
+  const handleChangeTableType = (tableNum: number, newType: TableType) => {
+    const newCfg = TABLE_TYPES[newType] || TABLE_TYPES[1]
+
+    setLayoutTables((prev) => {
+      const target = prev.find((t) => t.TABLE_NUM === tableNum)
+      if (!target) return prev
+
+      // 1. Clamp target position inside grid bounds for new dimensions
+      const clampedX = Math.max(0, Math.min(gridWidth - newCfg.width, target.X_POS))
+      const clampedY = Math.max(0, Math.min(gridHeight - newCfg.height, target.Y_POS))
+
+      const updatedTarget: TableLayoutInfo = {
+        ...target,
+        TABLE_TYPE: newType,
+        X_POS: clampedX,
+        Y_POS: clampedY,
+      }
+
+      // 2. Set of cells occupied by target table
+      const occupiedByTarget = new Set<string>()
+      for (let dx = 0; dx < newCfg.width; dx++) {
+        for (let dy = 0; dy < newCfg.height; dy++) {
+          occupiedByTarget.add(`${clampedX + dx},${clampedY + dy}`)
         }
       }
 
-      const toUnplace = placedTableIds.filter((id) => usedInOtherPresets.has(id))
-      const toDelete = placedTableIds.filter((id) => !usedInOtherPresets.has(id))
+      // 3. Check for collisions with other tables and space them out
+      const allOccupied = new Set<string>(occupiedByTarget)
+      const otherTables = prev.filter((t) => t.TABLE_NUM !== tableNum)
+      const adjustedOtherTables: TableLayoutInfo[] = []
 
-      if (toUnplace.length > 0) {
-        await clearTablePositions(toUnplace)
-        setTables((prev) =>
-          prev.map((t) => (toUnplace.includes(t.TABLE_ID) ? { ...t, LAYOUT_X: null, LAYOUT_Y: null } : t)),
-        )
-      }
+      for (const other of otherTables) {
+        const otherCfg = TABLE_TYPES[other.TABLE_TYPE] || TABLE_TYPES[1]
+        let collides = false
 
-      if (toDelete.length > 0) {
-        const result = await deleteTables(toDelete)
-        if (result.deleted.length > 0) {
-          setTables((prev) => prev.filter((table) => !result.deleted.includes(table.TABLE_ID)))
-          setOrderSummaries((prev) => {
-            const next = new Map(prev)
-            result.deleted.forEach((id) => next.delete(id))
-            return next
-          })
-        }
-        if (result.blocked.length > 0) {
-          showToast(`${result.deleted.length} removed; ${result.blocked.length} kept because they have active data.`, 'info')
-        }
-      }
-
-      floorPlan.setPositions([])
-      showToast('All tables removed from current layout.', 'success')
-      setShowRemoveAllConfirm(false)
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      setDeleteLoading(false)
-      isMutatingRef.current = false
-    }
-  }
-
-  // ── Assistance & Bill Out ──
-
-  async function handleClearAssistance(tableId: number) {
-    isMutatingRef.current = true
-    try {
-      const affectedIds = await resolveTableAssistance(tableId)
-      setTables((prev) =>
-        prev.map((t) =>
-          affectedIds.includes(t.TABLE_ID)
-            ? { ...t, STATUS: 'OCCUPIED', BILL_OUT_REQUESTED: false }
-            : t,
-        ),
-      )
-      showToast('Assistance alert cleared.', 'info')
-    } finally {
-      isMutatingRef.current = false
-    }
-  }
-
-  async function handleClearBillOut(tableId: number) {
-    isMutatingRef.current = true
-    try {
-      const affectedIds = await resolveBillOutRequest(tableId)
-      setTables((prev) =>
-        prev.map((t) =>
-          affectedIds.includes(t.TABLE_ID)
-            ? { ...t, BILL_OUT_REQUESTED: false }
-            : t,
-        ),
-      )
-      setBillRequests((prev) =>
-        prev.filter((r) => !affectedIds.includes(r.tableId)),
-      )
-      showToast('Bill out request cleared.', 'info')
-    } finally {
-      isMutatingRef.current = false
-    }
-  }
-
-  // ── Layout persistence ──
-
-  async function handleSaveLayout(): Promise<boolean> {
-    setSavingLayout(true)
-    try {
-      await batchUpdateTablePositions(
-        floorPlan.positions.map((p) => ({ tableId: p.tableId, x: p.x, y: p.y })),
-      )
-
-      // Clear coordinates for tables not in the current floor plan
-      const placedIds = new Set(floorPlan.positions.map((p) => p.tableId))
-      const unplacedIds = tables
-        .map((t) => t.TABLE_ID)
-        .filter((id) => !placedIds.has(id))
-      if (unplacedIds.length > 0) {
-        await clearTablePositions(unplacedIds)
-      }
-
-      const positionsWithDims = floorPlan.positions.map((p) => {
-        const t = tables.find((tbl) => tbl.TABLE_ID === p.tableId)
-        return {
-          tableId: p.tableId,
-          tableNum: p.tableNum ?? t?.TABLE_NUM,
-          x: p.x,
-          y: p.y,
-          widthBlocks: p.widthBlocks,
-          heightBlocks: p.heightBlocks,
-          rotation: p.rotation ?? 0,
-          capacity: p.capacity ?? t?.GUEST_CAPACITY ?? 4,
-        }
-      })
-
-      // Synchronize merge groups to Restaurant_Tables in Supabase
-      const updatedTables = await syncTableMergeGroups(
-        floorPlan.mergeGroups,
-        tables.map((t) => t.TABLE_ID),
-        tables,
-      )
-      setTables(updatedTables)
-      cacheTables(updatedTables)
-
-      if (activePresetId !== null) {
-        const updatedPreset = await updatePreset(activePresetId, {
-          config: floorPlan.config,
-          positions: positionsWithDims,
-          mergeGroups: floorPlan.mergeGroups,
-        })
-        setPresets((prev) => prev.map((preset) =>
-          preset.PRESET_ID === updatedPreset.PRESET_ID ? updatedPreset : preset,
-        ))
-        const activeName =
-          presets.find((p) => p.PRESET_ID === activePresetId)?.PRESET_NAME ||
-          updatedPreset.PRESET_NAME
-        showToast(`Layout "${activeName}" saved.`, 'success')
-      } else {
-        showToast('Layout saved.', 'success')
-      }
-      floorPlan.markClean()
-      return true
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-      return false
-    } finally {
-      setSavingLayout(false)
-    }
-  }
-
-  async function handleToolbarSave() {
-    if (isSwitchingLayout) return
-    if (activePresetId !== null) {
-      await handleSaveLayout()
-    } else {
-      setShowSavePreset(true)
-    }
-  }
-
-  async function handleSavePreset(name: string, description: string, eventId?: number | null) {
-    setSavingPreset(true)
-    try {
-      // Save current positions to DB first
-      await batchUpdateTablePositions(
-        floorPlan.positions.map((p) => ({ tableId: p.tableId, x: p.x, y: p.y })),
-      )
-
-      // Clear coordinates for tables not in the current floor plan
-      const placedIds = new Set(floorPlan.positions.map((p) => p.tableId))
-      const unplacedIds = tables
-        .map((t) => t.TABLE_ID)
-        .filter((id) => !placedIds.has(id))
-      if (unplacedIds.length > 0) {
-        await clearTablePositions(unplacedIds)
-      }
-
-      const positionsWithDims = floorPlan.positions.map((p) => {
-        const t = tables.find((tbl) => tbl.TABLE_ID === p.tableId)
-        return {
-          tableId: p.tableId,
-          tableNum: p.tableNum ?? t?.TABLE_NUM,
-          x: p.x,
-          y: p.y,
-          widthBlocks: p.widthBlocks,
-          heightBlocks: p.heightBlocks,
-          rotation: p.rotation ?? 0,
-          capacity: p.capacity ?? t?.GUEST_CAPACITY ?? 4,
-        }
-      })
-
-      // Synchronize merge groups to Restaurant_Tables in Supabase
-      const updatedTables = await syncTableMergeGroups(
-        floorPlan.mergeGroups,
-        tables.map((t) => t.TABLE_ID),
-        tables,
-      )
-      setTables(updatedTables)
-      cacheTables(updatedTables)
-
-      const preset = await createPreset(
-        name,
-        description || null,
-        floorPlan.config,
-        positionsWithDims,
-        floorPlan.mergeGroups,
-        eventId ?? null,
-      )
-      await setActivePreset(preset.PRESET_ID)
-      setActivePresetId(preset.PRESET_ID)
-      setPresets((prev) => [
-        { ...preset, IS_ACTIVE: true },
-        ...prev.map((p) => ({ ...p, IS_ACTIVE: false })),
-      ])
-      setShowSavePreset(false)
-      floorPlan.markClean()
-      showToast(`Layout "${name}" saved.`, 'success')
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      setSavingPreset(false)
-    }
-  }
-
-  async function handleRenamePreset(name: string, description: string, eventId?: number | null) {
-    if (!renamePreset) return
-    setSavingPreset(true)
-    try {
-      const updated = await updatePreset(renamePreset.PRESET_ID, { name, description, eventId })
-      setPresets((prev) => prev.map((preset) => preset.PRESET_ID === updated.PRESET_ID ? updated : preset))
-      setRenamePreset(null)
-      showToast('Layout updated.', 'success')
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      setSavingPreset(false)
-    }
-  }
-
-  async function handleDeletePreset() {
-    if (!deletePresetConfirm) return
-    setSavingPreset(true)
-    try {
-      await deletePreset(deletePresetConfirm.PRESET_ID)
-      setPresets((prev) => prev.filter((preset) => preset.PRESET_ID !== deletePresetConfirm.PRESET_ID))
-      if (activePresetId === deletePresetConfirm.PRESET_ID) setActivePresetId(null)
-      setDeletePresetConfirm(null)
-      showToast('Saved layout deleted. Restaurant tables were not changed.', 'success')
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      setSavingPreset(false)
-    }
-  }
-
-  async function handleLoadPreset(presetId: number) {
-    if (hasActiveOrders) {
-      showToast('Cannot switch table layout while active orders are in progress.', 'error')
-      return
-    }
-    if (isSwitchingLayout) return
-
-    const preset = presets.find((p) => p.PRESET_ID === presetId)
-    if (!preset) return
-
-    // Check for unsaved changes
-    if (floorPlan.isDirty) {
-      setConfirmLoadPreset(preset)
-      return
-    }
-
-    await doLoadPreset(preset)
-  }
-
-  async function doLoadPreset(preset: LayoutPreset) {
-    if (hasActiveOrders) {
-      showToast('Cannot switch table layout while active orders are in progress.', 'error')
-      return
-    }
-    if (isSwitchingLayout) return
-
-    setIsSwitchingLayout(true)
-    setSwitchingLayoutName(preset.PRESET_NAME)
-    setSwitchingPresetId(preset.PRESET_ID)
-    setConfirmLoadPreset(null)
-    isMutatingRef.current = true
-
-    const minDisplayDelay = new Promise((resolve) => setTimeout(resolve, 650))
-
-    try {
-      // Apply preset config
-      floorPlan.setConfig({
-        widthBlocks: preset.FLOOR_WIDTH_BLOCKS ?? 20,
-        heightBlocks: preset.FLOOR_HEIGHT_BLOCKS ?? 16,
-        tableSizeBlocks: preset.TABLE_SIZE_BLOCKS ?? 2,
-        spacingBlocks: preset.TABLE_SPACING_BLOCKS ?? 1,
-        snapEnabled: preset.SNAP_TO_GRID ?? true,
-      })
-
-      const presetPlacements = preset.LAYOUT_DATA ?? []
-      if (presetPlacements.length === 0) {
-        showToast(`Preset "${preset.PRESET_NAME}" has no table layout data.`, 'info')
-        return
-      }
-
-      let currentTables = [...tables]
-      const assignedPositions: EditorTable[] = []
-      const usedTableIds = new Set<number>()
-
-      // Pass 1: exact tableId match
-      for (const p of presetPlacements) {
-        const match = currentTables.find((t) => t.TABLE_ID === p.tableId && !usedTableIds.has(t.TABLE_ID))
-        if (match) {
-          usedTableIds.add(match.TABLE_ID)
-          assignedPositions.push({
-            tableId: match.TABLE_ID,
-            tableNum: p.tableNum ?? match.TABLE_NUM,
-            capacity: p.capacity ?? match.GUEST_CAPACITY,
-            x: p.x,
-            y: p.y,
-            widthBlocks: p.widthBlocks,
-            heightBlocks: p.heightBlocks,
-            rotation: p.rotation ?? 0,
-          })
-        }
-      }
-
-      // Pass 2: match by tableNum if present in preset placement data
-      for (const p of presetPlacements) {
-        if (assignedPositions.some((ap) => ap.x === p.x && ap.y === p.y)) continue
-        if (p.tableNum != null) {
-          const match = currentTables.find((t) => t.TABLE_NUM === p.tableNum && !usedTableIds.has(t.TABLE_ID))
-          if (match) {
-            usedTableIds.add(match.TABLE_ID)
-            assignedPositions.push({
-              tableId: match.TABLE_ID,
-              tableNum: match.TABLE_NUM,
-              capacity: p.capacity ?? match.GUEST_CAPACITY,
-              x: p.x,
-              y: p.y,
-              widthBlocks: p.widthBlocks,
-              heightBlocks: p.heightBlocks,
-              rotation: p.rotation ?? 0,
-            })
+        for (let dx = 0; dx < otherCfg.width; dx++) {
+          for (let dy = 0; dy < otherCfg.height; dy++) {
+            if (occupiedByTarget.has(`${other.X_POS + dx},${other.Y_POS + dy}`)) {
+              collides = true
+              break
+            }
           }
+          if (collides) break
         }
-      }
 
-      // Pass 3: unassigned preset placements matched to available tables in DB
-      const unassignedPreset = presetPlacements.filter(
-        (p) => !assignedPositions.some((ap) => ap.x === p.x && ap.y === p.y),
-      )
-      const availableTables = currentTables.filter((t) => !usedTableIds.has(t.TABLE_ID))
-
-      let availIdx = 0
-      const missingToCreate: typeof presetPlacements = []
-
-      for (const p of unassignedPreset) {
-        if (availIdx < availableTables.length) {
-          const t = availableTables[availIdx++]
-          usedTableIds.add(t.TABLE_ID)
-          assignedPositions.push({
-            tableId: t.TABLE_ID,
-            tableNum: p.tableNum ?? t.TABLE_NUM,
-            capacity: p.capacity ?? t.GUEST_CAPACITY,
-            x: p.x,
-            y: p.y,
-            widthBlocks: p.widthBlocks,
-            heightBlocks: p.heightBlocks,
-            rotation: p.rotation ?? 0,
-          })
+        if (!collides) {
+          // No collision with target table, keep in place
+          for (let dx = 0; dx < otherCfg.width; dx++) {
+            for (let dy = 0; dy < otherCfg.height; dy++) {
+              allOccupied.add(`${other.X_POS + dx},${other.Y_POS + dy}`)
+            }
+          }
+          adjustedOtherTables.push(other)
         } else {
-          missingToCreate.push(p)
-        }
-      }
+          // Collides! Search for nearest free spot using radial search
+          let newX = other.X_POS
+          let newY = other.Y_POS
+          let foundFreeSpot = false
 
-      // Pass 4: If preset needs more tables than exist in DB, create them
-      if (missingToCreate.length > 0) {
-        const startNum = Math.max(0, ...currentTables.map((t) => t.TABLE_NUM)) + 1
-        const capacities = missingToCreate.map((p) => p.capacity ?? 4)
-        const res = await batchCreateTables(startNum, capacities, 4, 0)
-        if (res.created.length > 0) {
-          currentTables = [...currentTables, ...res.created].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
-          res.created.forEach((newT, i) => {
-            const p = missingToCreate[i]
-            assignedPositions.push({
-              tableId: newT.TABLE_ID,
-              tableNum: newT.TABLE_NUM,
-              capacity: newT.GUEST_CAPACITY,
-              x: p.x,
-              y: p.y,
-              widthBlocks: p.widthBlocks,
-              heightBlocks: p.heightBlocks,
-              rotation: p.rotation ?? 0,
-            })
+          for (let radius = 1; radius <= Math.max(gridWidth, gridHeight); radius++) {
+            for (let dy = -radius; dy <= radius; dy++) {
+              for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.abs(dx) !== radius && Math.abs(dy) !== radius) continue
+                const testX = other.X_POS + dx
+                const testY = other.Y_POS + dy
+
+                if (
+                  testX >= 0 &&
+                  testY >= 0 &&
+                  testX + otherCfg.width <= gridWidth &&
+                  testY + otherCfg.height <= gridHeight
+                ) {
+                  let testCollides = false
+                  for (let ox = 0; ox < otherCfg.width; ox++) {
+                    for (let oy = 0; oy < otherCfg.height; oy++) {
+                      if (allOccupied.has(`${testX + ox},${testY + oy}`)) {
+                        testCollides = true
+                        break
+                      }
+                    }
+                    if (testCollides) break
+                  }
+
+                  if (!testCollides) {
+                    newX = testX
+                    newY = testY
+                    foundFreeSpot = true
+                    break
+                  }
+                }
+              }
+              if (foundFreeSpot) break
+            }
+            if (foundFreeSpot) break
+          }
+
+          // Register newly adjusted position
+          for (let dx = 0; dx < otherCfg.width; dx++) {
+            for (let dy = 0; dy < otherCfg.height; dy++) {
+              allOccupied.add(`${newX + dx},${newY + dy}`)
+            }
+          }
+
+          adjustedOtherTables.push({
+            ...other,
+            X_POS: newX,
+            Y_POS: newY,
           })
         }
       }
 
-      floorPlan.setPositions(assignedPositions)
+      const combined = [updatedTarget, ...adjustedOtherTables]
+      const result = resolveConnectedMergeGroups(combined, areTablesAdjacent)
+      const suppMap = calculateSuppressionForLayout(result)
 
-      // Save positions to DB: assigned get coordinates; unassigned get (null, null)
-      await batchUpdateTablePositions(
-        assignedPositions.map((p) => ({ tableId: p.tableId, x: p.x, y: p.y })),
-      )
-      const assignedIds = new Set(assignedPositions.map((p) => p.tableId))
-      const unassignedIds = currentTables
-        .map((t) => t.TABLE_ID)
-        .filter((id) => !assignedIds.has(id))
-      if (unassignedIds.length > 0) {
-        await clearTablePositions(unassignedIds)
+      setRestaurantTables((prev) => syncRestaurantTablesWithLayout(result, suppMap, prev))
+
+      return result
+    })
+
+    setIsDirty(true)
+    showToast(`Table ${tableNum} changed to ${newCfg.name}`, 'info')
+  }
+
+  // ── 9. Update Seat Count (Cannot exceed max capacity or venue limit) ──
+  const handleUpdateSeatCount = (tableNum: number, seats: number) => {
+    const target = layoutTables.find((t) => t.TABLE_NUM === tableNum)
+    if (!target) return
+    const maxCapacity = TABLE_TYPES[target.TABLE_TYPE]?.defaultCapacity || 4
+
+    // Check remaining venue capacity
+    const otherTablesCap = layoutTables
+      .filter((t) => t.TABLE_NUM !== tableNum)
+      .reduce((sum, t) => {
+        const live = restaurantTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
+        return sum + (live?.GUEST_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
+      }, 0)
+
+    const venueMaxForThisTable = Math.max(1, VENUE_MAX_CAPACITY - otherTablesCap)
+    const clampedSeats = Math.max(1, Math.min(maxCapacity, venueMaxForThisTable, seats))
+
+    setRestaurantTables((prev) => {
+      const exists = prev.some((r) => r.TABLE_NUM === tableNum)
+      if (exists) {
+        return prev.map((r) =>
+          r.TABLE_NUM === tableNum ? { ...r, GUEST_CAPACITY: clampedSeats } : r,
+        )
+      } else {
+        return [
+          ...prev,
+          {
+            TABLE_ID: tableNum,
+            TABLE_NUM: tableNum,
+            STATUS: 'AVAILABLE' as const,
+            GUEST_CAPACITY: clampedSeats,
+            CURRENT_GUEST_COUNT: 0,
+            RESERVED_SINCE: null,
+            BILL_OUT_REQUESTED: false,
+            MERGE_GROUP_ID: target.MERGE_GROUP_ID,
+          },
+        ]
       }
+    })
 
-      // Update local tables state
-      currentTables = currentTables.map((t) => {
-        const pos = assignedPositions.find((ap) => ap.tableId === t.TABLE_ID)
-        if (pos) {
-          return {
-            ...t,
-            LAYOUT_X: pos.x,
-            LAYOUT_Y: pos.y,
-            ...(pos.capacity ? { GUEST_CAPACITY: pos.capacity } : {}),
-          }
-        }
-        return {
-          ...t,
-          LAYOUT_X: null,
-          LAYOUT_Y: null,
-        }
-      })
+    void updateTableCapacity(tableNum, clampedSeats).catch(() => { })
+    setIsDirty(true)
+  }
 
-      // Calculate merge groups from newly assigned positions and sync to Restaurant_Tables
-      const newMergeGroups = calculateMergeGroups(
-        assignedPositions,
-        preset.TABLE_SIZE_BLOCKS ?? floorPlan.config.tableSizeBlocks,
-      )
-      const updatedTables = await syncTableMergeGroups(
-        newMergeGroups,
-        currentTables.map((t) => t.TABLE_ID),
-        currentTables,
-      )
-      setTables(updatedTables)
-      cacheTables(updatedTables)
-
-      // Save dimensions and rotation to localStorage
-      const dims = getStoredTableDimensions()
-      assignedPositions.forEach((p) => {
-        dims[p.tableId] = {
-          widthBlocks: p.widthBlocks ?? preset.TABLE_SIZE_BLOCKS,
-          heightBlocks: p.heightBlocks ?? preset.TABLE_SIZE_BLOCKS,
-          rotation: p.rotation ?? 0,
-        }
-      })
-      saveStoredTableDimensions(dims)
-
-      // Set as active
-      await setActivePreset(preset.PRESET_ID)
-      setActivePresetId(preset.PRESET_ID)
-      setPresets((prev) =>
-        prev.map((p) => ({ ...p, IS_ACTIVE: p.PRESET_ID === preset.PRESET_ID })),
-      )
-
-      await minDisplayDelay
-      floorPlan.markClean()
-      showToast(`Layout "${preset.PRESET_NAME}" loaded successfully.`, 'success')
-    } catch (err: unknown) {
-      showToast((err as Error).message, 'error')
-    } finally {
-      setIsSwitchingLayout(false)
-      setSwitchingLayoutName('')
-      setSwitchingPresetId(null)
-      isMutatingRef.current = false
+  // ── 9b. Update Live Guest Count (View Mode & Live Ops) ──
+  const handleUpdateGuestCount = async (tableNum: number, count: number) => {
+    setRestaurantTables((prev) =>
+      prev.map((r) => (r.TABLE_NUM === tableNum ? { ...r, CURRENT_GUEST_COUNT: count } : r)),
+    )
+    try {
+      await updateTableGuestCount(tableNum, count)
+    } catch (err) {
+      console.error('Failed to update guest count:', err)
+      showToast('Failed to update guest count', 'error')
     }
   }
 
-  // ── Grid settings ──
-
-  function handleGridSettingsSave(config: FloorConfig) {
-    floorPlan.setConfig(config)
-    setShowGridSettings(false)
-    showToast('Grid settings applied. Click "Save Layout" to persist.', 'info')
+  // ── 9c. Update Live Table Status (View Mode & Live Ops) ──
+  const handleUpdateStatus = async (
+    tableNum: number,
+    status: RestaurantTableData['STATUS'],
+  ) => {
+    setRestaurantTables((prev) =>
+      prev.map((r) => (r.TABLE_NUM === tableNum ? { ...r, STATUS: status } : r)),
+    )
+    try {
+      await updateTableStatus(tableNum, status)
+      showToast(`Table ${tableNum} marked as ${status.toLowerCase()}`, 'success')
+    } catch (err) {
+      console.error('Failed to update table status:', err)
+      showToast('Failed to update table status', 'error')
+    }
   }
 
-  // ── Unmerge ──
+  // ── 10. Delete Selected Table ──
+  const handleDeleteTable = (tableNum: number) => {
+    setLayoutTables((prev) => {
+      const remaining = prev.filter((t) => t.TABLE_NUM !== tableNum)
+      const result = resolveConnectedMergeGroups(remaining, areTablesAdjacent)
+      const suppMap = calculateSuppressionForLayout(result)
 
-  async function handleUnmerge(anchorId: number) {
-    const group = floorPlan.mergeGroups.find(
-      (g) => g.anchorId === anchorId || g.memberIds.includes(anchorId),
+      setRestaurantTables((rPrev) =>
+        syncRestaurantTablesWithLayout(
+          result,
+          suppMap,
+          rPrev.filter((r) => r.TABLE_NUM !== tableNum),
+        ),
+      )
+      return result
+    })
+    setSelectedTableNum(null)
+    setIsDirty(true)
+    showToast(`Removed Table ${tableNum}`, 'info')
+  }
+
+  // ── 12. Update Table Number ──
+  const handleUpdateTableNum = (oldNum: number, newNum: number) => {
+    if (oldNum === newNum) return
+    if (layoutTables.some((t) => t.TABLE_NUM === newNum)) {
+      showToast(`Table number ${newNum} is already in use`, 'error')
+      return
+    }
+    setLayoutTables((prev) =>
+      prev.map((t) => (t.TABLE_NUM === oldNum ? { ...t, TABLE_NUM: newNum } : t)),
     )
-    if (!group || group.memberIds.length <= 1) {
-      showToast('This table is not merged.', 'info')
+    setSelectedTableNum(newNum)
+    setIsDirty(true)
+  }
+
+  // ── 13. Unmerge Table ──
+  const handleUnmergeTable = (tableNum: number) => {
+    setLayoutTables((prev) => {
+      const target = prev.find((t) => t.TABLE_NUM === tableNum)
+      if (!target || target.MERGE_GROUP_ID == null) return prev
+      const groupMembers = prev.filter((t) => t.MERGE_GROUP_ID === target.MERGE_GROUP_ID)
+
+      const raw =
+        groupMembers.length <= 2
+          ? prev.map((t) =>
+              t.MERGE_GROUP_ID === target.MERGE_GROUP_ID ? { ...t, MERGE_GROUP_ID: null } : t,
+            )
+          : prev.map((t) => (t.TABLE_NUM === tableNum ? { ...t, MERGE_GROUP_ID: null } : t))
+
+      const result = resolveConnectedMergeGroups(raw, areTablesAdjacent)
+      const suppMap = calculateSuppressionForLayout(result)
+
+      setRestaurantTables((rPrev) => syncRestaurantTablesWithLayout(result, suppMap, rPrev))
+
+      return result
+    })
+    setIsDirty(true)
+    showToast(`Table ${tableNum} unmerged`, 'info')
+  }
+
+  // ── 14. Save Layout ──
+  const handleSaveLayout = async () => {
+    if (!activePresetId) return
+    setIsSaving(true)
+    try {
+      const capacityMap = new Map<number, number>()
+      for (const r of restaurantTables) {
+        capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
+      }
+      await savePresetLayout(activePresetId, layoutTables, capacityMap)
+      setIsDirty(false)
+      setIsEditMode(false)
+      setSelectedTableNum(null)
+      showToast('Floor plan layout saved successfully!', 'success')
+      const updated = await fetchLiveRestaurantTables()
+      setRestaurantTables(updated)
+    } catch (err) {
+      console.error('Failed to save layout:', err)
+      showToast('Failed to save floor plan layout', 'error')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  // ── 15. Merging & Adjacency Detection ──
+  const areTablesAdjacent = useCallback((t1: TableLayoutInfo, t2: TableLayoutInfo) => {
+    const cfg1 = TABLE_TYPES[t1.TABLE_TYPE] || TABLE_TYPES[1]
+    const cfg2 = TABLE_TYPES[t2.TABLE_TYPE] || TABLE_TYPES[1]
+
+    const cells1: Array<{ x: number; y: number }> = []
+    for (let dx = 0; dx < cfg1.width; dx++) {
+      for (let dy = 0; dy < cfg1.height; dy++) {
+        cells1.push({ x: t1.X_POS + dx, y: t1.Y_POS + dy })
+      }
+    }
+
+    const cells2: Array<{ x: number; y: number }> = []
+    for (let dx = 0; dx < cfg2.width; dx++) {
+      for (let dy = 0; dy < cfg2.height; dy++) {
+        cells2.push({ x: t2.X_POS + dx, y: t2.Y_POS + dy })
+      }
+    }
+
+    for (const c1 of cells1) {
+      for (const c2 of cells2) {
+        const dist = Math.abs(c1.x - c2.x) + Math.abs(c1.y - c2.y)
+        if (dist === 1) return true
+      }
+    }
+    return false
+  }, [])
+
+  // ── 16. Drag Handling ──
+  const handleMouseDown = (tableNum: number, e: React.MouseEvent) => {
+    if (!isEditMode) {
+      setSelectedTableNum(tableNum)
       return
     }
 
-    // Move non-anchor tables to open spots
-    const nonAnchors = group.memberIds.filter((id) => id !== group.anchorId)
-    let updatedPositions = [...floorPlan.positions]
+    e.preventDefault()
+    e.stopPropagation()
+    const table = layoutTables.find((t) => t.TABLE_NUM === tableNum)
+    if (!table) return
 
-    for (const id of nonAnchors) {
-      const currentPos = updatedPositions.find((p) => p.tableId === id)
-      const w = currentPos?.widthBlocks ?? floorPlan.config.tableSizeBlocks
-      const h = currentPos?.heightBlocks ?? floorPlan.config.tableSizeBlocks
-
-      const pos = findFirstAvailablePosition(
-        floorPlan.config.tableSizeBlocks,
-        floorPlan.config.widthBlocks,
-        floorPlan.config.heightBlocks,
-        updatedPositions.filter((p) => p.tableId !== id),
-        floorPlan.config.spacingBlocks,
-        w,
-        h,
-      )
-      if (pos) {
-        updatedPositions = updatedPositions.map((p) =>
-          p.tableId === id ? { ...p, x: pos.x, y: pos.y } : p,
-        )
-      }
-    }
-
-    floorPlan.setPositions(updatedPositions)
-    showToast('Tables unmerged.', 'success')
+    setSelectedTableNum(tableNum)
+    setDragState({
+      tableNum,
+      startMouseX: e.clientX,
+      startMouseY: e.clientY,
+      startTableX: table.X_POS,
+      startTableY: table.Y_POS,
+      currentX: table.X_POS,
+      currentY: table.Y_POS,
+    })
   }
 
-  // ── Auto-disbursement when unmerging at 50/50 capacity ──
-  const prevMergeGroupsRef = useRef<MergeGroup[]>([])
-
   useEffect(() => {
-    const prevGroups = prevMergeGroupsRef.current
-    const currGroups = floorPlan.mergeGroups
-    prevMergeGroupsRef.current = currGroups
+    if (!dragState) return
 
-    if (prevGroups.length === 0) return
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaPixelX = e.clientX - dragState.startMouseX
+      const deltaPixelY = e.clientY - dragState.startMouseY
 
-    // Find tables that were grouped with 2+ members before, but separated
-    const unmergedTableIds = new Set<number>()
-    for (const oldGroup of prevGroups) {
-      for (const id of oldGroup.memberIds) {
-        const newGroup = currGroups.find((g) => g.memberIds.includes(id))
-        if (!newGroup || oldGroup.memberIds.some((formerId) => !newGroup.memberIds.includes(formerId))) {
-          unmergedTableIds.add(id)
-        }
+      const deltaGridX = Math.round(deltaPixelX / cellSize)
+      const deltaGridY = Math.round(deltaPixelY / cellSize)
+
+      const targetTable = layoutTables.find((t) => t.TABLE_NUM === dragState.tableNum)
+      if (!targetTable) return
+
+      const cfg = TABLE_TYPES[targetTable.TABLE_TYPE] || TABLE_TYPES[1]
+      const nextX = Math.max(0, Math.min(gridWidth - cfg.width, dragState.startTableX + deltaGridX))
+      const nextY = Math.max(0, Math.min(gridHeight - cfg.height, dragState.startTableY + deltaGridY))
+
+      if (nextX !== dragState.currentX || nextY !== dragState.currentY) {
+        setDragState((prev) => (prev ? { ...prev, currentX: nextX, currentY: nextY } : null))
       }
     }
 
-    if (unmergedTableIds.size === 0) return
+    const handleMouseUp = () => {
+      if (dragState) {
+        const { tableNum, currentX, currentY, startTableX, startTableY } = dragState
+        const hasMoved = currentX !== startTableX || currentY !== startTableY
 
-    // Calculate effective seating on floor
-    const floorSeats = layoutTables.reduce((sum, t) => {
-      return sum + calculateEffectiveCapacity(
-        t,
-        floorPlan.positions,
-        floorPlan.config.tableSizeBlocks,
-        floorPlan.mergeGroups,
-      )
-    }, 0)
+        if (hasMoved) {
+          setLayoutTables((prev) => {
+            const currentTable = prev.find((t) => t.TABLE_NUM === tableNum)
+            if (!currentTable) return prev
 
-    if (floorSeats > effectiveMaxPax) {
-      const unmergedTablesList = layoutTables.filter((t) => unmergedTableIds.has(t.TABLE_ID))
-      const otherTablesPax = layoutTables
-        .filter((t) => !unmergedTableIds.has(t.TABLE_ID))
-        .reduce((sum, t) => {
-          return sum + calculateEffectiveCapacity(
-            t,
-            floorPlan.positions,
-            floorPlan.config.tableSizeBlocks,
-            floorPlan.mergeGroups,
-          )
-        }, 0)
+            const movedTable: TableLayoutInfo = {
+              ...currentTable,
+              X_POS: currentX,
+              Y_POS: currentY,
+            }
 
-      const availableBudget = Math.max(unmergedTablesList.length, effectiveMaxPax - otherTablesPax)
-      const disbursements = disburseCapacities(unmergedTablesList, availableBudget)
+            const rawUpdated = prev.map((t) => (t.TABLE_NUM === tableNum ? movedTable : t))
+            const result = resolveConnectedMergeGroups(rawUpdated, areTablesAdjacent)
+            const suppMap = calculateSuppressionForLayout(result)
 
-      // Apply to React state immediately
-      setTables((prev) =>
-        prev.map((t) => {
-          const update = disbursements.find((d) => d.tableId === t.TABLE_ID)
-          return update ? { ...t, GUEST_CAPACITY: update.newCapacity } : t
-        }),
-      )
+            setRestaurantTables((rPrev) => syncRestaurantTablesWithLayout(result, suppMap, rPrev))
 
-      // Persist to database asynchronously
-      void Promise.all(
-        disbursements.map((d) => updateTable(d.tableId, { capacity: d.newCapacity })),
-      ).then(() => {
-        showToast(`Table capacities disbursed to maintain the ${effectiveMaxPax} Pax floor limit.`, 'info')
-      }).catch((e: Error) => {
-        console.error('Failed to update unmerged capacities:', e)
+            return result
+          })
+          setIsDirty(true)
+        }
+        setDragState(null)
+      }
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [dragState, gridWidth, gridHeight, layoutTables, areTablesAdjacent, cellSize])
+
+  // ── 17. Merged Live Nodes ──
+  const mergedNodes: MergedTableNode[] = useMemo(() => {
+    return layoutTables.map((lt) => {
+      const live = restaurantTables.find((rt) => rt.TABLE_NUM === lt.TABLE_NUM)
+      const supp = chairSuppressionMap.get(lt.TABLE_NUM)
+      const suppCount = supp?.suppressedCount ?? 0
+      const defaultCap = TABLE_TYPES[lt.TABLE_TYPE]?.defaultCapacity ?? 4
+      return {
+        ...lt,
+        STATUS: live?.STATUS ?? 'AVAILABLE',
+        CURRENT_GUEST_COUNT: live?.CURRENT_GUEST_COUNT ?? 0,
+        GUEST_CAPACITY: live?.GUEST_CAPACITY ?? Math.max(1, defaultCap - suppCount),
+        BILL_OUT_REQUESTED: live?.BILL_OUT_REQUESTED ?? false,
+        TABLE_ID: live?.TABLE_ID ?? lt.TABLE_NUM,
+      }
+    })
+  }, [layoutTables, restaurantTables, chairSuppressionMap])
+
+  // ── 18. Dynamic Bounding Box for Merged Groups ──
+  const mergeGroupBounds = useMemo(() => {
+    const groups = new Map<number, { minX: number; minY: number; maxX: number; maxY: number }>()
+
+    for (const node of mergedNodes) {
+      if (node.MERGE_GROUP_ID == null) continue
+      const cfg = TABLE_TYPES[node.TABLE_TYPE] || TABLE_TYPES[1]
+      const isDraggingThis = dragState?.tableNum === node.TABLE_NUM
+      const x = isDraggingThis ? dragState.currentX : node.X_POS
+      const y = isDraggingThis ? dragState.currentY : node.Y_POS
+      const right = x + cfg.width
+      const bottom = y + cfg.height
+
+      const current = groups.get(node.MERGE_GROUP_ID)
+      if (!current) {
+        groups.set(node.MERGE_GROUP_ID, {
+          minX: x,
+          minY: y,
+          maxX: right,
+          maxY: bottom,
+        })
+      } else {
+        groups.set(node.MERGE_GROUP_ID, {
+          minX: Math.min(current.minX, x),
+          minY: Math.min(current.minY, y),
+          maxX: Math.max(current.maxX, right),
+          maxY: Math.max(current.maxY, bottom),
+        })
+      }
+    }
+
+    return Array.from(groups.entries()).map(([groupId, bounds]) => ({
+      groupId,
+      ...bounds,
+    }))
+  }, [mergedNodes, dragState])
+
+  const selectedNode = mergedNodes.find((n) => n.TABLE_NUM === selectedTableNum) || null
+
+  const handleToggleEditMode = () => {
+    if (isEditMode && isDirty) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'Discard Changes & Exit',
+        message: 'You have unsaved changes. Exit edit mode and discard them?',
+        confirmLabel: 'Discard & Exit',
+        variant: 'warning',
+        onConfirm: async () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }))
+          if (activePresetId) {
+            const layoutData = await fetchPresetLayout(activePresetId)
+            setLayoutTables(layoutData)
+          }
+          setIsDirty(false)
+          setIsEditMode(false)
+          setSelectedTableNum(null)
+        },
       })
+      return
     }
-  }, [floorPlan.positions, floorPlan.mergeGroups, layoutTables, floorPlan.config.tableSizeBlocks, effectiveMaxPax])
-
-  // ── Totals ──
-  const totalSeats = useMemo(() => {
-    return layoutTables.reduce((sum, t) => {
-      return sum + calculateEffectiveCapacity(
-        t,
-        floorPlan.positions,
-        floorPlan.config.tableSizeBlocks,
-        floorPlan.mergeGroups,
-      )
-    }, 0)
-  }, [layoutTables, floorPlan.positions, floorPlan.config.tableSizeBlocks, floorPlan.mergeGroups])
-
-  // ── Render ────────────────────────────────────────────────────────────────
-
-
-
-
-
-  useEffect(() => {
-    if (!floorPlan.isDirty) return
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault()
-      event.returnValue = ''
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [floorPlan.isDirty])
+    setIsEditMode((prev) => !prev)
+    setSelectedTableNum(null)
+  }
 
   return (
-    <div className="table-manager-page-container staff-page fp-layout-root">
-      {/* Toast */}
+    <div className="table-manager-page-container staff-page flex flex-row h-full w-full overflow-hidden bg-[#F1F6F9] p-0 select-none">
+      {/* Toast Notification */}
       {toast && (
-        <div className={`tm-toast tm-toast-${toast.type}`}>
-          {toast.type === 'success' && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
-          {toast.type === 'error' && <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
-          {toast.text}
+        <div
+          className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-2xl shadow-xl border text-xs font-black flex items-center gap-2 animate-in slide-in-from-top-2 duration-150 ${toast.type === 'error'
+            ? 'bg-rose-700 text-white border-rose-500'
+            : toast.type === 'info'
+              ? 'bg-[#14274E] text-white border-slate-700'
+              : 'bg-emerald-700 text-white border-emerald-500'
+            }`}
+        >
+          <span>{toast.message}</span>
         </div>
       )}
 
-      {/* Alerts Banner */}
-      <TableAlertsBanner
-        tables={layoutTables}
-        billRequests={billRequests.filter((r) => layoutTableIds.has(r.tableId))}
-        onClearAssistance={handleClearAssistance}
-        onClearBillOut={handleClearBillOut}
-      />
-
-      {/* Toolbar */}
-      <FloorPlanToolbar
-        zoom={floorPlan.zoom}
-        canUndo={floorPlan.canUndo}
-        canRedo={floorPlan.canRedo}
-        snapEnabled={floorPlan.config.snapEnabled}
-        isDirty={floorPlan.isDirty}
-        saving={savingLayout || isSwitchingLayout}
-        activePresetName={activePreset?.PRESET_NAME}
-        onUndo={floorPlan.undo}
-        onRedo={floorPlan.redo}
-        onRotateSelected={floorPlan.selectedTableId !== null ? () => floorPlan.rotateTable(floorPlan.selectedTableId!) : undefined}
-        onZoomIn={floorPlan.zoomIn}
-        onZoomOut={floorPlan.zoomOut}
-        onResetZoom={floorPlan.resetZoom}
-        onToggleSnap={() => floorPlan.updateConfig({ snapEnabled: !floorPlan.config.snapEnabled })}
-        onOpenGridSettings={() => setShowGridSettings(true)}
-        onSavePreset={handleToolbarSave}
-        onPrintQr={() => {
-          if (layoutTables.length > 0) void downloadBulkQrPdf(layoutTables)
-        }}
-        onRemoveAll={() => {
-          if (floorPlan.positions.length > 0) setShowRemoveAllConfirm(true)
-        }}
-      />
-
-      {/* Three-panel layout */}
-      <div className="fp-three-panel">
-        {/* Left — Palette */}
-        <TablePalette
-          onAddTable={handleAddTable}
+      {/* ── Left Div: inner-table-manager-container ── */}
+      <div className="inner-table-manager-container flex-1 min-w-0 h-full flex flex-col overflow-hidden">
+        {/* Top: table-manager-header (Preset Dropdown on left & Save Layout / Discard Changes / Edit Layout on right) */}
+        <TableManagerHeader
           presets={presets}
           activePresetId={activePresetId}
-          onLoadPreset={handleLoadPreset}
-          onSavePreset={() => setShowSavePreset(true)}
-          onRenamePreset={setRenamePreset}
-          onDeletePreset={setDeletePresetConfirm}
-          tableCount={floorPlan.positions.length}
-          totalSeats={totalSeats}
-          maxPax={effectiveMaxPax}
-          activeLinkedEvent={activeLinkedEvent}
-          hasActiveOrders={hasActiveOrders}
-          isSwitchingLayout={isSwitchingLayout}
-          switchingPresetId={switchingPresetId}
+          totalCapacity={totalAllocatedCapacity}
+          maxVenueCapacity={VENUE_MAX_CAPACITY}
+          isDirty={isDirty}
+          onSelectPreset={handleSelectPreset}
+          onRenamePreset={handleRenamePreset}
+          onDeletePreset={handleDeletePreset}
+          onOpenNewPresetModal={() => setNewPresetModalOpen(true)}
+          isEditMode={isEditMode}
+          onToggleEditMode={handleToggleEditMode}
+          onSaveLayout={handleSaveLayout}
+          onDiscardChanges={handleDiscardChanges}
+          isSaving={isSaving}
         />
 
-        {/* Center — Floor Plan */}
-        <div className="fp-center-panel">
-          {floorPlan.positions.length === 0 ? (
-            <div className="fp-empty">
-              <div className="fp-empty-icon"><TableProperties className="w-7 h-7" /></div>
-              <div>
-                <p className="fp-empty-title">No tables yet</p>
-                <p className="fp-empty-desc">Add your first table to get started.</p>
-              </div>
-              <Button variant="primary" size="sm" onClick={() => setShowAddModal(true)}>
-                <Plus className="w-3.5 h-3.5" /> Add Tables
-              </Button>
+        {/* Big Div: layout-container (consumes whole width with margins on all sides, contains grid) */}
+        <div className="layout-container flex-1 min-h-0 mx-5 mb-5 mt-1 rounded-2xl bg-white border border-slate-200/90 shadow-xs relative overflow-hidden flex flex-col">
+          {/* Add Table button in upper right corner (Edit Mode only, non-obtrusive) */}
+          {isEditMode && (
+            <div className="absolute top-3.5 right-3.5 z-30">
+              <FloatingLayoutControls
+                onAddTable={handleAddTable}
+                totalCapacity={totalAllocatedCapacity}
+                maxVenueCapacity={VENUE_MAX_CAPACITY}
+              />
             </div>
-          ) : (
-            <FloorPlanEditor
-              floorPlan={floorPlan}
-              tables={tables}
-              onSelectTable={(id) => floorPlan.setSelectedTableId(id)}
-            />
           )}
-        </div>
 
-        {/* Right — Inspector */}
-        <TableInspector
-          table={inspectorTable}
-          position={inspectorPosition}
-          tableSizeBlocks={floorPlan.config.tableSizeBlocks}
-          maxCapacity={inspectorTable ? Math.max(inspectorTable.GUEST_CAPACITY, effectiveMaxPax - (totalSeats - inspectorTable.GUEST_CAPACITY)) : effectiveMaxPax}
-          mergeGroup={inspectorMergeGroup}
-          allTables={tables}
-          allPositions={floorPlan.positions}
-          onClose={() => floorPlan.setSelectedTableId(null)}
-          onCapacityChange={handleCapacityChange}
-          onDimensionsChange={(id, w, h) => floorPlan.updateTableDimensions(id, w, h)}
-          onRotate={(id) => floorPlan.rotateTable(id)}
-          onStatusChange={handleStatusChange}
-          onDelete={(id) => setShowDeleteConfirm(id)}
-          onQrPrint={(id) => {
-            const t = tables.find((t) => t.TABLE_ID === id)
-            if (t) setQrModalTable(t)
-          }}
-          onUnmerge={handleUnmerge}
-          saving={savingCapacity}
-          orderSummary={inspectorOrderSummary}
-        />
-      </div>
+          {/* Grid View Canvas Container - Dynamic edge-to-edge grid container */}
+          <div
+            ref={containerRef}
+            className="flex-1 h-full w-full overflow-hidden relative bg-white select-none p-0"
+            onClick={() => setSelectedTableNum(null)}
+          >
+            {/* Floor Grid: Covers 100% of w-full h-full with zero padding or margin (grid lines only visible in edit mode) */}
+            <div
+              className="w-full h-full relative select-none"
+              style={{
+                backgroundImage: isEditMode
+                  ? `
+                    linear-gradient(to right, rgba(20, 39, 78, 0.08) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(20, 39, 78, 0.08) 1px, transparent 1px)
+                  `
+                  : 'none',
+                backgroundSize: `${cellSize}px ${cellSize}px`,
+                backgroundPosition: '0 0',
+              }}
+            >
+              {/* Dynamic Broken-Line Bounding Box for Merged Table Groups */}
+              {mergeGroupBounds.map((group) => {
+                const padding = Math.max(6, Math.round(cellSize * 0.12))
+                const left = group.minX * cellSize - padding
+                const top = group.minY * cellSize - padding
+                const width = (group.maxX - group.minX) * cellSize + padding * 2
+                const height = (group.maxY - group.minY) * cellSize + padding * 2
 
-      {/* ── Modals ── */}
-      {showAddModal && (
-        <AddTablesModal
-          onClose={() => setShowAddModal(false)}
-          existingNums={existingTableNums}
-          maxCapacity={Math.max(0, effectiveMaxPax - totalSeats)}
-          currentEffectivePax={totalSeats}
-          effectiveMaxPax={effectiveMaxPax}
-          onCreated={(newTables, createdTemplates) => {
-            setTables((prev) => {
-              const newIds = new Set(newTables.map((t) => t.TABLE_ID))
-              return [...prev.filter((t) => !newIds.has(t.TABLE_ID)), ...newTables].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
-            })
-            newTables.forEach((t, i) => {
-              const tmpl = createdTemplates?.[i]
-              floorPlan.addTable(t, tmpl?.widthBlocks, tmpl?.heightBlocks)
-            })
-            const addedPax = newTables.reduce((s, t) => s + t.GUEST_CAPACITY, 0)
-            showToast(`${newTables.length} table(s) added (${addedPax} Pax).`, 'success')
-          }}
-        />
-      )}
+                return (
+                  <div
+                    key={`merge-group-${group.groupId}`}
+                    className="absolute pointer-events-none rounded-2xl border-2 border-dashed border-indigo-400/80 bg-indigo-500/5 transition-all duration-150 z-10 shadow-xs"
+                    style={{
+                      left: `${left}px`,
+                      top: `${top}px`,
+                      width: `${width}px`,
+                      height: `${height}px`,
+                    }}
+                  >
+                    <div className="absolute top-1.5 left-2 px-2 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-400/50 text-indigo-300 text-[10px] font-black tracking-wider uppercase shadow-xs">
+                      Merged #{group.groupId}
+                    </div>
+                  </div>
+                )
+              })}
 
-      {showDeleteConfirm !== null && (
-        <ConfirmDialog
-          title="Delete Table?"
-          description="Tables with active orders cannot be deleted."
-          confirmLabel="Delete Table"
-          confirmVariant="danger"
-          loading={deleteLoading}
-          onConfirm={() => void handleDeleteTable(showDeleteConfirm)}
-          onCancel={() => setShowDeleteConfirm(null)}
-        />
-      )}
+              {/* Render Tables */}
+              {mergedNodes.map((node) => {
+                const isDraggingThis = dragState?.tableNum === node.TABLE_NUM
+                const posX = isDraggingThis ? dragState.currentX : node.X_POS
+                const posY = isDraggingThis ? dragState.currentY : node.Y_POS
+                const isSelected = selectedTableNum === node.TABLE_NUM
+                const suppress = chairSuppressionMap.get(node.TABLE_NUM)
 
-      {showRemoveAllConfirm && (
-        <ConfirmDialog
-          title="Remove all tables?"
-          description="Tables with active orders are kept. This permanently removes every other table, including complete merge groups."
-          confirmLabel="Remove All Tables"
-          confirmVariant="danger"
-          loading={deleteLoading}
-          onConfirm={() => void handleRemoveAllTables()}
-          onCancel={() => setShowRemoveAllConfirm(false)}
-        />
-      )}
+                return (
+                  <div
+                    key={node.TABLE_NUM}
+                    onMouseDown={(e) => handleMouseDown(node.TABLE_NUM, e)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedTableNum(node.TABLE_NUM)
+                    }}
+                    className={`absolute transition-transform select-none ${isEditMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                      } ${isDraggingThis ? 'z-40 scale-105 opacity-90' : 'z-20'}`}
+                    style={{
+                      left: `${posX * cellSize}px`,
+                      top: `${posY * cellSize}px`,
+                    }}
+                  >
+                    <TableVisual
+                      tableType={node.TABLE_TYPE}
+                      tableNum={node.TABLE_NUM}
+                      cellSize={cellSize}
+                      status={node.STATUS}
+                      guestCount={node.CURRENT_GUEST_COUNT}
+                      capacity={node.GUEST_CAPACITY}
+                      isMerged={node.MERGE_GROUP_ID != null}
+                      mergeGroupId={node.MERGE_GROUP_ID}
+                      isSelected={isSelected}
+                      isEditMode={isEditMode}
+                      hideChairs={suppress}
+                    />
+                  </div>
+                )
+              })}
 
-      {showGridSettings && (
-        <GridSettingsModal
-          config={floorPlan.config}
-          activePresetName={activePreset?.PRESET_NAME}
-          onSave={handleGridSettingsSave}
-          onClose={() => setShowGridSettings(false)}
-        />
-      )}
+              {/* Loading State */}
+              {isLoading && (
+                <div className="absolute inset-0 bg-white/70 backdrop-blur-xs flex items-center justify-center z-50">
+                  <div className="flex items-center gap-2 text-xs font-black text-[#14274E]">
+                    <div className="w-4 h-4 rounded-full border-2 border-[#14274E] border-t-transparent animate-spin" />
+                    <span>Loading Floor Plan...</span>
+                  </div>
+                </div>
+              )}
 
-      {showSavePreset && (
-        <SavePresetModal
-          config={floorPlan.config}
-          events={events}
-          onSave={handleSavePreset}
-          onClose={() => setShowSavePreset(false)}
-          loading={savingPreset}
-        />
-      )}
-
-      {renamePreset && (
-        <SavePresetModal
-          initialName={renamePreset.PRESET_NAME}
-          initialDescription={renamePreset.DESCRIPTION ?? ''}
-          initialEventId={renamePreset.EVENT_ID ?? null}
-          events={events}
-          isUpdate
-          onSave={handleRenamePreset}
-          onClose={() => setRenamePreset(null)}
-          loading={savingPreset}
-        />
-      )}
-
-      {deletePresetConfirm && (
-        <ConfirmDeletePresetModal
-          presetName={deletePresetConfirm.PRESET_NAME}
-          onConfirm={() => void handleDeletePreset()}
-          onCancel={() => setDeletePresetConfirm(null)}
-          loading={savingPreset}
-        />
-      )}
-
-      {confirmLoadPreset && (
-        <ConfirmLoadModal
-          presetName={confirmLoadPreset.PRESET_NAME}
-          onConfirm={() => void doLoadPreset(confirmLoadPreset)}
-          onCancel={() => !isSwitchingLayout && setConfirmLoadPreset(null)}
-          loading={isSwitchingLayout}
-        />
-      )}
-
-      {navigationBlocker.state === 'blocked' && (
-        <ConfirmDialog
-          title="Save layout before leaving?"
-          description="Your table layout changes have not been saved yet. Save them before continuing to the next page."
-          confirmLabel="Save and Leave"
-          confirmVariant="primary"
-          loading={savingLayout}
-          onConfirm={() => {
-            void handleSaveLayout().then((layoutSaved) => {
-              if (layoutSaved) navigationBlocker.proceed()
-            })
-          }}
-          onCancel={() => navigationBlocker.reset()}
-        />
-      )}
-
-      {qrModalTable && (
-        <TableQrPreview
-          tableId={qrModalTable.TABLE_ID}
-          tableNum={qrModalTable.TABLE_NUM}
-          guestCapacity={qrModalTable.GUEST_CAPACITY}
-          onClose={() => setQrModalTable(null)}
-        />
-      )}
-
-      {/* ── Layout Switching Loading Animation & Interaction Lock Overlay ── */}
-      {isSwitchingLayout && (
-        <div
-          className="fp-layout-switching-overlay"
-          role="alertdialog"
-          aria-modal="true"
-          aria-busy="true"
-          aria-label="Switching layout"
-          onClick={(e) => {
-            e.stopPropagation()
-            e.preventDefault()
-          }}
-          onMouseDown={(e) => {
-            e.stopPropagation()
-            e.preventDefault()
-          }}
-        >
-          <div className="fp-layout-switching-card">
-            {/* Animated mini floor-plan rearrangement */}
-            <div className="fp-layout-anim-stage" aria-hidden="true">
-              <div className="fp-layout-orbit-ring" />
-              <div className="fp-mini-table fp-mini-table-1">1</div>
-              <div className="fp-mini-table fp-mini-table-2">2</div>
-              <div className="fp-mini-table fp-mini-table-3">3</div>
-              <div className="fp-mini-table fp-mini-table-4">4</div>
-            </div>
-
-            <h3 className="fp-layout-switching-title">Switching Layout</h3>
-
-            {switchingLayoutName && (
-              <div className="fp-layout-switching-badge">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                <span className="fp-layout-switching-badge-text">{switchingLayoutName}</span>
-              </div>
-            )}
-
-            <p className="fp-layout-switching-desc">
-              Synchronizing table arrangement, grid spacing, and floor plan dimensions...
-            </p>
-
-            {/* Shimmering progress track */}
-            <div className="fp-layout-progress-track">
-              <div className="fp-layout-progress-bar" />
-            </div>
-
-            {/* Locked interactions indicator */}
-            <div className="fp-layout-locked-pill">
-              <Lock className="w-3.5 h-3.5 text-amber-400" />
-              <span>Interactions locked during update</span>
+              {/* Empty State */}
+              {!isLoading && mergedNodes.length === 0 && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center pointer-events-none">
+                  <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center mb-3 shadow-xs">
+                    <TableShapeIcon tableType={1} size={32} />
+                  </div>
+                  <h3 className="text-sm font-extrabold text-[#14274E]">
+                    Floor Plan is Empty
+                  </h3>
+                  <p className="text-xs text-slate-400 font-medium max-w-xs mt-1">
+                    {isEditMode
+                      ? 'Click "+ Add Table" in the top bar to spawn tables onto the grid.'
+                      : 'Click "Edit Layout" at the top right to start adding tables.'}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
-      )}
+      </div>
+
+      {/* ── Right Div: table-manager-sidebar (Consistent & always visible) ── */}
+      <TableManagerSidebar
+        isEditMode={isEditMode}
+        selectedTable={selectedNode}
+        remainingVenueCapacity={VENUE_MAX_CAPACITY - totalAllocatedCapacity}
+        onUpdateTableNum={handleUpdateTableNum}
+        onChangeTableType={handleChangeTableType}
+        onUpdateSeatCount={handleUpdateSeatCount}
+        onUpdateGuestCount={handleUpdateGuestCount}
+        onUpdateStatus={handleUpdateStatus}
+        onUnmergeTable={handleUnmergeTable}
+        onDeleteTable={handleDeleteTable}
+      />
+
+      {/* New Preset Modal */}
+      <NewPresetModal
+        isOpen={newPresetModalOpen}
+        onClose={() => setNewPresetModalOpen(false)}
+        onCreate={handleCreatePreset}
+      />
+
+      {/* In-App Confirmation Modal */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmLabel={confirmModal.confirmLabel}
+        cancelLabel={confirmModal.cancelLabel}
+        variant={confirmModal.variant}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+      />
+
+      {/* In-App Rename Preset Modal */}
+      <RenamePresetModal
+        isOpen={renameModal.isOpen}
+        currentName={renameModal.currentName}
+        onClose={() => setRenameModal((prev) => ({ ...prev, isOpen: false }))}
+        onRename={handleConfirmRename}
+      />
     </div>
   )
 }

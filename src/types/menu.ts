@@ -18,11 +18,14 @@ export interface MenuItem {
   originalPrice?: number
   /** category ID — matches Category.id */
   categoryId: string
+  presetId?: number
   dietaryType: DietaryType
   /** Base64 Data URI or image data stored directly in database */
   imageUrl?: string
   isAvailable: boolean
   isSoldOut: boolean
+  isItemGroup?: boolean
+  includedItemNames?: string[]
   badge?: ItemBadge
   isBestSeller?: boolean
 }
@@ -37,5 +40,6 @@ export interface Category {
   id: string
   name: string
   count: number
+  presetId?: number
   icon?: string
 }

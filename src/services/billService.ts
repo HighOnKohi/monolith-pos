@@ -79,6 +79,7 @@ export async function updateBillRequestStatus(
   if (status === 'PAID' && tableId) {
     try {
       await supabase
+        .schema('tables')
         .from('Restaurant_Tables')
         .update({ BILL_OUT_REQUESTED: false })
         .eq('TABLE_ID', tableId)
@@ -99,6 +100,7 @@ export async function resolveBillOutRequest(tableId: number): Promise<number[]> 
   try {
     // 1. Clear table flag for all tables in merge group
     await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .update({ BILL_OUT_REQUESTED: false })
       .in('TABLE_ID', targetIds)

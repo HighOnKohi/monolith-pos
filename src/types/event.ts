@@ -48,6 +48,8 @@ export interface RestaurantEvent {
   maxPax?: number | null
   expectedAttendees?: number | null // alias for backwards compatibility
   presetId?: number | null         // linked Table_Layout_Presets ID
+  menuPresetId?: number | null     // linked Menu_Presets ID
+  isActive?: boolean               // active event toggle status
   contactName?: string | null
   contactPhone?: string | null
   contactEmail?: string | null
@@ -76,6 +78,8 @@ export interface EventFormData {
   maxPax: string     // string for input, parsed to int on save (default: 50)
   expectedAttendees?: string // deprecated alias
   presetId?: number | null   // linked layout preset ID
+  menuPresetId?: number | null // linked menu preset ID
+  isActive?: boolean         // active status
   contactName: string
   contactPhone: string
   contactEmail: string
@@ -96,6 +100,8 @@ export const EVENT_FORM_DEFAULTS: EventFormData = {
   maxPax: '50',
   expectedAttendees: '50',
   presetId: null,
+  menuPresetId: null,
+  isActive: false,
   contactName: '',
   contactPhone: '',
   contactEmail: '',

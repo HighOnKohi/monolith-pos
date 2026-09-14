@@ -42,6 +42,7 @@ export function getAssistanceRequestForTable(
 export async function getMergeGroupMemberIds(tableId: number): Promise<number[]> {
   try {
     const { data: target } = await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .select('TABLE_ID, MERGE_GROUP_ID')
       .eq('TABLE_ID', tableId)
@@ -51,6 +52,7 @@ export async function getMergeGroupMemberIds(tableId: number): Promise<number[]>
 
     const anchorId = target.MERGE_GROUP_ID ?? target.TABLE_ID
     const { data: secondaries } = await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .select('TABLE_ID')
       .eq('MERGE_GROUP_ID', anchorId)
@@ -97,6 +99,7 @@ export async function sendAssistanceRequest(
     }
 
     await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .update(updatePayload)
       .in('TABLE_ID', targetIds)
@@ -172,6 +175,7 @@ export async function resolveTableAssistance(tableId: number): Promise<number[]>
   // 1. Revert Restaurant_Tables STATUS to 'OCCUPIED' and clear BILL_OUT_REQUESTED for all group tables
   try {
     await supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .update({
         STATUS: 'OCCUPIED',

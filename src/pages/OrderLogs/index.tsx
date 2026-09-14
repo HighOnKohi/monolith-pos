@@ -93,6 +93,7 @@ export default function OrderLogsPage() {
   // ── Load Available Tables ──
   useEffect(() => {
     supabase
+      .schema('tables')
       .from('Restaurant_Tables')
       .select('TABLE_ID, TABLE_NUM')
       .order('TABLE_NUM', { ascending: true })
@@ -170,20 +171,6 @@ export default function OrderLogsPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'Order_Events' },
-        () => {
-          loadOrderLogs()
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'Ticket_Orders' },
-        () => {
-          loadOrderLogs()
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'Ticket_Order_Items' },
         () => {
           loadOrderLogs()
         },

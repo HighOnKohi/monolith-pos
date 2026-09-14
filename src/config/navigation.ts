@@ -8,7 +8,6 @@ import {
   CalendarDays,
   Users,
   ClipboardList,
-  Ticket,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -57,7 +56,6 @@ export const navigation: NavSection[] = [
         icon: Receipt,
         children: [
           { title: 'Service Interface', description: 'Manage service orders and bills.', path: '/service', icon: LayoutGrid },
-          { title: 'Ticketing Interface', description: 'Generate tickets and manage ticket orders.', path: '/ticketing', icon: Ticket },
           { title: 'Cashier Interface', description: 'Cashier tools.', path: '/cashier', icon: Receipt },
         ],
       },

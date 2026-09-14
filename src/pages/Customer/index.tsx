@@ -73,7 +73,7 @@ export default function CustomerPage() {
         'postgres_changes',
         {
           event: 'UPDATE',
-          schema: 'public',
+          schema: 'tables',
           table: 'Restaurant_Tables',
           filter: `TABLE_ID=eq.${parsedTableId}`,
         },
@@ -91,6 +91,7 @@ export default function CustomerPage() {
       if (document.visibilityState !== 'visible') return
       try {
         const { data } = await supabase
+          .schema('tables')
           .from('Restaurant_Tables')
           .select('STATUS')
           .eq('TABLE_ID', parsedTableId)
@@ -113,7 +114,7 @@ export default function CustomerPage() {
   }, [parsedTableId])
 
   // Hooks
-  const { items, categories, loadState } = useMenu()
+  const { items, categories, loadState, activePresetId } = useMenu()
   const {
     items: cartItems,
     diningType,
@@ -155,6 +156,7 @@ export default function CustomerPage() {
   // Derived filtered items with Best Sellers tab support and top sorting
   const filteredItems = useMemo(() => {
     const list = liveItems.filter((item) => {
+      if (item.presetId !== activePresetId) return false
       // 1. Search
       if (searchQuery) {
         const q = searchQuery.toLowerCase()
@@ -181,7 +183,7 @@ export default function CustomerPage() {
       if (!a.isBestSeller && b.isBestSeller) return 1
       return 0
     })
-  }, [liveItems, searchQuery, selectedCategory, dietaryFilter])
+  }, [liveItems, searchQuery, selectedCategory, dietaryFilter, activePresetId])
 
   // Active unserved orders count
   const activeOrderCount = useMemo(
