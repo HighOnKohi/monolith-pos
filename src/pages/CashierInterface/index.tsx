@@ -80,7 +80,7 @@ export default function CashierInterface() {
           const group = resolveTableGroupByList(valid, nextTables)
           void fetchOrdersByTable(group.anchorTableId, ALL_ACTIVE_ORDER_STATUSES, group.memberTableIds)
             .then((updated) => setOrders(updated))
-            .catch(() => {})
+            .catch(() => { })
         } else {
           setOrders([])
         }
@@ -419,33 +419,91 @@ export default function CashierInterface() {
           </div>
 
           {/* Tables Cards Grid */}
-          <div className="ci-table-grid">
-            {groups.map(({ table, group, summary }) => {
-              const enabled = summary.activeOrderCount > 0
-              return (
-                <button
-                  key={table.TABLE_ID}
-                  type="button"
-                  disabled={!enabled}
-                  className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${
-                    selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
-                  }`}
-                  onClick={() => void selectTable(group.anchorTableId)}
-                >
-                  <div className="ci-table-top">
-                    <span>Table {group.memberTableNums.join(' + ')}</span>
-                  </div>
-                  <div className={`tm-pax-row ${group.currentGuestCount >= group.capacity ? 'tm-pax-full' : ''}`}>
-                    <Users className="ci-icon" />
-                    <span>
-                      {group.currentGuestCount}/{group.capacity}
-                    </span>
-                  </div>
-                </button>
-              )
-            })}
-            {groups.length === 0 && <div className="ci-empty">No tables available.</div>}
-          </div>
+          {mode === 'tables' ? (
+            <div className="ci-table-grid">
+              {groups.map(({ table, group, summary }) => {
+                const enabled = summary.activeOrderCount > 0
+                return (
+                  <button
+                    key={table.TABLE_ID}
+                    type="button"
+                    disabled={!enabled}
+                    className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
+                      }`}
+                    onClick={() => void selectTable(group.anchorTableId)}
+                  >
+                    <div className="ci-table-top">
+                      <span>Table {group.memberTableNums.join(' + ')}</span>
+                    </div>
+                    <div className={`tm-pax-row ${group.currentGuestCount >= group.capacity ? 'tm-pax-full' : ''}`}>
+                      <Users className="ci-icon" />
+                      <span>
+                        {group.currentGuestCount}/{group.capacity}
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
+              {groups.length === 0 && <div className="ci-empty">No tables available.</div>}
+            </div>
+          ) : (
+            /* Tickets Cards Grid */
+            <div className="ci-table-grid">
+              {activeTickets.map((tk) => {
+                const isSelected = selectedTicketId === tk.ticketId
+                const displayName = tk.registeredName || 'Guest Order'
+                const isDone = tk.ticketStatus === 'COMPLETED'
+                const isCooking = tk.ticketStatus === 'PREPARING'
+                return (
+                  <button
+                    key={tk.ticketId}
+                    type="button"
+                    className={`ci-table-card ${isSelected ? 'is-selected' : ''}`}
+                    onClick={() => selectTicket(tk.ticketId)}
+                  >
+                    <div className="ci-table-top">
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <Ticket className="w-4 h-4 text-[#E9C46A] shrink-0" />
+                        <span className="text-base font-black text-[#14274E] truncate">
+                          {displayName}
+                        </span>
+                      </span>
+                      {isDone ? (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 shrink-0">READY</span>
+                      ) : isCooking ? (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 shrink-0">COOKING</span>
+                      ) : (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 shrink-0">REQUESTED</span>
+                      )}
+                    </div>
+
+                    <div className="text-left space-y-1.5 py-1">
+                      {tk.registeredContactInfo && (
+                        <div className="text-xs sm:text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                          <Phone className="w-4 h-4 text-slate-500 shrink-0" />
+                          <span>{tk.registeredContactInfo}</span>
+                        </div>
+                      )}
+                      {tk.registeredTimeOfArrival && (
+                        <div className="text-xs sm:text-sm font-black text-amber-900 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 flex items-center gap-1.5">
+                          <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span>ETA: {formatArrivalDisplay(tk.registeredTimeOfArrival)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs font-bold text-slate-500">
+                      <span>{(tk.items ?? []).length} items</span>
+                      <span className="text-base font-black text-[#14274E]">{money(tk.totalAmount ?? 0)}</span>
+                    </div>
+                  </button>
+                )
+              })}
+              {activeTickets.length === 0 && (
+                <div className="ci-empty">No active ticket orders.</div>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Sidebar Panel */}
@@ -554,9 +612,8 @@ export default function CashierInterface() {
                           return (
                             <div key={group.name} className="ci-item-group">
                               <div
-                                className={`ci-item-row ${
-                                  groupIndex % 2 === 0 ? 'ci-row-even' : 'ci-row-odd'
-                                }`}
+                                className={`ci-item-row ${groupIndex % 2 === 0 ? 'ci-row-even' : 'ci-row-odd'
+                                  }`}
                               >
                                 <span className="ci-item-name">{group.name}</span>
                                 <span className="ci-item-checkbox">
@@ -594,11 +651,9 @@ export default function CashierInterface() {
                         return (
                           <div key={group.name} className="ci-item-group">
                             <div
-                              className={`ci-item-row ${
-                                isMultiple && isCollapsed ? 'ci-collapsed-row' : ''
-                              } ${isMultiple && !isCollapsed ? 'ci-item-group-header' : ''} ${
-                                groupIndex % 2 === 0 ? 'ci-row-even' : 'ci-row-odd'
-                              }`}
+                              className={`ci-item-row ${isMultiple && isCollapsed ? 'ci-collapsed-row' : ''
+                                } ${isMultiple && !isCollapsed ? 'ci-item-group-header' : ''} ${groupIndex % 2 === 0 ? 'ci-row-even' : 'ci-row-odd'
+                                }`}
                             >
                               <span className="ci-item-name">
                                 {isMultiple && (
@@ -650,9 +705,8 @@ export default function CashierInterface() {
                               <span className="ci-item-price">{money(totalPrice)}</span>
                             </div>
                             <div
-                              className={`ci-subrows-container ${!isCollapsed ? 'expanded' : ''} ${
-                                disableAnimation ? 'no-animation' : ''
-                              }`}
+                              className={`ci-subrows-container ${!isCollapsed ? 'expanded' : ''} ${disableAnimation ? 'no-animation' : ''
+                                }`}
                             >
                               <div className="ci-subrows-inner">
                                 {group.items.map((item, itemIndex) => {
@@ -663,9 +717,8 @@ export default function CashierInterface() {
                                   }
                                   return (
                                     <div
-                                      className={`ci-item-row ci-item-subrow ${
-                                        groupIndex % 2 === 0 ? 'ci-row-even' : 'ci-row-odd'
-                                      }`}
+                                      className={`ci-item-row ci-item-subrow ${groupIndex % 2 === 0 ? 'ci-row-even' : 'ci-row-odd'
+                                        }`}
                                       key={item.orderItemId}
                                     >
                                       <span className="ci-item-name ci-subitem-name">└ #{itemIndex + 1}</span>
@@ -803,7 +856,7 @@ export default function CashierInterface() {
               {selectedTableGroup && (
                 <>
                   <p className="mb-3 text-slate-700 font-medium">
-                    Are you sure you want to remove active order(s) for <strong>Table {selectedTableGroup.group.memberTableNums.join(' + ')}</strong>?
+                    Are you sure you want to remove active order(s) for <strong>{selectedTableGroup.group.displayLabel}</strong>?
                   </p>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5 text-xs">
                     <div className="flex justify-between">

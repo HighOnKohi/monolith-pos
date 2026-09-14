@@ -110,12 +110,12 @@ export default function DispatcherInterface() {
       .channel('dispatcher-orders-realtime-sub')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        { event: '*', schema: 'orders', table: 'Restaurant_Orders' },
         () => loadOrders(true),
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Order_Items' },
+        { event: '*', schema: 'orders', table: 'Order_Items' },
         () => loadOrders(true),
       )
       .subscribe()
@@ -258,10 +258,10 @@ export default function DispatcherInterface() {
       currentOrders.map((order) =>
         order.orderId === orderId
           ? {
-              ...order,
-              orderStatus: 'PREPARING',
-              items: order.items.map((item) => (item.status === 'PENDING' ? { ...item, status: 'COOKING' } : item)),
-            }
+            ...order,
+            orderStatus: 'PREPARING',
+            items: order.items.map((item) => (item.status === 'PENDING' ? { ...item, status: 'COOKING' } : item)),
+          }
           : order,
       ),
     )
@@ -282,9 +282,9 @@ export default function DispatcherInterface() {
       currentOrders.map((order) =>
         order.orderId === orderId
           ? {
-              ...order,
-              orderStatus: 'READY',
-            }
+            ...order,
+            orderStatus: 'READY',
+          }
           : order,
       ),
     )
@@ -305,10 +305,10 @@ export default function DispatcherInterface() {
       currentOrders.map((order) =>
         order.orderId === orderId
           ? {
-              ...order,
-              orderStatus: 'COMPLETED',
-              items: order.items.map((item) => (item.status === 'CANCELLED' ? item : { ...item, status: 'DONE' })),
-            }
+            ...order,
+            orderStatus: 'COMPLETED',
+            items: order.items.map((item) => (item.status === 'CANCELLED' ? item : { ...item, status: 'DONE' })),
+          }
           : order,
       ),
     )
@@ -338,8 +338,8 @@ export default function DispatcherInterface() {
             toastMessage.type === 'success'
               ? 'bg-[#14274E] text-[#E9C46A] border-[#E9C46A]/40'
               : toastMessage.type === 'error'
-              ? 'bg-rose-700 text-white border-rose-500'
-              : 'bg-slate-800 text-white border-slate-600',
+                ? 'bg-rose-700 text-white border-rose-500'
+                : 'bg-slate-800 text-white border-slate-600',
           ].join(' ')}
         >
           <span>{toastMessage.text}</span>
@@ -397,118 +397,118 @@ export default function DispatcherInterface() {
       <main className="flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="dispatcher-orders-grid">
           {filteredOrders.length === 0 ? (
-              <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400 text-xs">
-                <ChefHat className="w-10 h-10 text-slate-300 mb-2" />
-                <span className="font-bold text-slate-600 text-sm">No orders in this stage</span>
-                <span>Orders will appear here as they are punched by service.</span>
-              </div>
-            ) : (
-              filteredOrders.map((order) => {
-                const groupedItems = groupOrderItems(order)
-                const allDone = groupedItems.length > 0 && groupedItems.every((item) => item.cookingCount === 0)
+            <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400 text-xs">
+              <ChefHat className="w-10 h-10 text-slate-300 mb-2" />
+              <span className="font-bold text-slate-600 text-sm">No orders in this stage</span>
+              <span>Orders will appear here as they are punched by service.</span>
+            </div>
+          ) : (
+            filteredOrders.map((order) => {
+              const groupedItems = groupOrderItems(order)
+              const allDone = groupedItems.length > 0 && groupedItems.every((item) => item.cookingCount === 0)
 
-                return (
-                  <div key={order.orderId} className="dispatcher-order-card">
-                    {/* Card Header */}
-                    <div className="dispatcher-order-header">
-                      <div>
-                        <h3 className="dispatcher-order-table">{order.tableDisplay}</h3>
-                        <span className="dispatcher-order-id">Order #{order.orderId}</span>
-                      </div>
-                      <span className="dispatcher-order-type">{order.orderType || 'DINE-IN'}</span>
+              return (
+                <div key={order.orderId} className="dispatcher-order-card">
+                  {/* Card Header */}
+                  <div className="dispatcher-order-header">
+                    <div>
+                      <h3 className="dispatcher-order-table">{order.tableDisplay}</h3>
+                      <span className="dispatcher-order-id">Order #{order.orderId}</span>
                     </div>
+                    <span className="dispatcher-order-type">{order.orderType || 'DINE-IN'}</span>
+                  </div>
 
-                    {/* Server/Kitchen notes */}
-                    {order.serverNote && (
-                      <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900 font-medium">
-                        <strong>Note:</strong> {order.serverNote}
+                  {/* Server/Kitchen notes */}
+                  {order.serverNote && (
+                    <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900 font-medium">
+                      <strong>Note:</strong> {order.serverNote}
+                    </div>
+                  )}
+
+                  {/* Items List with Cooking Steppers in cooking stage */}
+                  <div className="dispatcher-order-items">
+                    {groupedItems.map((group) => (
+                      <div key={group.itemId} className="dispatcher-order-item">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="dispatcher-item-name flex-1">{group.name}</span>
+
+                          {activeTableStage === 'cooking' ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] font-bold text-slate-400">
+                                {group.doneCount}/{group.totalQuantity} done
+                              </span>
+                              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                                <button
+                                  onClick={(e) => handleTableCookingCountChange(order.orderId, group.itemId, -1, e)}
+                                  disabled={group.cookingCount <= 0}
+                                  className="w-6 h-6 rounded flex items-center justify-center bg-white hover:bg-slate-200 disabled:opacity-30 text-slate-700 font-bold cursor-pointer"
+                                  title="Click: -1 | Shift+Click: Set to 0 (All Done)"
+                                >
+                                  <Minus className="w-3 h-3" />
+                                </button>
+                                <span className="w-6 text-center text-xs font-black text-[#14274E]">
+                                  {group.cookingCount}
+                                </span>
+                                <button
+                                  onClick={(e) => handleTableCookingCountChange(order.orderId, group.itemId, 1, e)}
+                                  disabled={group.cookingCount >= group.totalQuantity}
+                                  className="w-6 h-6 rounded flex items-center justify-center bg-[#14274E] hover:bg-[#203c73] disabled:opacity-30 text-white font-bold cursor-pointer"
+                                  title="Click: +1 | Shift+Click: Set to Max (All Cooking)"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
+                          )}
+                        </div>
                       </div>
+                    ))}
+                  </div>
+
+                  {/* Card Actions / State Transitions */}
+                  <div className="dispatcher-order-actions">
+                    {activeTableStage === 'preparing' && (
+                      <button
+                        onClick={() => handleMoveToCooking(order.orderId)}
+                        className="w-full py-2.5 rounded-xl bg-[#14274E] hover:bg-[#203c73] text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                      >
+                        <ChefHat className="w-4 h-4 text-[#E9C46A]" />
+                        <span>Start Cooking →</span>
+                      </button>
                     )}
 
-                    {/* Items List with Cooking Steppers in cooking stage */}
-                    <div className="dispatcher-order-items">
-                      {groupedItems.map((group) => (
-                        <div key={group.itemId} className="dispatcher-order-item">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="dispatcher-item-name flex-1">{group.name}</span>
+                    {activeTableStage === 'cooking' && (
+                      <button
+                        onClick={() => handleMoveToReady(order.orderId)}
+                        disabled={!allDone}
+                        className={[
+                          'w-full py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all shadow-xs',
+                          allDone
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
+                            : 'bg-slate-200 text-slate-400 cursor-not-allowed opacity-75',
+                        ].join(' ')}
+                        title={allDone ? 'Click to mark order as done' : 'Cook all items (count to 0) to mark as done'}
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        <span>{allDone ? 'Mark as Done (Ready) →' : 'Cooking Items Remaining'}</span>
+                      </button>
+                    )}
 
-                            {activeTableStage === 'cooking' ? (
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[11px] font-bold text-slate-400">
-                                  {group.doneCount}/{group.totalQuantity} done
-                                </span>
-                                <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                                  <button
-                                    onClick={(e) => handleTableCookingCountChange(order.orderId, group.itemId, -1, e)}
-                                    disabled={group.cookingCount <= 0}
-                                    className="w-6 h-6 rounded flex items-center justify-center bg-white hover:bg-slate-200 disabled:opacity-30 text-slate-700 font-bold cursor-pointer"
-                                    title="Click: -1 | Shift+Click: Set to 0 (All Done)"
-                                  >
-                                    <Minus className="w-3 h-3" />
-                                  </button>
-                                  <span className="w-6 text-center text-xs font-black text-[#14274E]">
-                                    {group.cookingCount}
-                                  </span>
-                                  <button
-                                    onClick={(e) => handleTableCookingCountChange(order.orderId, group.itemId, 1, e)}
-                                    disabled={group.cookingCount >= group.totalQuantity}
-                                    className="w-6 h-6 rounded flex items-center justify-center bg-[#14274E] hover:bg-[#203c73] disabled:opacity-30 text-white font-bold cursor-pointer"
-                                    title="Click: +1 | Shift+Click: Set to Max (All Cooking)"
-                                  >
-                                    <Plus className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Card Actions / State Transitions */}
-                    <div className="dispatcher-order-actions">
-                      {activeTableStage === 'preparing' && (
-                        <button
-                          onClick={() => handleMoveToCooking(order.orderId)}
-                          className="w-full py-2.5 rounded-xl bg-[#14274E] hover:bg-[#203c73] text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
-                        >
-                          <ChefHat className="w-4 h-4 text-[#E9C46A]" />
-                          <span>Start Cooking →</span>
-                        </button>
-                      )}
-
-                      {activeTableStage === 'cooking' && (
-                        <button
-                          onClick={() => handleMoveToReady(order.orderId)}
-                          disabled={!allDone}
-                          className={[
-                            'w-full py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all shadow-xs',
-                            allDone
-                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
-                              : 'bg-slate-200 text-slate-400 cursor-not-allowed opacity-75',
-                          ].join(' ')}
-                          title={allDone ? 'Click to mark order as done' : 'Cook all items (count to 0) to mark as done'}
-                        >
-                          <CheckCircle className="w-4 h-4" />
-                          <span>{allDone ? 'Mark as Done (Ready) →' : 'Cooking Items Remaining'}</span>
-                        </button>
-                      )}
-
-                      {activeTableStage === 'done' && (
-                        <button
-                          onClick={() => handleMoveToCompleted(order.orderId)}
-                          className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Mark as Complete →</span>
-                        </button>
-                      )}
-                    </div>
+                    {activeTableStage === 'done' && (
+                      <button
+                        onClick={() => handleMoveToCompleted(order.orderId)}
+                        className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Mark as Complete →</span>
+                      </button>
+                    )}
                   </div>
-                )
-              })
+                </div>
+              )
+            })
           )}
         </div>
       </main>

@@ -248,7 +248,7 @@ export default function CashierPage() {
       .channel('cashier-bill-requests-sync')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Bill_Requests' },
+        { event: '*', schema: 'orders', table: 'Bill_Requests' },
         () => {
           loadInitialData()
         }
@@ -260,7 +260,7 @@ export default function CashierPage() {
       .channel('cashier-orders-sync')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        { event: '*', schema: 'orders', table: 'Restaurant_Orders' },
         () => {
           loadInitialData()
         }
@@ -713,42 +713,42 @@ export default function CashierPage() {
                 mobileActiveView === 'menu' ? 'flex' : 'hidden lg:flex',
               ].join(' ')}
             >
-          {/* Header count bar for Category */}
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80 shrink-0 text-xs text-slate-500">
-            <span className="service-interface-selected-category-label font-semibold">
-              <strong className="text-[#14274E] font-extrabold">{currentCategoryName}</strong>
-              <span className="ml-1.5 text-slate-400">({filteredItems.length} dish{filteredItems.length !== 1 ? 'es' : ''})</span>
-            </span>
-          </div>
+              {/* Header count bar for Category */}
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80 shrink-0 text-xs text-slate-500">
+                <span className="service-interface-selected-category-label font-semibold">
+                  <strong className="text-[#14274E] font-extrabold">{currentCategoryName}</strong>
+                  <span className="ml-1.5 text-slate-400">({filteredItems.length} dish{filteredItems.length !== 1 ? 'es' : ''})</span>
+                </span>
+              </div>
 
-          {/* Dishes Grid — Smoothly Scrollable */}
-          <div className="flex-1 overflow-y-auto pr-1 pb-4">
-            {filteredItems.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs py-16">
-                <span className="font-bold text-sm text-slate-600 mb-1">No dishes found</span>
-                <span>Try adjusting your search or category filter.</span>
+              {/* Dishes Grid — Smoothly Scrollable */}
+              <div className="flex-1 overflow-y-auto pr-1 pb-4">
+                {filteredItems.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs py-16">
+                    <span className="font-bold text-sm text-slate-600 mb-1">No dishes found</span>
+                    <span>Try adjusting your search or category filter.</span>
+                  </div>
+                ) : (
+                  <div
+                    key={selectedCategory}
+                    className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5 pb-6"
+                  >
+                    {filteredItems.map((item) => {
+                      const cartEntry = punchCart.find((ci) => ci.item.id === item.id)
+                      const quantityInCart = cartEntry ? cartEntry.quantity : 0
+                      return (
+                        <ProductCard
+                          key={item.id}
+                          item={item}
+                          quantityInCart={quantityInCart}
+                          onAddToCart={handleAddToCart}
+                          onDecreaseQty={handleDecreasePunchQty}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div
-                key={selectedCategory}
-                className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5 pb-6"
-              >
-                {filteredItems.map((item) => {
-                  const cartEntry = punchCart.find((ci) => ci.item.id === item.id)
-                  const quantityInCart = cartEntry ? cartEntry.quantity : 0
-                  return (
-                    <ProductCard
-                      key={item.id}
-                      item={item}
-                      quantityInCart={quantityInCart}
-                      onAddToCart={handleAddToCart}
-                      onDecreaseQty={handleDecreasePunchQty}
-                    />
-                  )
-                })}
-              </div>
-            )}
-          </div>
             </div>
           </div>
         </div>

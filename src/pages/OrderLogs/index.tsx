@@ -163,14 +163,21 @@ export default function OrderLogsPage() {
       .channel('order_logs_realtime')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        { event: '*', schema: 'analytics', table: 'Completed_Orders' },
         () => {
           loadOrderLogs()
         },
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Order_Events' },
+        { event: '*', schema: 'orders', table: 'Restaurant_Orders' },
+        () => {
+          loadOrderLogs()
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'orders', table: 'Order_Events' },
         () => {
           loadOrderLogs()
         },

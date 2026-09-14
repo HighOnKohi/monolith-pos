@@ -77,7 +77,7 @@ export function useBillRequest(
         'postgres_changes',
         {
           event: '*',
-          schema: 'public',
+          schema: 'orders',
           table: 'Bill_Requests',
         },
         (payload) => {

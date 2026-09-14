@@ -141,25 +141,18 @@ async function getTableDisplayMap(): Promise<
     // Check if this table is an anchor for other tables
     const membersUnderThis = groupMembers.get(tId) || []
     if (membersUnderThis.length > 0) {
-      const allNums = Array.from(new Set([tNum, ...membersUnderThis.map((m) => m.num)])).sort(
-        (a, b) => a - b,
-      )
       map.set(tId, {
         tableNum: tNum,
-        displayLabel: allNums.map((n) => `Table ${n}`).join(' + ') + ' (Merged)',
+        displayLabel: `Table ${tNum}`,
         isMerged: true,
       })
     } else if (mgId !== null) {
       // This is a secondary member of mgId
       const anchor = tables.find((tb) => Number(tb.TABLE_ID) === mgId)
       const anchorNum = anchor ? Number(anchor.TABLE_NUM) || mgId : mgId
-      const allMembers = groupMembers.get(mgId) || []
-      const allNums = Array.from(new Set([anchorNum, ...allMembers.map((m) => m.num)])).sort(
-        (a, b) => a - b,
-      )
       map.set(tId, {
         tableNum: tNum,
-        displayLabel: allNums.map((n) => `Table ${n}`).join(' + ') + ' (Merged)',
+        displayLabel: `Table ${anchorNum}`,
         isMerged: true,
       })
     } else {
@@ -196,6 +189,7 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
   // 1. Resolve table metadata map
   const tableMap = await getTableDisplayMap()
 
+<<<<<<< HEAD
   // 2. Fetch Restaurant_Orders
   let query = supabase.from('Restaurant_Orders').select('*')
 
@@ -213,6 +207,127 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
   }
   if (tableId && tableId !== 'ALL') {
     query = query.eq('TABLE_ID', tableId)
+=======
+  // 2. Fetch Completed_Orders and Restaurant_Orders (unless filtered strictly to Ticketing)
+  let tableRows: OrderLogRow[] = []
+  if (orderSource !== 'Ticketing') {
+    let compQuery = supabase.from('Completed_Orders').select('*')
+    let restQuery = supabase.from('Restaurant_Orders').select('*')
+
+    if (startDate) {
+      compQuery = compQuery.gte('TIME', toIsoDate(startDate))
+      restQuery = restQuery.gte('TIME', toIsoDate(startDate))
+    }
+    if (endDate) {
+      compQuery = compQuery.lte('TIME', toIsoDate(endDate))
+      restQuery = restQuery.lte('TIME', toIsoDate(endDate))
+    }
+    if (orderStatus && orderStatus !== 'ALL') {
+      compQuery = compQuery.eq('ORDER_STATUS', orderStatus)
+      restQuery = restQuery.eq('ORDER_STATUS', orderStatus)
+    }
+    if (orderSource && orderSource !== 'ALL') {
+      compQuery = compQuery.eq('REQUESTED_FROM', orderSource)
+      restQuery = restQuery.eq('REQUESTED_FROM', orderSource)
+    }
+    if (tableId && tableId !== 'ALL') {
+      compQuery = compQuery.eq('TABLE_ID', tableId)
+      restQuery = restQuery.eq('TABLE_ID', tableId)
+    }
+
+    const [{ data: rawCompleted }, { data: rawOrders }] = await Promise.all([
+      compQuery,
+      restQuery,
+    ])
+
+    const completedArchivedIds = new Set(
+      (rawCompleted ?? [])
+        .map((co) => Number(co['ORIGINAL_ORDER_ID'] ?? co['ORDER_ID']))
+        .filter(Boolean),
+    )
+
+    const mergedRawOrders: Array<Record<string, unknown>> = [
+      ...(rawCompleted ?? []),
+      ...(rawOrders ?? []).filter((ro) => !completedArchivedIds.has(Number(ro['ORDER_ID']))),
+    ]
+
+    tableRows = mergedRawOrders.map((o) => {
+      const oId = Number(o['ORDER_ID'])
+      const tId = Number(o['TABLE_ID'])
+      const tInfo = tableMap.get(tId) || { tableNum: Number(o['TABLE_NUM']) || tId, displayLabel: `Table ${Number(o['TABLE_NUM']) || tId}`, isMerged: false }
+      const st = String(o['ORDER_STATUS'] || 'REQUESTED') as OrderStatus
+      const reqFrom = String(o['REQUESTED_FROM'] || 'Cashier') === 'Customer' ? 'Customer' : 'Cashier'
+      const ordType = String(o['ORDER_TYPE'] || 'DINE-IN').toUpperCase().includes('TAKEOUT')
+        ? 'TAKEOUT'
+        : 'DINE-IN'
+      const total = Number(o['TOTAL_BILL']) || 0
+      const subtotal = Number(o['SUBTOTAL_BILL']) || total
+      const guests = Math.max(Number(o['GUEST_COUNT']) || 1, 1)
+
+      const timeStr = String(o['TIME'] || '')
+      const readyStr = o['READY_AT'] ? String(o['READY_AT']) : null
+      const servedStr = o['SERVED_AT'] ? String(o['SERVED_AT']) : null
+      const compStr = o['COMPLETED_AT'] ? String(o['COMPLETED_AT']) : null
+
+      let servingDurationMinutes: number | null = null
+      const timeDate = parseDbTimestamp(timeStr)
+      const servedDate = parseDbTimestamp(servedStr)
+      const readyDate = parseDbTimestamp(readyStr)
+
+      if (timeDate && servedDate) {
+        const diff = (servedDate.getTime() - timeDate.getTime()) / 60000
+        if (diff >= 0 && diff < 1440) {
+          servingDurationMinutes = Math.round(diff * 10) / 10
+        }
+      }
+
+      let prepDurationMinutes: number | null = null
+      if (timeDate && readyDate) {
+        const diff = (readyDate.getTime() - timeDate.getTime()) / 60000
+        if (diff >= 0 && diff < 1440) {
+          prepDurationMinutes = Math.round(diff * 10) / 10
+        }
+      }
+
+      let calcItemCount = 0
+      if (o['ITEM_COUNT'] != null && Number(o['ITEM_COUNT']) > 0) {
+        calcItemCount = Number(o['ITEM_COUNT'])
+      } else if (Array.isArray(o['ORDER_ITEMS'])) {
+        calcItemCount = (o['ORDER_ITEMS'] as any[]).reduce(
+          (sum: number, it: any) => sum + (Number(it.quantity) || 1),
+          0,
+        )
+      }
+
+      const isPaid = st === 'COMPLETED'
+      const pMethod = String(o['PAYMENT_METHOD'] || 'CASH').toUpperCase()
+
+      return {
+        orderId: oId,
+        tableId: tId,
+        tableNum: tInfo.tableNum,
+        mergedGroupLabel: tInfo.isMerged ? tInfo.displayLabel : null,
+        isMerged: tInfo.isMerged,
+        orderStatus: st,
+        orderType: ordType,
+        requestedFrom: reqFrom,
+        totalBill: total,
+        subtotalBill: subtotal,
+        paymentStatus: isPaid ? 'PAID' : 'UNPAID',
+        paymentMethod: pMethod,
+        guestCount: guests,
+        createdAt: timeStr,
+        readyAt: readyStr,
+        servedAt: servedStr,
+        completedAt: compStr,
+        servingDurationMinutes,
+        prepDurationMinutes,
+        itemCount: calcItemCount,
+        kitchenNote: o['KITCHEN_NOTE'] ? String(o['KITCHEN_NOTE']) : null,
+        serverNote: o['SERVER_NOTE'] ? String(o['SERVER_NOTE']) : null,
+      }
+    })
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
   }
 
   const { data: rawOrders, error } = await query
@@ -417,20 +532,46 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
  * Fetches complete details for an order to show in the side drawer.
  */
 export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetails> {
-  // 1. Fetch order row from Restaurant_Orders
-  const { data: orderData } = await supabase
-    .from('Restaurant_Orders')
+  // 1. Fetch order row from Completed_Orders or Restaurant_Orders
+  let orderData: Record<string, unknown> | null = null
+  let isFromCompletedTable = false
+
+  const { data: compData } = await supabase
+    .from('Completed_Orders')
     .select('*')
     .eq('ORDER_ID', orderId)
     .maybeSingle()
 
+<<<<<<< HEAD
   if (!orderData) {
     throw new Error(`Order #${orderId} could not be found`)
+=======
+  if (compData) {
+    orderData = compData as Record<string, unknown>
+    isFromCompletedTable = true
+  } else {
+    const { data: restData } = await supabase
+      .from('Restaurant_Orders')
+      .select('*')
+      .eq('ORDER_ID', orderId)
+      .maybeSingle()
+
+    if (restData) {
+      orderData = restData as Record<string, unknown>
+    } else {
+      // If not found in Completed_Orders or Restaurant_Orders, check Ticket_Orders
+      return fetchTicketOrderDetails(orderId)
+    }
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
   }
 
   const tableMap = await getTableDisplayMap()
   const tId = Number(orderData['TABLE_ID'])
-  const tInfo = tableMap.get(tId) || { tableNum: tId, displayLabel: `Table ${tId}`, isMerged: false }
+  const tInfo = tableMap.get(tId) || {
+    tableNum: Number(orderData['TABLE_NUM']) || tId,
+    displayLabel: `Table ${Number(orderData['TABLE_NUM']) || tId}`,
+    isMerged: false,
+  }
   const st = String(orderData['ORDER_STATUS'] || 'REQUESTED') as OrderStatus
   const reqFrom = String(orderData['REQUESTED_FROM'] || 'Cashier') === 'Customer' ? 'Customer' : 'Cashier'
   const ordType = String(orderData['ORDER_TYPE'] || 'DINE-IN').toUpperCase().includes('TAKEOUT')
@@ -490,66 +631,89 @@ export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetail
     serverNote: orderData['SERVER_NOTE'] ? String(orderData['SERVER_NOTE']) : null,
   }
 
-  // 2. Fetch Order Items joined with Menu_Items & Menu_Categories
-  const { data: rawItems, error: itemsErr } = await supabase
-    .from('Order_Items')
-    .select(`
-      ORDER_ITEM_ID,
-      ORDER_ID,
-      ITEM_ID,
-      ORDER_ITEM_STATUS,
-      IS_FLAGGED,
-      Menu_Items (
-        ITEM_ID,
-        ITEM_NAME,
-        ITEM_PRICE,
-        CATEGORY_ID,
-        Menu_Categories (
-          CATEGORY_ID,
-          CATEGORY_NAME
-        )
-      )
-    `)
-    .eq('ORDER_ID', orderId)
-
-  if (itemsErr) {
-    console.error('[orderLogsService] Error fetching order items:', itemsErr)
-  }
-
-  // Aggregate items by ITEM_ID
-  const itemMap = new Map<number, OrderLogItemDetail>()
-  for (const it of (rawItems as any[]) ?? []) {
-    const rawMenuItem = (it as any)['Menu_Items']
-    const menuItem = (Array.isArray(rawMenuItem) ? rawMenuItem[0] : rawMenuItem) as Record<string, unknown> | null
-    if (!menuItem) continue
-    const itemId = Number(menuItem['ITEM_ID'])
-    const itemName = String(menuItem['ITEM_NAME'] || `Item #${itemId}`)
-    const price = Number(menuItem['ITEM_PRICE'] || 0)
-    const rawCat = (menuItem as any)['Menu_Categories']
-    const catObj = (Array.isArray(rawCat) ? rawCat[0] : rawCat) as Record<string, unknown> | null
-    const categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'General'
-    const status = String(it['ORDER_ITEM_STATUS'] || 'PENDING')
-
-    const existing = itemMap.get(itemId)
-    if (existing) {
-      existing.quantity += 1
-    } else {
-      itemMap.set(itemId, {
-        orderItemId: Number(it['ORDER_ITEM_ID']),
+  // 2. Fetch Order Items (from ORDER_ITEMS jsonb or child Order_Items table)
+  const items: OrderLogItemDetail[] = []
+  if (
+    isFromCompletedTable &&
+    Array.isArray(orderData['ORDER_ITEMS']) &&
+    (orderData['ORDER_ITEMS'] as any[]).length > 0
+  ) {
+    for (let idx = 0; idx < (orderData['ORDER_ITEMS'] as any[]).length; idx++) {
+      const it = (orderData['ORDER_ITEMS'] as any[])[idx]
+      items.push({
+        orderItemId: idx + 1,
         orderId,
-        itemId,
-        itemName,
-        categoryName,
-        price,
-        quantity: 1,
-        itemStatus: status,
+        itemId: Number(it.item_id || it.itemId || idx + 1),
+        itemName: String(it.item_name || it.itemName || 'Dish'),
+        categoryName: String(it.category_name || it.categoryName || 'General'),
+        price: Number(it.price || it.unitPrice || 0),
+        quantity: Number(it.quantity) || 1,
+        itemStatus: 'COMPLETED',
         notes: null,
       })
     }
-  }
+    orderRow.itemCount = items.reduce((sum, it) => sum + it.quantity, 0)
+  } else {
+    const { data: rawItems, error: itemsErr } = await supabase
+      .from('Order_Items')
+      .select(`
+        ORDER_ITEM_ID,
+        ORDER_ID,
+        ITEM_ID,
+        ORDER_ITEM_STATUS,
+        IS_FLAGGED,
+        Menu_Items (
+          ITEM_ID,
+          ITEM_NAME,
+          ITEM_PRICE,
+          CATEGORY_ID,
+          Menu_Categories (
+            CATEGORY_ID,
+            CATEGORY_NAME
+          )
+        )
+      `)
+      .eq('ORDER_ID', orderId)
 
-  const items = Array.from(itemMap.values())
-  orderRow.itemCount = (rawItems ?? []).length
+    if (itemsErr) {
+      console.error('[orderLogsService] Error fetching order items:', itemsErr)
+    }
+
+    // Aggregate items by ITEM_ID
+    const itemMap = new Map<number, OrderLogItemDetail>()
+    for (const it of (rawItems as any[]) ?? []) {
+      const rawMenuItem = (it as any)['Menu_Items']
+      const menuItem = (Array.isArray(rawMenuItem) ? rawMenuItem[0] : rawMenuItem) as Record<string, unknown> | null
+      if (!menuItem) continue
+      const itemId = Number(menuItem['ITEM_ID'])
+      const itemName = String(menuItem['ITEM_NAME'] || `Item #${itemId}`)
+      const price = Number(menuItem['ITEM_PRICE'] || 0)
+      const rawCat = (menuItem as any)['Menu_Categories']
+      const catObj = (Array.isArray(rawCat) ? rawCat[0] : rawCat) as Record<string, unknown> | null
+      const categoryName = catObj ? String(catObj['CATEGORY_NAME']) : 'General'
+      const status = String(it['ORDER_ITEM_STATUS'] || 'PENDING')
+
+      const existing = itemMap.get(itemId)
+      if (existing) {
+        existing.quantity += 1
+      } else {
+        itemMap.set(itemId, {
+          orderItemId: Number(it['ORDER_ITEM_ID']),
+          orderId,
+          itemId,
+          itemName,
+          categoryName,
+          price,
+          quantity: 1,
+          itemStatus: status,
+          notes: null,
+        })
+      }
+    }
+
+    items.push(...Array.from(itemMap.values()))
+    orderRow.itemCount = (rawItems ?? []).length
+  }
   const itemsSum = items.reduce((sum, it) => sum + it.price * it.quantity, 0)
   if (orderRow.subtotalBill <= 0 && itemsSum > 0) {
     orderRow.subtotalBill = itemsSum

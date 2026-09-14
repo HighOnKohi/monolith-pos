@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import {
+<<<<<<< HEAD
   fetchAllLayoutPresets,
   fetchPresetLayout,
   fetchLiveRestaurantTables,
@@ -25,6 +26,46 @@ import { TableManagerSidebar } from './components/TableManagerSidebar'
 import { NewPresetModal } from './components/NewPresetModal'
 import { ConfirmModal } from './components/ConfirmModal'
 import { RenamePresetModal } from './components/RenamePresetModal'
+=======
+  fetchAllTables,
+  fetchOrderSummariesForIds,
+  getCachedTables,
+  cacheTables,
+  batchCreateTables,
+  updateTable,
+  deleteTables,
+  setTableStatus,
+  syncTableMergeGroups,
+  type TableData,
+  type TableStatus,
+} from '@/services/tableService'
+import {
+  fetchAllPresets,
+  createPreset,
+  setActivePreset,
+  batchUpdateTablePositions,
+  clearTablePositions,
+  updatePreset,
+  deletePreset,
+  type LayoutPreset,
+} from '@/services/layoutService'
+import { fetchEvents } from '@/services/eventService'
+import type { RestaurantEvent } from '@/types/event'
+import { useFloorPlanState } from './useFloorPlanState'
+import { FloorPlanEditor } from './FloorPlanEditor'
+import { FloorPlanToolbar } from './FloorPlanToolbar'
+import { TablePalette } from './TablePalette'
+import { TableInspector } from './TableInspector'
+import { GridSettingsModal } from './GridSettingsModal'
+import { SavedLayoutsModal } from './SavedLayoutsModal'
+import { SavePresetModal, ConfirmLoadModal, ConfirmDeletePresetModal } from './PresetModal'
+import { findGroupForTable, calculateEffectiveCapacity, disburseCapacities, calculateMergeGroups, type MergeGroup } from '@/utils/floorPlan/adjacency'
+import type { FloorConfig } from '@/utils/floorPlan/grid'
+import { calculateCustomTemplateDistribution, type TemplateDistributionTarget } from '@/utils/floorPlan/distribution'
+import { fetchAllTableTemplates, getLocalTemplates, type TableTemplate } from '@/services/templateService'
+import { ConnectedDistributionSliders } from './ConnectedDistributionSliders'
+import { getStoredTableDimensions, saveStoredTableDimensions, type EditorTable } from './useFloorPlanState'
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
 
 interface DragState {
   tableNum: number
@@ -186,12 +227,26 @@ export default function TableManager() {
   const [layoutTables, setLayoutTables] = useState<TableLayoutInfo[]>([])
   const [restaurantTables, setRestaurantTables] = useState<RestaurantTableData[]>([])
 
+<<<<<<< HEAD
   // Editor State
   const [isEditMode, setIsEditMode] = useState(false)
   const [selectedTableNum, setSelectedTableNum] = useState<number | null>(null)
   const [isDirty, setIsDirty] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+=======
+  // ── Modals ──
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null) // table ID to delete
+  const [showRemoveAllConfirm, setShowRemoveAllConfirm] = useState(false)
+  const [showGridSettings, setShowGridSettings] = useState(false)
+  const [showSavedLayoutsModal, setShowSavedLayoutsModal] = useState(false)
+  const [showSavePreset, setShowSavePreset] = useState(false)
+  const [confirmLoadPreset, setConfirmLoadPreset] = useState<LayoutPreset | null>(null)
+  const [renamePreset, setRenamePreset] = useState<LayoutPreset | null>(null)
+  const [deletePresetConfirm, setDeletePresetConfirm] = useState<LayoutPreset | null>(null)
+  const [qrModalTable, setQrModalTable] = useState<TableData | null>(null)
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
 
   // Dragging & Container Dimension State
   const [dragState, setDragState] = useState<DragState | null>(null)
@@ -364,10 +419,85 @@ export default function TableManager() {
   // ── 2. Realtime Subscription to Live Tables & Presets ──
   useEffect(() => {
     const channel = supabase
+<<<<<<< HEAD
       .channel('table-manager-live-sync')
       .on(
         'postgres_changes',
         { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
+=======
+      .channel('tm-phase3-tables')
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, async (payload) => {
+        if (payload.eventType === 'UPDATE') {
+          const updated = payload.new as TableData
+          setTables((prev) => {
+            const next = prev.map((t) => t.TABLE_ID === updated.TABLE_ID ? updated : t)
+            cacheTables(next)
+            return next
+          })
+          const oldStatus = (payload.old as Partial<TableData>).STATUS as TableStatus | undefined
+          const newStatus = updated.STATUS
+          const wasOccupied = oldStatus && OCCUPIED_STATUSES.includes(oldStatus)
+          const isNowOccupied = OCCUPIED_STATUSES.includes(newStatus)
+          if (wasOccupied || isNowOccupied) {
+            const summaries = await fetchOrderSummariesForIds([updated.TABLE_ID])
+            setOrderSummaries((prev) => {
+              const next = new Map(prev)
+              const s = summaries.get(updated.TABLE_ID)
+              if (s) next.set(updated.TABLE_ID, s)
+              else next.delete(updated.TABLE_ID)
+              return next
+            })
+          }
+        } else if (payload.eventType === 'INSERT') {
+          const inserted = payload.new as TableData
+          setTables((prev) => {
+            if (prev.some((t) => t.TABLE_ID === inserted.TABLE_ID)) return prev
+            const next = [...prev, inserted].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
+            cacheTables(next)
+            return next
+          })
+          // Auto-place new table on floor plan
+          floorPlan.addTable(inserted)
+        } else if (payload.eventType === 'DELETE') {
+          const deletedId = (payload.old as { TABLE_ID: number }).TABLE_ID
+          setTables((prev) => {
+            const next = prev.filter((t) => t.TABLE_ID !== deletedId)
+            cacheTables(next)
+            return next
+          })
+          floorPlan.removeTable(deletedId)
+        }
+      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'orders', table: 'Restaurant_Orders' },
+        async (payload) => {
+          const newRow = payload.new as Record<string, unknown> | null
+          const oldRow = payload.old as Record<string, unknown> | null
+          const targetTableId = Number(newRow?.['TABLE_ID'] || oldRow?.['TABLE_ID'])
+          if (targetTableId) {
+            const summaries = await fetchOrderSummariesForIds([targetTableId])
+            setOrderSummaries((prev) => {
+              const next = new Map(prev)
+              const s = summaries.get(targetTableId)
+              if (s) next.set(targetTableId, s)
+              else next.delete(targetTableId)
+              return next
+            })
+          }
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'orders', table: 'Bill_Requests' },
+        () => {
+          void fetchAllBillRequests().then(setBillRequests)
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'events', table: 'Restaurant_Events' },
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
         async () => {
           try {
             const updated = await fetchLiveRestaurantTables()
@@ -474,6 +604,7 @@ export default function TableManager() {
     })
   }
 
+<<<<<<< HEAD
   const handleConfirmRename = async (newName: string) => {
     if (!renameModal.presetId) return
     const id = renameModal.presetId
@@ -484,6 +615,40 @@ export default function TableManager() {
       ),
     )
     showToast(`Preset renamed to "${newName}"`, 'success')
+=======
+  async function handleSeatedPaxChange(tableId: number, seatedPax: number): Promise<boolean> {
+    setSavingCapacity(true)
+    isMutatingRef.current = true
+    try {
+      const updated = await updateTable(tableId, { seatedPax })
+      setTables((prev) => patchTables(prev, updated))
+      showToast('Seated guests updated.', 'success')
+      return true
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+      return false
+    } finally {
+      setSavingCapacity(false)
+      isMutatingRef.current = false
+    }
+  }
+
+  async function handleStatusChange(tableId: number, status: TableStatus) {
+    isMutatingRef.current = true
+    try {
+      const updated = await setTableStatus(tableId, status)
+      setTables((prev) => patchTables(prev, updated))
+      if (OCCUPIED_STATUSES.includes(status)) {
+        const summaries = await fetchOrderSummariesForIds([tableId])
+        setOrderSummaries((prev) => new Map([...prev, ...summaries]))
+      }
+      showToast(`Table marked as ${status.toLowerCase().replace('_', ' ')}.`, 'success')
+    } catch (err: unknown) {
+      showToast((err as Error).message, 'error')
+    } finally {
+      isMutatingRef.current = false
+    }
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
   }
 
   // ── 5. Delete Preset ──
@@ -835,6 +1000,7 @@ export default function TableManager() {
     }
   }
 
+<<<<<<< HEAD
   // ── 10. Delete Selected Table ──
   const handleDeleteTable = (tableNum: number) => {
     setLayoutTables((prev) => {
@@ -970,6 +1136,10 @@ export default function TableManager() {
       currentY: table.Y_POS,
     })
   }
+=======
+  // ── Auto-disbursement when unmerging at 50/50 capacity ──
+  const prevMergeGroupsRef = useRef<MergeGroup[]>([])
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
 
   useEffect(() => {
     if (!dragState) return
@@ -1129,6 +1299,7 @@ export default function TableManager() {
         </div>
       )}
 
+<<<<<<< HEAD
       {/* ── Left Div: inner-table-manager-container ── */}
       <div className="inner-table-manager-container flex-1 min-w-0 h-full flex flex-col overflow-hidden">
         {/* Top: table-manager-header (Preset Dropdown on left & Save Layout / Discard Changes / Edit Layout on right) */}
@@ -1147,6 +1318,47 @@ export default function TableManager() {
           onSaveLayout={handleSaveLayout}
           onDiscardChanges={handleDiscardChanges}
           isSaving={isSaving}
+=======
+      {/* Alerts Banner */}
+      <TableAlertsBanner
+        tables={layoutTables}
+        billRequests={billRequests.filter((r) => layoutTableIds.has(r.tableId))}
+        onClearAssistance={handleClearAssistance}
+        onClearBillOut={handleClearBillOut}
+      />
+
+      {/* Toolbar */}
+      <FloorPlanToolbar
+        canUndo={floorPlan.canUndo}
+        canRedo={floorPlan.canRedo}
+        isDirty={floorPlan.isDirty}
+        saving={savingLayout || isSwitchingLayout}
+        activePresetName={activePreset?.PRESET_NAME}
+        onUndo={floorPlan.undo}
+        onRedo={floorPlan.redo}
+        onRotateSelected={floorPlan.selectedTableId !== null ? () => floorPlan.rotateTable(floorPlan.selectedTableId!) : undefined}
+        onOpenGridSettings={() => setShowGridSettings(true)}
+        onOpenSavedLayouts={() => setShowSavedLayoutsModal(true)}
+        onSavePreset={handleToolbarSave}
+        onPrintQr={() => {
+          if (layoutTables.length > 0) void downloadBulkQrPdf(layoutTables)
+        }}
+        onRemoveAll={() => {
+          if (floorPlan.positions.length > 0) setShowRemoveAllConfirm(true)
+        }}
+      />
+
+      {/* Three-panel layout */}
+      <div className="fp-three-panel">
+        {/* Left — Palette */}
+        <TablePalette
+          onAddTable={handleAddTable}
+          tableCount={floorPlan.positions.length}
+          totalSeats={totalSeats}
+          maxPax={effectiveMaxPax}
+          activeLinkedEvent={activeLinkedEvent}
+          hasActiveOrders={hasActiveOrders}
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
         />
 
         {/* Big Div: layout-container (consumes whole width with margins on all sides, contains grid) */}
@@ -1162,6 +1374,7 @@ export default function TableManager() {
             </div>
           )}
 
+<<<<<<< HEAD
           {/* Grid View Canvas Container - Dynamic edge-to-edge grid container */}
           <div
             ref={containerRef}
@@ -1189,6 +1402,31 @@ export default function TableManager() {
                 const top = group.minY * cellSize - padding
                 const width = (group.maxX - group.minX) * cellSize + padding * 2
                 const height = (group.maxY - group.minY) * cellSize + padding * 2
+=======
+        {/* Right — Inspector */}
+        <TableInspector
+          table={inspectorTable}
+          position={inspectorPosition}
+          tableSizeBlocks={floorPlan.config.tableSizeBlocks}
+          maxCapacity={inspectorTable ? Math.max(inspectorTable.GUEST_CAPACITY, effectiveMaxPax - (totalSeats - inspectorTable.GUEST_CAPACITY)) : effectiveMaxPax}
+          mergeGroup={inspectorMergeGroup}
+          allTables={tables}
+          allPositions={floorPlan.positions}
+          onClose={() => floorPlan.setSelectedTableId(null)}
+          onCapacityChange={handleCapacityChange}
+          onSeatedPaxChange={handleSeatedPaxChange}
+          onRotate={(id) => floorPlan.rotateTable(id)}
+          onStatusChange={handleStatusChange}
+          onDelete={(id) => setShowDeleteConfirm(id)}
+          onQrPrint={(id) => {
+            const t = tables.find((t) => t.TABLE_ID === id)
+            if (t) setQrModalTable(t)
+          }}
+          saving={savingCapacity}
+          orderSummary={inspectorOrderSummary}
+        />
+      </div>
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
 
                 return (
                   <div
@@ -1258,6 +1496,7 @@ export default function TableManager() {
                 </div>
               )}
 
+<<<<<<< HEAD
               {/* Empty State */}
               {!isLoading && mergedNodes.length === 0 && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center pointer-events-none">
@@ -1274,6 +1513,137 @@ export default function TableManager() {
                   </p>
                 </div>
               )}
+=======
+      <SavedLayoutsModal
+        isOpen={showSavedLayoutsModal}
+        onClose={() => setShowSavedLayoutsModal(false)}
+        presets={presets}
+        activePresetId={activePresetId}
+        onLoadPreset={handleLoadPreset}
+        onSaveNewPreset={() => setShowSavePreset(true)}
+        onRenamePreset={setRenamePreset}
+        onDeletePreset={setDeletePresetConfirm}
+        hasActiveOrders={hasActiveOrders}
+        isSwitchingLayout={isSwitchingLayout}
+        switchingPresetId={switchingPresetId}
+      />
+
+      {showSavePreset && (
+        <SavePresetModal
+          config={floorPlan.config}
+          events={events}
+          onSave={handleSavePreset}
+          onClose={() => setShowSavePreset(false)}
+          loading={savingPreset}
+        />
+      )}
+
+      {renamePreset && (
+        <SavePresetModal
+          initialName={renamePreset.PRESET_NAME}
+          initialDescription={renamePreset.DESCRIPTION ?? ''}
+          initialEventId={renamePreset.EVENT_ID ?? null}
+          events={events}
+          isUpdate
+          onSave={handleRenamePreset}
+          onClose={() => setRenamePreset(null)}
+          loading={savingPreset}
+        />
+      )}
+
+      {deletePresetConfirm && (
+        <ConfirmDeletePresetModal
+          presetName={deletePresetConfirm.PRESET_NAME}
+          onConfirm={() => void handleDeletePreset()}
+          onCancel={() => setDeletePresetConfirm(null)}
+          loading={savingPreset}
+        />
+      )}
+
+      {confirmLoadPreset && (
+        <ConfirmLoadModal
+          presetName={confirmLoadPreset.PRESET_NAME}
+          onConfirm={() => void doLoadPreset(confirmLoadPreset)}
+          onCancel={() => !isSwitchingLayout && setConfirmLoadPreset(null)}
+          loading={isSwitchingLayout}
+        />
+      )}
+
+      {navigationBlocker.state === 'blocked' && (
+        <ConfirmDialog
+          title="Save layout before leaving?"
+          description="Your table layout changes have not been saved yet. Save them before continuing to the next page."
+          confirmLabel="Save and Leave"
+          confirmVariant="primary"
+          loading={savingLayout}
+          onConfirm={() => {
+            void handleSaveLayout().then((layoutSaved) => {
+              if (layoutSaved) navigationBlocker.proceed()
+            })
+          }}
+          onCancel={() => navigationBlocker.reset()}
+        />
+      )}
+
+      {qrModalTable && (
+        <TableQrPreview
+          tableId={qrModalTable.TABLE_ID}
+          tableNum={qrModalTable.TABLE_NUM}
+          guestCapacity={qrModalTable.GUEST_CAPACITY}
+          onClose={() => setQrModalTable(null)}
+        />
+      )}
+
+      {/* ── Layout Switching Loading Animation & Interaction Lock Overlay ── */}
+      {isSwitchingLayout && (
+        <div
+          className="fp-layout-switching-overlay"
+          role="alertdialog"
+          aria-modal="true"
+          aria-busy="true"
+          aria-label="Switching layout"
+          onClick={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+          }}
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+          }}
+        >
+          <div className="fp-layout-switching-card">
+            {/* Animated mini floor-plan rearrangement */}
+            <div className="fp-layout-anim-stage" aria-hidden="true">
+              <div className="fp-layout-orbit-ring" />
+              <div className="fp-mini-table fp-mini-table-1">1</div>
+              <div className="fp-mini-table fp-mini-table-2">2</div>
+              <div className="fp-mini-table fp-mini-table-3">3</div>
+              <div className="fp-mini-table fp-mini-table-4">4</div>
+            </div>
+
+            <h3 className="fp-layout-switching-title">Switching Layout</h3>
+
+            {switchingLayoutName && (
+              <div className="fp-layout-switching-badge">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                <span className="fp-layout-switching-badge-text">{switchingLayoutName}</span>
+              </div>
+            )}
+
+            <p className="fp-layout-switching-desc">
+              Synchronizing table arrangement, grid spacing, and floor plan dimensions...
+            </p>
+
+            {/* Shimmering progress track */}
+            <div className="fp-layout-progress-track">
+              <div className="fp-layout-progress-bar" />
+            </div>
+
+            {/* Locked interactions indicator */}
+            <div className="fp-layout-locked-pill">
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Interactions locked during update</span>
+>>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
             </div>
           </div>
         </div>
