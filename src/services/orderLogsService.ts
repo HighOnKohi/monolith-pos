@@ -189,30 +189,10 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
   // 1. Resolve table metadata map
   const tableMap = await getTableDisplayMap()
 
-<<<<<<< HEAD
-  // 2. Fetch Restaurant_Orders
-  let query = supabase.from('Restaurant_Orders').select('*')
-
-  if (startDate) {
-    query = query.gte('TIME', toIsoDate(startDate))
-  }
-  if (endDate) {
-    query = query.lte('TIME', toIsoDate(endDate))
-  }
-  if (orderStatus && orderStatus !== 'ALL') {
-    query = query.eq('ORDER_STATUS', orderStatus)
-  }
-  if (orderSource && orderSource !== 'ALL') {
-    query = query.eq('REQUESTED_FROM', orderSource)
-  }
-  if (tableId && tableId !== 'ALL') {
-    query = query.eq('TABLE_ID', tableId)
-=======
-  // 2. Fetch Completed_Orders and Restaurant_Orders (unless filtered strictly to Ticketing)
+  // 2. Fetch Completed_Orders and Restaurant_Orders
   let tableRows: OrderLogRow[] = []
-  if (orderSource !== 'Ticketing') {
-    let compQuery = supabase.from('Completed_Orders').select('*')
-    let restQuery = supabase.from('Restaurant_Orders').select('*')
+  let compQuery = supabase.from('Completed_Orders').select('*')
+  let restQuery = supabase.from('Restaurant_Orders').select('*')
 
     if (startDate) {
       compQuery = compQuery.gte('TIME', toIsoDate(startDate))
@@ -327,85 +307,9 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
         serverNote: o['SERVER_NOTE'] ? String(o['SERVER_NOTE']) : null,
       }
     })
->>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
-  }
-
-  const { data: rawOrders, error } = await query
-
-  if (error) {
-    console.error('[orderLogsService] Error fetching table orders:', error)
-    throw error
-  }
-
-  const processedRows: OrderLogRow[] = (rawOrders ?? []).map((o) => {
-    const oId = Number(o['ORDER_ID'])
-    const tId = Number(o['TABLE_ID'])
-    const tInfo = tableMap.get(tId) || { tableNum: tId, displayLabel: `Table ${tId}`, isMerged: false }
-    const st = String(o['ORDER_STATUS'] || 'REQUESTED') as OrderStatus
-    const reqFrom = String(o['REQUESTED_FROM'] || 'Cashier') === 'Customer' ? 'Customer' : 'Cashier'
-    const ordType = String(o['ORDER_TYPE'] || 'DINE-IN').toUpperCase().includes('TAKEOUT')
-      ? 'TAKEOUT'
-      : 'DINE-IN'
-    const total = Number(o['TOTAL_BILL']) || 0
-    const subtotal = Number(o['SUBTOTAL_BILL']) || total
-    const guests = Math.max(Number(o['GUEST_COUNT']) || 1, 1)
-
-    const timeStr = String(o['TIME'] || '')
-    const readyStr = o['READY_AT'] ? String(o['READY_AT']) : null
-    const servedStr = o['SERVED_AT'] ? String(o['SERVED_AT']) : null
-    const compStr = o['COMPLETED_AT'] ? String(o['COMPLETED_AT']) : null
-
-    let servingDurationMinutes: number | null = null
-    const timeDate = parseDbTimestamp(timeStr)
-    const servedDate = parseDbTimestamp(servedStr)
-    const readyDate = parseDbTimestamp(readyStr)
-
-    if (timeDate && servedDate) {
-      const diff = (servedDate.getTime() - timeDate.getTime()) / 60000
-      if (diff >= 0 && diff < 1440) {
-        servingDurationMinutes = Math.round(diff * 10) / 10
-      }
-    }
-
-    let prepDurationMinutes: number | null = null
-    if (timeDate && readyDate) {
-      const diff = (readyDate.getTime() - timeDate.getTime()) / 60000
-      if (diff >= 0 && diff < 1440) {
-        prepDurationMinutes = Math.round(diff * 10) / 10
-      }
-    }
-
-    const isPaid = st === 'COMPLETED'
-    const pMethod = String(o['PAYMENT_METHOD'] || 'CASH').toUpperCase()
-
-    return {
-      orderId: oId,
-      tableId: tId,
-      tableNum: tInfo.tableNum,
-      mergedGroupLabel: tInfo.isMerged ? tInfo.displayLabel : null,
-      isMerged: tInfo.isMerged,
-      orderStatus: st,
-      orderType: ordType,
-      requestedFrom: reqFrom,
-      totalBill: total,
-      subtotalBill: subtotal,
-      paymentStatus: isPaid ? 'PAID' : 'UNPAID',
-      paymentMethod: pMethod,
-      guestCount: guests,
-      createdAt: timeStr,
-      readyAt: readyStr,
-      servedAt: servedStr,
-      completedAt: compStr,
-      servingDurationMinutes,
-      prepDurationMinutes,
-      itemCount: 0,
-      kitchenNote: o['KITCHEN_NOTE'] ? String(o['KITCHEN_NOTE']) : null,
-      serverNote: o['SERVER_NOTE'] ? String(o['SERVER_NOTE']) : null,
-    }
-  })
 
   // 3. Apply client-side filters for search, paymentStatus, and paymentMethod
-  let filteredRows = processedRows
+  let filteredRows = tableRows
 
   if (paymentStatus && paymentStatus !== 'ALL') {
     filteredRows = filteredRows.filter((r) => r.paymentStatus === paymentStatus)
@@ -542,10 +446,6 @@ export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetail
     .eq('ORDER_ID', orderId)
     .maybeSingle()
 
-<<<<<<< HEAD
-  if (!orderData) {
-    throw new Error(`Order #${orderId} could not be found`)
-=======
   if (compData) {
     orderData = compData as Record<string, unknown>
     isFromCompletedTable = true
@@ -559,10 +459,8 @@ export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetail
     if (restData) {
       orderData = restData as Record<string, unknown>
     } else {
-      // If not found in Completed_Orders or Restaurant_Orders, check Ticket_Orders
-      return fetchTicketOrderDetails(orderId)
+      throw new Error(`Order #${orderId} could not be found`)
     }
->>>>>>> 6e7da854476bed19e50e1c4c9e6b31b156ee1051
   }
 
   const tableMap = await getTableDisplayMap()
