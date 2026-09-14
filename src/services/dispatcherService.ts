@@ -358,6 +358,32 @@ export async function rejectOrderItems(
   broadcastOrderUpdate({ type: 'tables' })
 }
 
+export async function flagOrderItems(
+  orderId: number,
+  itemIds: string[],
+  flagged: boolean,
+): Promise<void> {
+  if (itemIds.length === 0) return
+
+  const numericItemIds = itemIds.map(Number)
+  const { error } = await supabase
+    .from('Order_Items')
+    .update({ IS_FLAGGED: flagged })
+    .eq('ORDER_ID', orderId)
+    .in('ITEM_ID', numericItemIds)
+
+  if (error) throw error
+
+  logOrderEvent(orderId, {
+    eventType: flagged ? 'ITEMS_FLAGGED' : 'ITEMS_UNFLAGGED',
+    newStatus: 'PREPARING',
+    actor: 'Dispatcher',
+    reason: `${itemIds.length} item(s) ${flagged ? 'flagged' : 'unflagged'}`,
+  })
+
+  broadcastOrderUpdate({ type: 'tables' })
+}
+
 export async function toggleItemAvailability(
   itemId: string | number,
   status: 'AVAILABLE' | 'OUT_OF_STOCK',

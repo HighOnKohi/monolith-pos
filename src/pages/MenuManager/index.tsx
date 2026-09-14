@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Search, Plus, Edit2, Trash2, ChevronDown, Pencil } from 'lucide-react'
+import { Search, Plus, Edit2, Trash2, ChevronDown, Pencil, Lock } from 'lucide-react'
 import { useMenu } from '@/hooks/useMenu'
+import { useActiveEvent } from '@/hooks/useActiveEvent'
 import {
   createMenuItem,
   createCategory,
@@ -22,6 +23,7 @@ import { ConfirmModal } from '@/components/menu/ConfirmModal'
 
 export default function MenuManagerPage() {
   const { items, categories, loadState, setItems, setCategories, reload, presets, activePresetId, setActivePresetId, createPreset } = useMenu()
+  const { activeEvent, isEventActive } = useActiveEvent()
 
   const [activeCat, setActiveCat]             = useState<string>('all')
   const [editingItem, setEditingItem]         = useState<MenuItem | null>(null)
@@ -287,6 +289,10 @@ export default function MenuManagerPage() {
   }
 
   async function handleDeletePreset(presetId: number, presetName: string) {
+    if (isEventActive) {
+      showToast(`Cannot delete preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
+      return
+    }
     if (presets.length <= 1) {
       showToast('Cannot delete the only remaining preset.', 'error')
       return
@@ -335,8 +341,32 @@ export default function MenuManagerPage() {
           </div>
           <div className="menu-manager-header-actions">
             <div className="menu-preset-dropdown">
-              <button type="button" className="menu-preset-dropdown-trigger" onClick={() => setPresetDropdownOpen((open) => !open)} aria-expanded={isPresetDropdownOpen}>
-                <span className="menu-preset-dropdown-label"><span className="menu-preset-dropdown-prefix">Preset: </span>{presets.find((preset) => preset.PRESET_ID === activePresetId)?.PRESET_NAME ?? 'Default'}</span>
+              <button
+                type="button"
+                className={`menu-preset-dropdown-trigger ${isEventActive ? 'opacity-85 cursor-not-allowed border-amber-300' : ''}`}
+                onClick={() => {
+                  if (isEventActive) {
+                    showToast(
+                      `Preset switching is locked while event "${activeEvent?.title ?? 'Active Event'}" is active. Deactivate the event in Events to switch presets.`,
+                      'error'
+                    )
+                    return
+                  }
+                  setPresetDropdownOpen((open) => !open)
+                }}
+                aria-expanded={isPresetDropdownOpen}
+                title={isEventActive ? `Locked: Event "${activeEvent?.title}" is active` : undefined}
+              >
+                {isEventActive && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0 mr-1" />}
+                <span className="menu-preset-dropdown-label">
+                  <span className="menu-preset-dropdown-prefix">Preset: </span>
+                  {presets.find((preset) => preset.PRESET_ID === activePresetId)?.PRESET_NAME ?? 'Default'}
+                  {isEventActive && (
+                    <span className="ml-1.5 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                      Event Active
+                    </span>
+                  )}
+                </span>
                 <ChevronDown className={`menu-preset-dropdown-chevron ${isPresetDropdownOpen ? 'is-open' : ''}`} />
               </button>
               {isPresetDropdownOpen && (
@@ -348,7 +378,15 @@ export default function MenuManagerPage() {
                         <div
                           key={preset.PRESET_ID}
                           className={`menu-preset-dropdown-option group ${isSelected ? 'is-selected' : ''}`}
-                          onClick={() => { setActivePresetId(preset.PRESET_ID); setPresetDropdownOpen(false) }}
+                          onClick={() => {
+                            if (isEventActive) {
+                              showToast(`Cannot switch preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
+                              setPresetDropdownOpen(false)
+                              return
+                            }
+                            void setActivePresetId(preset.PRESET_ID)
+                            setPresetDropdownOpen(false)
+                          }}
                         >
                           <span className="truncate flex-1">{preset.PRESET_NAME}</span>
                           <div
@@ -384,7 +422,18 @@ export default function MenuManagerPage() {
                       )
                     })}
                   </div>
-                  <button type="button" className="menu-preset-dropdown-footer" onClick={() => { setPresetDropdownOpen(false); setPresetModalOpen(true) }}>
+                  <button
+                    type="button"
+                    className="menu-preset-dropdown-footer"
+                    onClick={() => {
+                      if (isEventActive) {
+                        showToast(`Cannot create or switch preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
+                        return
+                      }
+                      setPresetDropdownOpen(false)
+                      setPresetModalOpen(true)
+                    }}
+                  >
                     <Plus className="menu-preset-dropdown-plus" /> Create a new Preset
                   </button>
                 </div>
@@ -758,9 +807,13 @@ export default function MenuManagerPage() {
         <form className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl animate-modal-pop" onClick={(event) => event.stopPropagation()} onSubmit={async (event) => {
           event.preventDefault()
           if (!presetName.trim()) return
+          if (isEventActive) {
+            showToast(`Cannot create or switch preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
+            return
+          }
           try {
             const preset = await createPreset(presetName.trim())
-            setActivePresetId(preset.PRESET_ID)
+            void setActivePresetId(preset.PRESET_ID)
             setPresetName('')
             setPresetModalOpen(false)
             reload()

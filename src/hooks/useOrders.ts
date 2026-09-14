@@ -5,16 +5,19 @@ import type { Order, OrderStatus } from '@/types/order'
 import { createOrder, fetchOrdersByTable, fetchRecentCompletedOrders } from '@/services/orderService'
 import { subscribeToOrderUpdates } from '@/services/dispatcherService'
 
+export type NotificationStatus = OrderStatus | 'FLAGGED'
+
 export interface OrderStatusNotification {
   orderId: number
   tableId: number
-  status: OrderStatus
+  status: NotificationStatus
   title: string
   message: string
   timestamp: string
+  flaggedItems?: string[]
 }
 
-const STATUS_MESSAGES: Record<OrderStatus, { title: string; message: string }> = {
+const STATUS_MESSAGES: Record<NotificationStatus, { title: string; message: string }> = {
   REQUESTED: {
     title: 'Order Placed',
     message: 'Your order was submitted and is queued for verification.',
@@ -42,6 +45,10 @@ const STATUS_MESSAGES: Record<OrderStatus, { title: string; message: string }> =
   COMPLETED: {
     title: 'Order Completed',
     message: 'This order has been completed.',
+  },
+  FLAGGED: {
+    title: 'Order Item Flagged',
+    message: 'One or more items in your order were flagged as unavailable or out of stock.',
   },
 }
 
@@ -89,11 +96,31 @@ export function useOrders(
               p.orderId !== n.orderId ||
               p.orderStatus !== n.orderStatus ||
               p.totalBill !== n.totalBill ||
+              p.kitchenNote !== n.kitchenNote ||
               (p.items?.length ?? 0) !== (n.items?.length ?? 0)
             ) {
               hasChanges = true
               break
             }
+
+            // Check item-level changes (status, isFlagged, rejectionReason)
+            const pItems = p.items ?? []
+            const nItems = n.items ?? []
+            for (let j = 0; j < nItems.length; j++) {
+              const pi = pItems[j]
+              const ni = nItems[j]
+              if (
+                !pi ||
+                pi.orderItemId !== ni.orderItemId ||
+                pi.status !== ni.status ||
+                Boolean(pi.isFlagged) !== Boolean(ni.isFlagged) ||
+                pi.rejectionReason !== ni.rejectionReason
+              ) {
+                hasChanges = true
+                break
+              }
+            }
+            if (hasChanges) break
           }
         }
 
@@ -104,10 +131,54 @@ export function useOrders(
         // Compare previous orders with new orders to trigger live notifications
         for (const newOrder of newOrders) {
           const existing = prev.find((o) => o.orderId === newOrder.orderId)
-          if (existing && existing.orderStatus !== newOrder.orderStatus) {
+          if (!existing) continue
+
+          const existingItems = existing.items ?? []
+          const newItems = newOrder.items ?? []
+
+          // Check if any items are newly flagged
+          const newlyFlaggedItems = newItems.filter(
+            (ni) => ni.isFlagged && !existingItems.some((ei) => ei.orderItemId === ni.orderItemId && ei.isFlagged)
+          )
+
+          // Check if any items are newly cancelled / rejected
+          const newlyCancelledItems = newItems.filter(
+            (ni) => ni.status === 'CANCELLED' && !existingItems.some((ei) => ei.orderItemId === ni.orderItemId && ei.status === 'CANCELLED')
+          )
+
+          const statusChanged = existing.orderStatus !== newOrder.orderStatus
+
+          if (newlyFlaggedItems.length > 0) {
+            // Priority 1: Flagged items notification
+            const flaggedNames = Array.from(new Set(newlyFlaggedItems.map((it) => it.name || `Item #${it.itemId}`))).join(', ')
+            const isOrderCancelled = newOrder.orderStatus === 'CANCELLED'
+
+            const title = isOrderCancelled ? 'Order Cancelled (Item Flagged)' : 'Order Item Flagged'
+            const baseMsg = `${flaggedNames} was flagged as unavailable / out of stock by the kitchen.`
+            const noteMsg = newOrder.kitchenNote ? ` Reason: "${newOrder.kitchenNote}"` : ''
+
+            if (tableId) {
+              setLatestStatusUpdate({
+                orderId: newOrder.orderId,
+                tableId,
+                status: 'FLAGGED',
+                title,
+                message: `${baseMsg}${noteMsg}`,
+                timestamp: new Date().toISOString(),
+                flaggedItems: newlyFlaggedItems.map((it) => it.itemId),
+              })
+              setHasUnreadStatusChange(true)
+            }
+          } else if (statusChanged) {
+            // Priority 2: Order status changed
             const info = STATUS_MESSAGES[newOrder.orderStatus] || {
               title: 'Order Status Updated',
               message: `Order #${newOrder.orderId} is now ${newOrder.orderStatus}.`,
+            }
+
+            let message = info.message
+            if (newOrder.orderStatus === 'CANCELLED' && newOrder.kitchenNote) {
+              message = `The kitchen cancelled this order. Reason: "${newOrder.kitchenNote}"`
             }
 
             if (tableId) {
@@ -116,7 +187,23 @@ export function useOrders(
                 tableId,
                 status: newOrder.orderStatus,
                 title: info.title,
-                message: info.message,
+                message,
+                timestamp: new Date().toISOString(),
+              })
+              setHasUnreadStatusChange(true)
+            }
+          } else if (newlyCancelledItems.length > 0) {
+            // Priority 3: Specific items cancelled without order-level status change
+            const cancelledNames = Array.from(new Set(newlyCancelledItems.map((it) => it.name || `Item #${it.itemId}`))).join(', ')
+            const noteMsg = newOrder.kitchenNote ? ` Reason: "${newOrder.kitchenNote}"` : ''
+
+            if (tableId) {
+              setLatestStatusUpdate({
+                orderId: newOrder.orderId,
+                tableId,
+                status: 'CANCELLED',
+                title: 'Item Unavailable',
+                message: `${cancelledNames} could not be prepared and was removed from your order.${noteMsg}`,
                 timestamp: new Date().toISOString(),
               })
               setHasUnreadStatusChange(true)

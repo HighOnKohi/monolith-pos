@@ -47,8 +47,30 @@ export async function setDefaultMenuPreset(presetId: number): Promise<void> {
 
   if (typeof window !== 'undefined') {
     localStorage.setItem('menu-active-preset-id', String(presetId))
+    const detail = { type: 'menu_preset_changed', presetId }
     window.dispatchEvent(new CustomEvent('menu-preset-changed', { detail: presetId }))
-    window.dispatchEvent(new CustomEvent('monolith-order-update', { detail: { type: 'menu_preset_changed', presetId } }))
+    window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
+
+    // Broadcast across browser tabs
+    try {
+      const bc = new BroadcastChannel('monolith_order_events')
+      bc.postMessage(detail)
+      bc.close()
+    } catch {
+      // Ignore
+    }
+
+    // Broadcast across devices via Supabase channel
+    try {
+      const channel = supabase.channel('shared-menu-sync-realtime')
+      void channel.send({
+        type: 'broadcast',
+        event: 'menu_preset_changed',
+        payload: { presetId },
+      })
+    } catch {
+      // Ignore
+    }
   }
 }
 

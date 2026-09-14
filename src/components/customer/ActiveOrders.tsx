@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Order } from '@/types/order'
 import { compressTableOrders } from '@/services/orderService'
 import { OrderStatusTracker } from './OrderStatusTracker'
-import { CheckCircle2, ChevronDown, ChevronUp, Clock, Receipt, Utensils } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronUp, Clock, Receipt, Utensils, Flag } from 'lucide-react'
 
 interface ActiveOrdersProps {
   orders: Order[]
@@ -201,6 +201,23 @@ export function ActiveOrders({ orders, pastOrders, onRequestBill, onBrowseMenu }
       {/* Progress Tracker for the table's overall active status */}
       <OrderStatusTracker status={compressed.overallStatus} />
 
+      {/* Notice for flagged items if any */}
+      {compressed.hasFlaggedItems && (
+        <div className="bg-amber-50 border border-amber-300/90 rounded-2xl p-3.5 flex items-start gap-3 shadow-xs animate-fade-in">
+          <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-2xs mt-0.5">
+            <Flag className="w-4 h-4 fill-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h4 className="text-xs font-black text-amber-950 uppercase tracking-wide">
+              Kitchen Notice: Item(s) Flagged
+            </h4>
+            <p className="text-xs text-amber-900/90 font-medium mt-0.5 leading-relaxed">
+              One or more items in your order were marked unavailable or out of stock by the kitchen. Please speak to our staff for alternatives.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Consolidated Items Summary (Compressed View) */}
       <div className="bg-white rounded-2xl shadow-sm border border-[#9BA4B4]/20 overflow-hidden interactive-card">
         <div className="px-4 py-3 border-b border-[#9BA4B4]/15 bg-[#F1F6F9]/50 flex items-center justify-between">
@@ -224,7 +241,13 @@ export function ActiveOrders({ orders, pastOrders, onRequestBill, onBrowseMenu }
                   <p className="text-sm font-extrabold text-[#14274E] truncate">
                     {item.name}
                   </p>
-                  <div className="flex items-center gap-2 mt-0.5">
+                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                    {item.isFlagged && (
+                      <span className="text-[10px] font-black text-amber-900 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300 flex items-center gap-1 shadow-2xs">
+                        <Flag className="w-2.5 h-2.5 text-amber-700 fill-amber-500" />
+                        {item.flaggedCount ? `${item.flaggedCount} Flagged (Unavailable)` : 'Flagged (Unavailable)'}
+                      </span>
+                    )}
                     {item.servedCount > 0 && (
                       <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -237,7 +260,7 @@ export function ActiveOrders({ orders, pastOrders, onRequestBill, onBrowseMenu }
                         {item.preparingCount} Cooking
                       </span>
                     )}
-                    {item.pendingCount > 0 && (
+                    {item.pendingCount > 0 && !item.isFlagged && (
                       <span className="text-[10px] font-bold text-[#394867] bg-[#F1F6F9] px-2 py-0.5 rounded-md border border-[#9BA4B4]/20">
                         {item.pendingCount} Placed
                       </span>

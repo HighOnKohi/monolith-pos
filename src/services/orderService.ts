@@ -252,11 +252,22 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
           pendingCount: 0,
           preparingCount: 0,
           servedCount: 0,
+          isFlagged: false,
+          flaggedCount: 0,
+          rejectionReason: null,
         }
       }
 
       itemMap[id].quantity += 1
       itemMap[id].total += price
+
+      if (item.isFlagged) {
+        itemMap[id].isFlagged = true
+        itemMap[id].flaggedCount = (itemMap[id].flaggedCount || 0) + 1
+      }
+      if (item.rejectionReason) {
+        itemMap[id].rejectionReason = item.rejectionReason
+      }
 
       if (
         st === 'SERVED' ||
@@ -276,6 +287,7 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
 
   const items = Object.values(itemMap)
   const totalItemCount = items.reduce((sum, it) => sum + it.quantity, 0)
+  const hasFlaggedItems = items.some((it) => it.isFlagged) || orders.some((o) => o.items?.some((it) => it.isFlagged))
 
   // Determine overall table status:
   // Precedence from least complete to most complete (Prompt 2 §5 & §29):
@@ -314,6 +326,7 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
     items,
     rawOrders: orders,
     canBillOut,
+    hasFlaggedItems,
   }
 }
 

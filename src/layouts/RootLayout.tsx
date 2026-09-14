@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom'
+import { MenuProvider } from '@/hooks/useMenu'
 
 /**
  * RootLayout
@@ -8,9 +9,11 @@ import { Outlet } from 'react-router-dom'
  */
 function RootLayout() {
   return (
-    <div id="root-layout">
-      <Outlet />
-    </div>
+    <MenuProvider>
+      <div id="root-layout">
+        <Outlet />
+      </div>
+    </MenuProvider>
   )
 }
 

@@ -7,6 +7,8 @@ import {
   Minus,
   CheckCircle,
   CheckCircle2,
+  Flag,
+  XCircle,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
@@ -15,9 +17,13 @@ import {
   moveOrderToReady,
   moveOrderToCompleted,
   updateItemCookingCount,
+  rejectOrderItems,
+  flagOrderItems,
+  saveDispatcherNote,
   subscribeToOrderUpdates,
   type DispatcherOrder,
 } from '@/services/dispatcherService'
+import { CancelOrderModal } from '@/components/dispatcher/CancelOrderModal'
 
 type TableStage = 'preparing' | 'cooking' | 'done'
 
@@ -28,6 +34,7 @@ interface GroupedItem {
   cookingCount: number
   doneCount: number
   orderItemIds: number[]
+  isFlagged: boolean
 }
 
 export default function DispatcherInterface() {
@@ -44,6 +51,7 @@ export default function DispatcherInterface() {
   const [localCookingCounts, setLocalCookingCounts] = useState(new Map<string, number>())
   const [activeTableStage, setActiveTableStage] = useState<TableStage>('preparing')
   const currentlyRejectedRef = useRef(new Set<number>())
+  const [rejectingOrder, setRejectingOrder] = useState<DispatcherOrder | null>(null)
 
   const [isLoading, setIsLoading] = useState(false)
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null)
@@ -142,6 +150,7 @@ export default function DispatcherInterface() {
           cookingCount: 0,
           doneCount: 0,
           orderItemIds: [],
+          isFlagged: false,
         })
       }
 
@@ -153,6 +162,9 @@ export default function DispatcherInterface() {
         group.cookingCount++
       } else if (item.status === 'DONE') {
         group.doneCount++
+      }
+      if (item.isFlagged) {
+        group.isFlagged = true
       }
     })
 
@@ -323,6 +335,56 @@ export default function DispatcherInterface() {
       })
   }
 
+  // ── Fast Item Flag Handler ──
+  async function handleToggleItemFlag(orderId: number, itemId: string, flag: boolean) {
+    try {
+      await flagOrderItems(orderId, [itemId], flag)
+      showToast(flag ? 'Item flagged as unavailable' : 'Item unflagged', 'info')
+      void loadOrders(true)
+    } catch (err) {
+      console.error('[Dispatcher] toggleItemFlag error:', err)
+      showToast('Failed to update item flag', 'error')
+    }
+  }
+
+  // ── Reject / Flag Handler ──
+  async function handleRejectOrder(note: string, flaggedItemIds: string[]) {
+    if (!rejectingOrder) return
+
+    const orderId = rejectingOrder.orderId
+
+    if (note?.trim()) {
+      try {
+        await saveDispatcherNote(orderId, note.trim())
+      } catch {
+        // Ignore note error
+      }
+    }
+
+    // Flag the selected items
+    if (flaggedItemIds.length > 0) {
+      await flagOrderItems(orderId, flaggedItemIds, true)
+    }
+
+    // Build rejection list from all active items (the modal is a bulk-reject flow)
+    const activeItems = rejectingOrder.items.filter((i) => i.status !== 'CANCELLED')
+    const rejections = activeItems.map((item) => ({
+      orderItemId: item.orderItemId,
+      itemId: item.itemId,
+      reason: flaggedItemIds.includes(item.itemId) ? 'unavailable' : 'unavailable',
+    }))
+
+    if (rejections.length > 0) {
+      await rejectOrderItems(orderId, rejections)
+    }
+
+    // Optimistically remove from UI
+    currentlyRejectedRef.current.add(orderId)
+    setOrders((prev) => prev.filter((o) => o.orderId !== orderId))
+    showToast('Order rejected & items flagged', 'success')
+    void loadOrders(true)
+  }
+
   // Counts for Tabs
   const tablePreparingCount = orders.filter((o) => ['REQUESTED', 'VERIFIED'].includes(o.orderStatus)).length
   const tableCookingCount = orders.filter((o) => o.orderStatus === 'PREPARING').length
@@ -430,7 +492,15 @@ export default function DispatcherInterface() {
                     {groupedItems.map((group) => (
                       <div key={group.itemId} className="dispatcher-order-item">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="dispatcher-item-name flex-1">{group.name}</span>
+                          <span className="dispatcher-item-name flex-1">
+                            {group.name}
+                            {group.isFlagged && (
+                              <span className="dispatcher-flag-badge ml-1.5">
+                                <Flag className="h-2.5 w-2.5" />
+                                Flagged
+                              </span>
+                            )}
+                          </span>
 
                           {activeTableStage === 'cooking' ? (
                             <div className="flex items-center gap-1.5">
@@ -459,6 +529,24 @@ export default function DispatcherInterface() {
                                 </button>
                               </div>
                             </div>
+                          ) : activeTableStage === 'preparing' ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleItemFlag(order.orderId, group.itemId, !group.isFlagged)}
+                                className={[
+                                  'px-2 py-0.5 text-[10px] font-extrabold rounded-md flex items-center gap-1 transition-all cursor-pointer border',
+                                  group.isFlagged
+                                    ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 shadow-2xs'
+                                    : 'bg-white text-slate-400 border-slate-200 hover:border-amber-300 hover:text-amber-600',
+                                ].join(' ')}
+                                title={group.isFlagged ? 'Unflag item' : 'Flag item as unavailable / out of stock'}
+                              >
+                                <Flag className="w-2.5 h-2.5" fill={group.isFlagged ? 'currentColor' : 'none'} />
+                                <span>{group.isFlagged ? 'Flagged' : 'Flag'}</span>
+                              </button>
+                              <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
+                            </div>
                           ) : (
                             <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
                           )}
@@ -470,13 +558,22 @@ export default function DispatcherInterface() {
                   {/* Card Actions / State Transitions */}
                   <div className="dispatcher-order-actions">
                     {activeTableStage === 'preparing' && (
-                      <button
-                        onClick={() => handleMoveToCooking(order.orderId)}
-                        className="w-full py-2.5 rounded-xl bg-[#14274E] hover:bg-[#203c73] text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
-                      >
-                        <ChefHat className="w-4 h-4 text-[#E9C46A]" />
-                        <span>Start Cooking →</span>
-                      </button>
+                      <>
+                        <button
+                          onClick={() => setRejectingOrder(order)}
+                          className="dispatcher-reject-action-btn"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          <span>Flag / Reject</span>
+                        </button>
+                        <button
+                          onClick={() => handleMoveToCooking(order.orderId)}
+                          className="w-full py-2.5 rounded-xl bg-[#14274E] hover:bg-[#203c73] text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                        >
+                          <ChefHat className="w-4 h-4 text-[#E9C46A]" />
+                          <span>Start Cooking →</span>
+                        </button>
+                      </>
                     )}
 
                     {activeTableStage === 'cooking' && (
@@ -512,6 +609,15 @@ export default function DispatcherInterface() {
           )}
         </div>
       </main>
+
+      {/* Reject / Flag Modal */}
+      {rejectingOrder && (
+        <CancelOrderModal
+          order={rejectingOrder}
+          onClose={() => setRejectingOrder(null)}
+          onConfirm={handleRejectOrder}
+        />
+      )}
     </div>
   )
 }

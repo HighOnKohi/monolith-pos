@@ -115,6 +115,11 @@ export default function CustomerPage() {
 
   // Hooks
   const { items, categories, loadState, activePresetId } = useMenu()
+
+  // Reset category selection to 'all' whenever active menu preset changes
+  useEffect(() => {
+    setSelectedCategory('all')
+  }, [activePresetId])
   const {
     items: cartItems,
     diningType,

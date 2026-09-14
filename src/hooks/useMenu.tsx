@@ -1,8 +1,15 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { MenuItem, Category } from '@/types/menu'
-import { fetchMenuItems, fetchCategories, fetchMenuPresets, createMenuPreset, type MenuPreset } from '@/services/menuService'
+import {
+  fetchMenuItems,
+  fetchCategories,
+  fetchMenuPresets,
+  createMenuPreset,
+  setDefaultMenuPreset,
+  type MenuPreset,
+} from '@/services/menuService'
 import { MENU_ITEM_STATUS_UPDATED, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 
 export const MENU_PRESET_CHANGED = 'menu-preset-changed'
@@ -20,7 +27,7 @@ interface UseMenuResult {
   reload: () => void
   presets: MenuPreset[]
   activePresetId: number
-  setActivePresetId: (id: number) => void
+  setActivePresetId: (id: number) => Promise<void> | void
   createPreset: (name: string, description?: string) => Promise<MenuPreset>
 }
 
@@ -34,20 +41,10 @@ function useMenuState(enabled: boolean): UseMenuResult {
   const [revision, setRevision] = useState(0)
   const [presets, setPresets] = useState<MenuPreset[]>([])
   const [activePresetId, setActivePresetIdState] = useState(() => Number(localStorage.getItem(ACTIVE_PRESET_KEY)) || 1)
+  const activePresetIdRef = useRef(activePresetId)
+  activePresetIdRef.current = activePresetId
 
-  const setActivePresetId = useCallback((id: number) => {
-    setActivePresetIdState(id)
-    localStorage.setItem(ACTIVE_PRESET_KEY, String(id))
-    window.dispatchEvent(new CustomEvent(MENU_PRESET_CHANGED, { detail: id }))
-  }, [])
-
-  const createPreset = useCallback(async (name: string) => {
-    const preset = await createMenuPreset(name)
-    setPresets((current) => [...current, preset])
-    return preset
-  }, [])
-
-  const load = useCallback(async (isInitial: boolean) => {
+  const load = useCallback(async (isInitial: boolean, targetId?: number) => {
     if (isInitial) {
       setLoadState('loading')
       setError(null)
@@ -56,14 +53,25 @@ function useMenuState(enabled: boolean): UseMenuResult {
     try {
       const [fetchedItems, fetchedPresets] = await Promise.all([fetchMenuItems(), fetchMenuPresets()])
       const defaultPreset = fetchedPresets.find((p) => p.IS_DEFAULT)
-      
-      let targetPresetId = activePresetId
-      // If defaultPreset exists and activePresetId is not found in presets, or if on initial load
-      if (defaultPreset && (!fetchedPresets.some((p) => p.PRESET_ID === activePresetId) || !localStorage.getItem(ACTIVE_PRESET_KEY))) {
-        targetPresetId = defaultPreset.PRESET_ID
-        setActivePresetIdState(targetPresetId)
-        localStorage.setItem(ACTIVE_PRESET_KEY, String(targetPresetId))
+
+      // Determine target preset:
+      // 1. Explicit targetId passed to load()
+      // 2. Default preset in database (IS_DEFAULT = true)
+      // 3. Current active preset if exists in fetched presets
+      // 4. First preset or 1
+      let targetPresetId = targetId
+      if (!targetPresetId) {
+        if (defaultPreset) {
+          targetPresetId = defaultPreset.PRESET_ID
+        } else if (fetchedPresets.some((p) => p.PRESET_ID === activePresetIdRef.current)) {
+          targetPresetId = activePresetIdRef.current
+        } else {
+          targetPresetId = fetchedPresets[0]?.PRESET_ID ?? 1
+        }
       }
+
+      setActivePresetIdState(targetPresetId)
+      localStorage.setItem(ACTIVE_PRESET_KEY, String(targetPresetId))
 
       const activeItems = fetchedItems.filter((item) => item.presetId === targetPresetId)
       const fetchedCategories = await fetchCategories(activeItems, targetPresetId)
@@ -83,14 +91,32 @@ function useMenuState(enabled: boolean): UseMenuResult {
         setLoadState('error')
       }
     }
-  }, [activePresetId])
+  }, [])
+
+  const setActivePresetId = useCallback(async (id: number) => {
+    setActivePresetIdState(id)
+    localStorage.setItem(ACTIVE_PRESET_KEY, String(id))
+    window.dispatchEvent(new CustomEvent(MENU_PRESET_CHANGED, { detail: id }))
+    try {
+      await setDefaultMenuPreset(id)
+    } catch (err) {
+      console.warn('[useMenu] Failed to set default menu preset in DB:', err)
+    }
+    void load(false, id)
+  }, [load])
+
+  const createPreset = useCallback(async (name: string) => {
+    const preset = await createMenuPreset(name)
+    setPresets((current) => [...current, preset])
+    return preset
+  }, [])
 
   useEffect(() => {
     if (!enabled) return
 
     let cancelled = false
-    const loadIfActive = (isInitial: boolean) => {
-      if (!cancelled) void load(isInitial)
+    const loadIfActive = (isInitial: boolean, targetId?: number) => {
+      if (!cancelled) void load(isInitial, targetId)
     }
 
     loadIfActive(true)
@@ -117,8 +143,20 @@ function useMenuState(enabled: boolean): UseMenuResult {
               setActivePresetIdState(def.PRESET_ID)
               localStorage.setItem(ACTIVE_PRESET_KEY, String(def.PRESET_ID))
             }
-            loadIfActive(false)
+            loadIfActive(false, def?.PRESET_ID)
           }).catch(() => loadIfActive(false))
+        },
+      )
+      .on(
+        'broadcast',
+        { event: 'menu_preset_changed' },
+        ({ payload }) => {
+          const newPresetId = payload?.presetId ? Number(payload.presetId) : undefined
+          if (newPresetId) {
+            setActivePresetIdState(newPresetId)
+            localStorage.setItem(ACTIVE_PRESET_KEY, String(newPresetId))
+          }
+          loadIfActive(false, newPresetId)
         },
       )
       .subscribe()
@@ -139,18 +177,41 @@ function useMenuState(enabled: boolean): UseMenuResult {
       if (id) {
         setActivePresetIdState(id)
         localStorage.setItem(ACTIVE_PRESET_KEY, String(id))
+        loadIfActive(false, id)
       }
     }
 
     const handleBroadcastOrderUpdate = (event: Event) => {
       const detail = (event as CustomEvent<{ type: string; presetId?: number; menuPresetId?: number }>).detail
       if (detail?.type === 'event_activated' || detail?.type === 'event_deactivated' || detail?.type === 'menu_preset_changed') {
-        if (detail.menuPresetId) {
-          setActivePresetIdState(detail.menuPresetId)
-          localStorage.setItem(ACTIVE_PRESET_KEY, String(detail.menuPresetId))
+        const targetId = detail.menuPresetId ?? detail.presetId
+        if (targetId) {
+          setActivePresetIdState(targetId)
+          localStorage.setItem(ACTIVE_PRESET_KEY, String(targetId))
         }
-        loadIfActive(false)
+        loadIfActive(false, targetId)
       }
+    }
+
+    // Cross-tab BroadcastChannel listener
+    let bc: BroadcastChannel | null = null
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        bc = new BroadcastChannel('monolith_order_events')
+        bc.addEventListener('message', (event) => {
+          const data = event.data
+          if (data?.type === 'event_activated' || data?.type === 'event_deactivated' || data?.type === 'menu_preset_changed') {
+            const targetId = data.menuPresetId ?? data.presetId
+            if (targetId) {
+              setActivePresetIdState(targetId)
+              localStorage.setItem(ACTIVE_PRESET_KEY, String(targetId))
+            }
+            loadIfActive(false, targetId)
+          }
+        })
+      }
+    } catch {
+      // Ignore
     }
 
     window.addEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuItemStatusUpdate)
@@ -158,6 +219,7 @@ function useMenuState(enabled: boolean): UseMenuResult {
     window.addEventListener('monolith-order-update', handleBroadcastOrderUpdate)
     window.addEventListener('storage', handlePresetChange)
     document.addEventListener('visibilitychange', handleVisibilityChange)
+
     return () => {
       cancelled = true
       window.removeEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuItemStatusUpdate)
@@ -165,6 +227,7 @@ function useMenuState(enabled: boolean): UseMenuResult {
       window.removeEventListener('monolith-order-update', handleBroadcastOrderUpdate)
       window.removeEventListener('storage', handlePresetChange)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
+      bc?.close()
       void supabase.removeChannel(channel)
     }
   }, [enabled, load, revision])

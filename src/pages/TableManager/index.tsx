@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useBlocker } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import {
   fetchAllLayoutPresets,
@@ -31,6 +32,7 @@ import type { TableData } from '@/services/tableService'
 import { TableQrPreview } from '@/components/table-qr/TableQrPreview'
 import { printBulkQrPdf } from '@/components/table-qr/tableQrPrinter'
 import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
+import { useActiveEvent } from '@/hooks/useActiveEvent'
 
 interface DragState {
   tableNum: number
@@ -198,6 +200,21 @@ export default function TableManager() {
   const [isDirty, setIsDirty] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const { activeEvent, isEventActive } = useActiveEvent()
+
+  // ── Navigation Guard: block route changes when there are unsaved edits ──
+  const shouldBlock = isEditMode && isDirty
+  const blocker = useBlocker(shouldBlock)
+
+  // Guard browser close / refresh
+  useEffect(() => {
+    if (!shouldBlock) return
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [shouldBlock])
 
   // Dragging & Container Dimension State
   const [dragState, setDragState] = useState<DragState | null>(null)
@@ -456,6 +473,13 @@ export default function TableManager() {
 
   const handleSelectPreset = (presetId: number) => {
     if (presetId === activePresetId) return
+    if (isEventActive) {
+      showToast(
+        `Cannot switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active. Deactivate the event in Events first.`,
+        'error',
+      )
+      return
+    }
     if (isDirty) {
       setConfirmModal({
         isOpen: true,
@@ -496,6 +520,13 @@ export default function TableManager() {
 
   // ── 5. Delete Preset ──
   const handleDeletePreset = (presetId: number) => {
+    if (isEventActive) {
+      showToast(
+        `Cannot delete or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
+        'error',
+      )
+      return
+    }
     setConfirmModal({
       isOpen: true,
       title: 'Delete Floor Plan',
@@ -547,6 +578,13 @@ export default function TableManager() {
 
   // ── 6. Create New Preset ──
   const handleCreatePreset = async (name: string, isDef: boolean) => {
+    if (isEventActive) {
+      showToast(
+        `Cannot create or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
+        'error',
+      )
+      return
+    }
     const created = await createLayoutPreset(name, gridWidth, gridHeight, isDef)
     setPresets((prev) => {
       if (isDef) {
@@ -1250,13 +1288,24 @@ export default function TableManager() {
         <TableManagerHeader
           presets={presets}
           activePresetId={activePresetId}
+          isEventActive={isEventActive}
+          activeEventTitle={activeEvent?.title}
           totalCapacity={totalAllocatedCapacity}
           maxVenueCapacity={VENUE_MAX_CAPACITY}
           isDirty={isDirty}
           onSelectPreset={handleSelectPreset}
           onRenamePreset={handleRenamePreset}
           onDeletePreset={handleDeletePreset}
-          onOpenNewPresetModal={() => setNewPresetModalOpen(true)}
+          onOpenNewPresetModal={() => {
+            if (isEventActive) {
+              showToast(
+                `Cannot create or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
+                'error',
+              )
+              return
+            }
+            setNewPresetModalOpen(true)
+          }}
           isEditMode={isEditMode}
           onToggleEditMode={handleToggleEditMode}
           onSaveLayout={handleSaveLayout}
@@ -1438,6 +1487,18 @@ export default function TableManager() {
         variant={confirmModal.variant}
         onConfirm={confirmModal.onConfirm}
         onCancel={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+      />
+
+      {/* Navigation Guard Modal — blocks page changes when unsaved edits exist */}
+      <ConfirmModal
+        isOpen={blocker.state === 'blocked'}
+        title="Unsaved Changes"
+        message="You have unsaved layout changes. If you leave this page, your changes will be lost. Do you want to discard them and leave?"
+        confirmLabel="Discard & Leave"
+        cancelLabel="Stay on Page"
+        variant="warning"
+        onConfirm={() => blocker.proceed?.()}
+        onCancel={() => blocker.reset?.()}
       />
 
       {/* In-App Rename Preset Modal */}

@@ -8,6 +8,7 @@ import {
   XCircle,
   ArrowRight,
   Sparkles,
+  Flag,
 } from 'lucide-react'
 import type { OrderStatusNotification } from '@/hooks/useOrders'
 
@@ -59,6 +60,12 @@ const STATUS_CONFIG = {
     color: 'border-slate-300 bg-slate-50/95 text-slate-900',
     iconBg: 'bg-slate-600 text-white',
     badge: 'bg-slate-100 text-slate-800',
+  },
+  FLAGGED: {
+    icon: Flag,
+    color: 'border-amber-400 bg-amber-50/95 text-amber-950',
+    iconBg: 'bg-amber-600 text-white',
+    badge: 'bg-amber-100 text-amber-800',
   },
 }
 

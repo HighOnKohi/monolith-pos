@@ -9,12 +9,15 @@ import {
   RotateCcw,
   FileDown,
   Printer,
+  Lock,
 } from 'lucide-react'
 import type { TableLayoutPreset } from '@/services/tableLayoutService'
 
 interface TableManagerHeaderProps {
   presets: TableLayoutPreset[]
   activePresetId: number | null
+  isEventActive?: boolean
+  activeEventTitle?: string
   totalCapacity?: number
   maxVenueCapacity?: number
   isDirty?: boolean
@@ -37,6 +40,8 @@ interface TableManagerHeaderProps {
 export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   presets,
   activePresetId,
+  isEventActive = false,
+  activeEventTitle,
   totalCapacity = 0,
   maxVenueCapacity = 50,
   isDirty = false,
@@ -83,23 +88,39 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
         <div className="relative min-w-[220px] z-30" ref={dropdownRef}>
           <button
             type="button"
-            onClick={() => setIsDropdownOpen((prev) => !prev)}
+            onClick={() => {
+              if (isEventActive) return
+              setIsDropdownOpen((prev) => !prev)
+            }}
             aria-expanded={isDropdownOpen}
-            className={`w-full min-w-[220px] px-3.5 py-2.5 bg-white hover:bg-slate-50 border border-slate-300 text-xs font-bold text-[#14274E] flex items-center justify-between gap-2 shadow-xs cursor-pointer transition-colors ${
+            title={isEventActive ? `Locked: Event "${activeEventTitle ?? 'Active Event'}" is active` : undefined}
+            className={`w-full min-w-[220px] px-3.5 py-2.5 bg-white border text-xs font-bold text-[#14274E] flex items-center justify-between gap-2 shadow-xs transition-colors ${
+              isEventActive
+                ? 'opacity-85 border-amber-300 cursor-not-allowed'
+                : 'hover:bg-slate-50 border-slate-300 cursor-pointer'
+            } ${
               isDropdownOpen ? 'rounded-t-xl rounded-b-none border-b-0 shadow-none' : 'rounded-xl'
             }`}
           >
             <div className="flex items-center gap-1.5 truncate">
+              {isEventActive && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
               <span className="text-slate-400 font-semibold">Preset:</span>
               <span className="font-black text-[#14274E] truncate">
                 {activePreset?.PRESET_NAME ?? 'Select Preset'}
               </span>
+              {isEventActive && (
+                <span className="ml-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                  Event Active
+                </span>
+              )}
             </div>
-            <ChevronDown
-              className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${
-                isDropdownOpen ? 'rotate-180' : ''
-              }`}
-            />
+            {!isEventActive && (
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${
+                  isDropdownOpen ? 'rotate-180' : ''
+                }`}
+              />
+            )}
           </button>
 
         {/* Seamlessly Connected Dropdown Menu without margins and without rounded corners on options */}
@@ -112,6 +133,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
                   <div
                     key={preset.LAYOUT_PRESET_ID}
                     onClick={() => {
+                      if (isEventActive) return
                       onSelectPreset(preset.LAYOUT_PRESET_ID)
                       setIsDropdownOpen(false)
                     }}
@@ -124,63 +146,67 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
                     <span className="truncate flex-1 text-left">{preset.PRESET_NAME}</span>
 
                     {/* Hover Action Buttons (Rename & Delete) */}
-                    <div
-                      className={`flex items-center gap-1 transition-opacity ${
-                        isSelected ? 'opacity-90' : 'opacity-0 group-hover:opacity-100'
-                      }`}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsDropdownOpen(false)
-                          onRenamePreset(preset.LAYOUT_PRESET_ID, preset.PRESET_NAME)
-                        }}
-                        title="Rename Preset"
-                        className={`p-1 rounded-sm transition-colors cursor-pointer ${
-                          isSelected
-                            ? 'hover:bg-white/20 text-slate-200'
-                            : 'hover:bg-slate-200 text-slate-500 hover:text-slate-800'
+                    {!isEventActive && (
+                      <div
+                        className={`flex items-center gap-1 transition-opacity ${
+                          isSelected ? 'opacity-90' : 'opacity-0 group-hover:opacity-100'
                         }`}
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <Pencil className="w-3 h-3" />
-                      </button>
-
-                      {presets.length > 1 && (
                         <button
                           type="button"
                           onClick={() => {
                             setIsDropdownOpen(false)
-                            onDeletePreset(preset.LAYOUT_PRESET_ID)
+                            onRenamePreset(preset.LAYOUT_PRESET_ID, preset.PRESET_NAME)
                           }}
-                          title="Delete Preset"
+                          title="Rename Preset"
                           className={`p-1 rounded-sm transition-colors cursor-pointer ${
                             isSelected
-                              ? 'hover:bg-rose-600 text-rose-300 hover:text-white'
-                              : 'hover:bg-rose-100 text-slate-400 hover:text-rose-600'
+                              ? 'hover:bg-white/20 text-slate-200'
+                              : 'hover:bg-slate-200 text-slate-500 hover:text-slate-800'
                           }`}
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Pencil className="w-3 h-3" />
                         </button>
-                      )}
-                    </div>
+
+                        {presets.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsDropdownOpen(false)
+                              onDeletePreset(preset.LAYOUT_PRESET_ID)
+                            }}
+                            title="Delete Preset"
+                            className={`p-1 rounded-sm transition-colors cursor-pointer ${
+                              isSelected
+                                ? 'hover:bg-rose-600 text-rose-300 hover:text-white'
+                                : 'hover:bg-rose-100 text-slate-400 hover:text-rose-600'
+                            }`}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })}
             </div>
 
             {/* Dropdown Footer: Create New Preset */}
-            <button
-              type="button"
-              onClick={() => {
-                setIsDropdownOpen(false)
-                onOpenNewPresetModal()
-              }}
-              className="w-full px-3.5 py-2.5 text-left text-xs font-black text-[#14274E] bg-slate-50 hover:bg-slate-100 border-t border-slate-200 flex items-center gap-2 cursor-pointer transition-colors rounded-none m-0"
-            >
-              <Plus className="w-3.5 h-3.5 text-slate-600" />
-              <span>Create a new Preset</span>
-            </button>
+            {!isEventActive && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDropdownOpen(false)
+                  onOpenNewPresetModal()
+                }}
+                className="w-full px-3.5 py-2.5 text-left text-xs font-black text-[#14274E] bg-slate-50 hover:bg-slate-100 border-t border-slate-200 flex items-center gap-2 cursor-pointer transition-colors rounded-none m-0"
+              >
+                <Plus className="w-3.5 h-3.5 text-slate-600" />
+                <span>Create a new Preset</span>
+              </button>
+            )}
           </div>
         )}
         </div>

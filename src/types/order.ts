@@ -78,6 +78,9 @@ export interface CompressedOrderItem {
   pendingCount: number
   preparingCount: number
   servedCount: number
+  isFlagged?: boolean
+  flaggedCount?: number
+  rejectionReason?: string | null
 }
 
 export interface CompressedTableOrder {
@@ -89,5 +92,6 @@ export interface CompressedTableOrder {
   items: CompressedOrderItem[]
   rawOrders: Order[]
   canBillOut: boolean
+  hasFlaggedItems?: boolean
 }
 

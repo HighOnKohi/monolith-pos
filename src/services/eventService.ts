@@ -587,12 +587,47 @@ export async function updateEvent(
   }
 }
 
+// ─── Active Event Queries & Lifecycle ─────────────────────────────────────────
+
+export async function getActiveEvent(): Promise<RestaurantEvent | null> {
+  try {
+    const events = await fetchEvents()
+    const active = events.find((e) => e.isActive && !e.isCancelled && !e.deletedAt)
+    if (active) return active
+  } catch (err) {
+    console.warn('[eventService] Failed to fetch events for active event check:', err)
+  }
+
+  // Fallback: check localStorage active ID or fallback storage
+  if (typeof window !== 'undefined') {
+    const activeStoredId = localStorage.getItem('monolith_active_event_id')
+    if (activeStoredId) {
+      const fallbackAll = getFallbackEvents()
+      const found = fallbackAll.find((e) => String(e.eventId) === activeStoredId && !e.isCancelled && !e.deletedAt)
+      if (found) return found
+    }
+  }
+  return null
+}
+
 // ─── Activate Event (Switches Linked Table Layout & Menu Preset) ───────────────
 
 export async function activateEvent(event: RestaurantEvent): Promise<void> {
   // 1. Mark this event as active and clear other active events in storage
   if (typeof window !== 'undefined') {
     localStorage.setItem('monolith_active_event_id', String(event.eventId))
+  }
+
+  // Sync fallback events in localStorage
+  try {
+    const fallbackAll = getFallbackEvents()
+    const updatedFallback = fallbackAll.map((e) => ({
+      ...e,
+      isActive: e.eventId === event.eventId,
+    }))
+    saveFallbackEvents(updatedFallback)
+  } catch {
+    // Ignore fallback write errors
   }
 
   // 2. If event has linked Table Layout Preset, apply & toggle IS_DEFAULT in Table_Layout_Presets
@@ -632,9 +667,20 @@ export async function activateEvent(event: RestaurantEvent): Promise<void> {
 
   // 5. Broadcast realtime notification across all interfaces
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('monolith-order-update', {
-      detail: { type: 'event_activated', eventId: event.eventId, presetId: event.presetId, menuPresetId: event.menuPresetId }
-    }))
+    const detail = {
+      type: 'event_activated',
+      eventId: event.eventId,
+      presetId: event.presetId,
+      menuPresetId: event.menuPresetId,
+    }
+    window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
+    try {
+      const bc = new BroadcastChannel('monolith_order_events')
+      bc.postMessage(detail)
+      bc.close()
+    } catch {
+      // Ignore
+    }
   }
 }
 
@@ -643,6 +689,18 @@ export async function deactivateEvent(eventId: number): Promise<void> {
     if (localStorage.getItem('monolith_active_event_id') === String(eventId)) {
       localStorage.removeItem('monolith_active_event_id')
     }
+  }
+
+  // Sync fallback events in localStorage
+  try {
+    const fallbackAll = getFallbackEvents()
+    const updatedFallback = fallbackAll.map((e) => ({
+      ...e,
+      isActive: e.eventId === eventId ? false : e.isActive,
+    }))
+    saveFallbackEvents(updatedFallback)
+  } catch {
+    // Ignore fallback write errors
   }
 
   // 1. Revert Table_Layout_Presets IS_DEFAULT to standard default layout
@@ -676,9 +734,15 @@ export async function deactivateEvent(eventId: number): Promise<void> {
   }
 
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('monolith-order-update', {
-      detail: { type: 'event_deactivated', eventId }
-    }))
+    const detail = { type: 'event_deactivated', eventId }
+    window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
+    try {
+      const bc = new BroadcastChannel('monolith_order_events')
+      bc.postMessage(detail)
+      bc.close()
+    } catch {
+      // Ignore
+    }
   }
 }
 
