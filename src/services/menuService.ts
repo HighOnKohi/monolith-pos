@@ -277,6 +277,7 @@ export async function createMenuItem(payload: {
       ITEM_DESCRIPTION: payload.description ?? null,
       ORDER_LIMIT: payload.orderLimit ?? 0,
       IS_ITEM_GROUP: (payload.itemIds?.length ?? 0) > 0,
+      PRESET_ID: payload.presetId ?? null,
     })
     .select()
     .single()

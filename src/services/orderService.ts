@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 import type { CartItem, DiningType } from '@/types/cart'
 import type { Order, OrderItem, OrderStatus } from '@/types/order'
 import { logOrderEvent } from '@/services/orderLogsService'
+import { broadcastOrderUpdate } from '@/services/dispatcherService'
 
 const DINING_TYPE_MAP: Record<DiningType, string> = {
   'dine-in': 'DINE-IN',
@@ -496,6 +497,115 @@ export async function deleteOrder(orderId: number): Promise<void> {
     .eq('ORDER_ID', orderId)
 
   if (orderError) throw orderError
+}
+
+export interface VoidOrderResult {
+  orderDeleted: boolean
+  tableReset: boolean
+  voidedCount: number
+}
+
+/**
+ * Voids selected items from a pending order.
+ * If all active items in the order are voided, the entire order is removed and the table
+ * is reset to AVAILABLE if no other active orders remain.
+ */
+export async function voidOrderItems(
+  orderId: number,
+  orderItemIds: number[],
+  tableId: number,
+  memberTableIds?: number[],
+): Promise<VoidOrderResult> {
+  if (orderItemIds.length === 0) {
+    return { orderDeleted: false, tableReset: false, voidedCount: 0 }
+  }
+
+  // 1. Fetch current order items
+  const { data: currentItems, error: itemsFetchErr } = await supabase
+    .from('Order_Items')
+    .select('ORDER_ITEM_ID, ITEM_ID, ORDER_ITEM_STATUS')
+    .eq('ORDER_ID', orderId)
+
+  if (itemsFetchErr) throw itemsFetchErr
+
+  const nonCancelledItems = (currentItems ?? []).filter(
+    (it) => it.ORDER_ITEM_STATUS !== 'CANCELLED',
+  )
+  const remainingItems = nonCancelledItems.filter(
+    (it) => !orderItemIds.includes(Number(it.ORDER_ITEM_ID)),
+  )
+
+  let orderDeleted = false
+  let tableReset = false
+
+  if (remainingItems.length === 0) {
+    // Voiding all active items -> delete the order
+    await deleteOrder(orderId)
+    orderDeleted = true
+  } else {
+    // Delete only the specified items
+    const { error: deleteItemsErr } = await supabase
+      .from('Order_Items')
+      .delete()
+      .in('ORDER_ITEM_ID', orderItemIds)
+
+    if (deleteItemsErr) throw deleteItemsErr
+
+    // Recalculate remaining total
+    const remainingItemIds = remainingItems.map((it) => Number(it.ITEM_ID))
+    const { data: menuRows } = await supabase
+      .schema('menu')
+      .from('Menu_Items')
+      .select('ITEM_ID, ITEM_PRICE')
+      .in('ITEM_ID', remainingItemIds)
+
+    const priceMap = new Map<number, number>()
+    for (const r of menuRows ?? []) {
+      priceMap.set(Number(r.ITEM_ID), Number(r.ITEM_PRICE) || 0)
+    }
+
+    const newTotal = remainingItemIds.reduce((sum, id) => sum + (priceMap.get(id) ?? 0), 0)
+
+    await supabase
+      .from('Restaurant_Orders')
+      .update({ TOTAL_BILL: newTotal })
+      .eq('ORDER_ID', orderId)
+  }
+
+  // Check if any active orders remain for table
+  const targetIds = memberTableIds && memberTableIds.length > 0 ? memberTableIds : [tableId]
+  const { data: remainingOrders } = await supabase
+    .from('Restaurant_Orders')
+    .select('ORDER_ID')
+    .in('TABLE_ID', targetIds)
+    .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED'])
+
+  if (!remainingOrders || remainingOrders.length === 0) {
+    await supabase
+      .schema('tables')
+      .from('Restaurant_Tables')
+      .update({
+        STATUS: 'AVAILABLE',
+        BILL_OUT_REQUESTED: false,
+        CURRENT_GUEST_COUNT: 0,
+        RESERVED_SINCE: null,
+      })
+      .in('TABLE_ID', targetIds)
+
+    tableReset = true
+  }
+
+  broadcastOrderUpdate({ type: 'all' })
+
+  // Log lifecycle audit event
+  void logOrderEvent(orderId, {
+    eventType: 'ORDER_VOIDED',
+    newStatus: orderDeleted ? 'CANCELLED' : 'REQUESTED',
+    actor: 'Service Station',
+    reason: `Admin voided ${orderItemIds.length} item(s)`,
+  }).catch(() => {})
+
+  return { orderDeleted, tableReset, voidedCount: orderItemIds.length }
 }
 
 export interface SettleOrderAttribution {

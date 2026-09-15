@@ -6,16 +6,13 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
-  Trash2,
-  AlertTriangle,
-  X,
   GitMerge,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllTables, fetchOrderSummariesForIds, type TableData } from '@/services/tableService'
-import { fetchOrdersByTable, settleTableOrders, deleteOrder } from '@/services/orderService'
+import { fetchOrdersByTable, settleTableOrders } from '@/services/orderService'
 import { fetchAllBillRequests, resolveBillOutRequest, updateBillRequestStatus } from '@/services/billService'
-import { subscribeToOrderUpdates, broadcastOrderUpdate } from '@/services/dispatcherService'
+import { subscribeToOrderUpdates } from '@/services/dispatcherService'
 import type { BillRequest } from '@/types/bill'
 import type { Order, OrderStatus } from '@/types/order'
 import { resolveTableGroupByList } from '@/services/tableGroupService'
@@ -89,8 +86,6 @@ export default function CashierInterface() {
   const [applyAllCustom, setApplyAllCustom] = useState(0)
   const [receipt, setReceipt] = useState<ReceiptSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
-  const [removeBusy, setRemoveBusy] = useState(false)
-  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false)
   const [error, setError] = useState('')
 
   // Toast feedback state for alerts and assistance
@@ -623,61 +618,6 @@ export default function CashierInterface() {
     }
   }
 
-  async function handleRemoveOrder() {
-    if (!selectedTableGroup || orders.length === 0) return
-    setRemoveBusy(true)
-    setError('')
-    const removedAnchorId = selectedTableGroup.group.anchorTableId
-    const removedLabel = selectedTableGroup.group.displayLabel
-    const removedOrderIds = orders.map((o) => o.orderId)
-    const removedTotal = total
-
-    try {
-      const memberIds = selectedTableGroup.group.memberTableIds
-      for (const order of orders) {
-        await deleteOrder(order.orderId)
-      }
-      if (activeBillRequest) {
-        await updateBillRequestStatus(activeBillRequest.requestId, 'CANCELLED')
-      }
-      await resolveBillOutRequest(selectedTableGroup.group.anchorTableId)
-
-      await supabase
-        .schema('tables')
-        .from('Restaurant_Tables')
-        .update({
-          STATUS: 'AVAILABLE',
-          BILL_OUT_REQUESTED: false,
-          CURRENT_GUEST_COUNT: 0,
-          RESERVED_SINCE: null,
-        })
-        .in('TABLE_ID', memberIds)
-
-      broadcastOrderUpdate({ type: 'all' })
-      setSelectedId(null)
-      setOrders([])
-      setShowRemoveConfirm(false)
-      await load()
-
-      void logCashierAction({
-        action: 'ORDER_CANCELLED',
-        entityType: 'TABLE',
-        entityId: String(removedAnchorId),
-        description: `Removed active order(s) for Table ${removedLabel}`,
-        metadata: {
-          table_id: removedAnchorId,
-          order_ids: removedOrderIds,
-          order_total: removedTotal,
-        },
-      })
-    } catch (err) {
-      console.error('[CashierInterface] Failed to remove table order:', err)
-      setError(err instanceof Error ? err.message : 'Failed to remove table order.')
-    } finally {
-      setRemoveBusy(false)
-    }
-  }
-
   return (
     <div className="cashier-interface-page staff-page">
       {/* Toast Alert for live assistance requests */}
@@ -1120,19 +1060,8 @@ export default function CashierInterface() {
             <div className="ci-action-buttons">
               <button
                 type="button"
-                className="ci-remove-button"
-                disabled={busy || removeBusy || !selectedTableGroup || orders.length === 0}
-                onClick={() => setShowRemoveConfirm(true)}
-                title="Remove and cancel this order"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Remove Order</span>
-              </button>
-
-              <button
-                type="button"
-                className="ci-settle-button"
-                disabled={!selectedTableGroup || orders.length === 0 || !isTableDispatcherDone || busy || removeBusy}
+                className="ci-settle-button w-full"
+                disabled={!selectedTableGroup || orders.length === 0 || !isTableDispatcherDone || busy}
                 onClick={() => void settleTable()}
               >
                 <CreditCard className="ci-icon" />
@@ -1142,82 +1071,6 @@ export default function CashierInterface() {
           </footer>
         </aside>
       </div>
-
-      {/* Remove Order Confirmation Modal */}
-      {showRemoveConfirm && (
-        <div className="ci-modal-overlay" onClick={() => !removeBusy && setShowRemoveConfirm(false)}>
-          <div className="ci-modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="ci-modal-header">
-              <span className="ci-modal-title">
-                <Trash2 className="w-4 h-4 text-rose-600" />
-                <span>Remove Table Order</span>
-              </span>
-              <button
-                type="button"
-                className="text-slate-400 hover:text-slate-600 cursor-pointer p-1 rounded-md"
-                disabled={removeBusy}
-                onClick={() => setShowRemoveConfirm(false)}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="ci-modal-body">
-              {selectedTableGroup && (
-                <>
-                  <p className="mb-3 text-slate-700 font-medium">
-                    Are you sure you want to remove active order(s) for <strong>{selectedTableGroup.group.displayLabel}</strong>?
-                  </p>
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500 font-bold">Dispatcher Status:</span>
-                      <span className={`font-black ${isTableDispatcherDone ? 'text-emerald-600' : 'text-amber-600'}`}>
-                        {isTableDispatcherDone ? 'Ready for Billing' : 'In Preparation / Dispatcher'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500 font-bold">Orders:</span>
-                      <span className="font-extrabold text-[#14274E]">#{orders.map((o) => o.orderId).join(', #')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500 font-bold">Active Items:</span>
-                      <span className="font-extrabold text-[#14274E]">{activeItems.length} item(s)</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500 font-bold">Order Total:</span>
-                      <span className="font-black text-[#14274E]">{money(total)}</span>
-                    </div>
-                  </div>
-                  <p className="mt-3 text-xs text-rose-600 font-bold flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>This will cancel the active order(s) and reset the table to Available.</span>
-                  </p>
-                </>
-              )}
-            </div>
-
-            <div className="ci-modal-footer">
-              <button
-                type="button"
-                className="ci-modal-btn-cancel"
-                disabled={removeBusy}
-                onClick={() => setShowRemoveConfirm(false)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="ci-modal-btn-danger"
-                disabled={removeBusy}
-                onClick={() => void handleRemoveOrder()}
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>{removeBusy ? 'Removing...' : 'Confirm Remove'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {receipt && <ReceiptPreviewModal receipt={receipt} onClose={() => setReceipt(null)} />}
       {!receipt && selectedTableGroup && activeBillRequest && (

@@ -3,8 +3,7 @@ import {
   Clock,
   ChefHat,
   RefreshCw,
-  Plus,
-  Minus,
+  Check,
   CheckCircle,
   CheckCircle2,
   Flag,
@@ -16,7 +15,7 @@ import {
   moveOrderToCooking,
   moveOrderToReady,
   moveOrderToCompleted,
-  updateItemCookingCount,
+  updateOrderItemStatus,
   rejectOrderItems,
   flagOrderItems,
   saveDispatcherNote,
@@ -48,7 +47,6 @@ export default function DispatcherInterface() {
   // Tables mode data & state
   const [orders, setOrders] = useState<DispatcherOrder[]>([])
   const ordersRef = useRef<DispatcherOrder[]>([])
-  const [localCookingCounts, setLocalCookingCounts] = useState(new Map<string, number>())
   const [activeTableStage, setActiveTableStage] = useState<TableStage>('preparing')
   const currentlyRejectedRef = useRef(new Set<number>())
   const [rejectingOrder, setRejectingOrder] = useState<DispatcherOrder | null>(null)
@@ -168,14 +166,6 @@ export default function DispatcherInterface() {
       }
     })
 
-    grouped.forEach((group) => {
-      const localCount = localCookingCounts.get(`${order.orderId}:${group.itemId}`)
-      if (localCount !== undefined) {
-        group.cookingCount = localCount
-        group.doneCount = group.totalQuantity - localCount
-      }
-    })
-
     return Array.from(grouped.values())
   }
 
@@ -201,67 +191,96 @@ export default function DispatcherInterface() {
         return false
       })
       .sort((a, b) => b.orderId - a.orderId)
-  }, [orders, activeTableStage, localCookingCounts])
+  }, [orders, activeTableStage])
 
-  // ── Table Order Actions & Stepper Handlers ──
-  function handleTableCookingCountChange(
-    orderId: number,
-    itemId: string,
-    delta: number,
-    event?: React.MouseEvent,
-  ) {
+  // ── Toggle Individual Item Done Handler ──
+  async function handleToggleItemDone(orderId: number, orderItemId: number) {
     const order = orders.find((o) => o.orderId === orderId)
     if (!order) return
 
-    const grouped = groupOrderItems(order).find((g) => g.itemId === itemId)
-    if (!grouped) return
+    const item = order.items.find((i) => i.orderItemId === orderItemId)
+    if (!item) return
 
-    const currentCooking = grouped.cookingCount
-    let newCooking: number
+    const newStatus: 'DONE' | 'COOKING' = item.status === 'DONE' ? 'COOKING' : 'DONE'
 
-    // Helper: Shift+Click sets to 0 (all done) or max (all cooking)
-    if (event?.shiftKey) {
-      newCooking = delta < 0 ? 0 : grouped.totalQuantity
-    } else {
-      newCooking = Math.max(0, Math.min(grouped.totalQuantity, currentCooking + delta))
-    }
-
-    if (newCooking === currentCooking) return
-
-    const newDone = grouped.totalQuantity - newCooking
-
-    // Optimistic UI state update immediately
-    setLocalCookingCounts((prev) => {
-      const next = new Map(prev)
-      next.set(`${orderId}:${itemId}`, newCooking)
-      return next
+    // Optimistically update item status in orders
+    const nextOrders = orders.map((ord) => {
+      if (ord.orderId !== orderId) return ord
+      return {
+        ...ord,
+        items: ord.items.map((it) =>
+          it.orderItemId === orderItemId ? { ...it, status: newStatus } : it,
+        ),
+      }
     })
 
-    setOrders((currentOrders) =>
-      currentOrders.map((ord) => {
-        if (ord.orderId !== orderId) return ord
-        let doneRemaining = newDone
-        return {
-          ...ord,
-          items: ord.items.map((it) => {
-            if (it.itemId !== itemId || it.status === 'CANCELLED') return it
-            if (doneRemaining > 0) {
-              doneRemaining--
-              return { ...it, status: 'DONE' }
-            }
-            return { ...it, status: 'COOKING' }
-          }),
-        }
-      }),
-    )
+    // Check if ALL active items in this order are now marked DONE
+    const targetOrder = nextOrders.find((o) => o.orderId === orderId)
+    const activeItems = targetOrder?.items.filter((i) => i.status !== 'CANCELLED') ?? []
+    const allMarked = activeItems.length > 0 && activeItems.every((i) => i.status === 'DONE')
 
-    // Persist to database asynchronously
-    void updateItemCookingCount(orderId, itemId, newDone)
-      .then(() => loadOrders(true))
-      .catch((err) => {
-        console.error('Failed to update cooking count:', err)
-        showToast('Failed to update count', 'error')
-      })
+    if (allMarked) {
+      // Optimistically move order to READY status (instantly leaves cooking tab and enters done tab)
+      setOrders(
+        nextOrders.map((ord) =>
+          ord.orderId === orderId
+            ? {
+                ...ord,
+                orderStatus: 'READY',
+                items: ord.items.map((it) => (it.status === 'CANCELLED' ? it : { ...it, status: 'DONE' })),
+              }
+            : ord,
+        ),
+      )
+      showToast(`Order #${orderId} completed → Moved to Done tab!`, 'success')
+
+      try {
+        await updateOrderItemStatus(orderItemId, 'DONE')
+        await moveOrderToReady(orderId)
+        void loadOrders(true)
+      } catch (err) {
+        console.error('Failed to auto-move order to ready:', err)
+        showToast('Failed to move order to Done', 'error')
+        void loadOrders(true)
+      }
+    } else {
+      setOrders(nextOrders)
+      try {
+        await updateOrderItemStatus(orderItemId, newStatus)
+      } catch (err) {
+        console.error('Failed to update item status:', err)
+        showToast('Failed to update item', 'error')
+        void loadOrders(true)
+      }
+    }
+  }
+
+  // ── Mark All Items in Order as Done Handler ──
+  async function handleMarkAllDone(orderId: number) {
+    const order = orders.find((o) => o.orderId === orderId)
+    if (!order) return
+
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.orderId === orderId
+          ? {
+              ...o,
+              orderStatus: 'READY',
+              items: o.items.map((it) => (it.status === 'CANCELLED' ? it : { ...it, status: 'DONE' })),
+            }
+          : o,
+      ),
+    )
+    showToast(`Order #${orderId} completed → Moved to Done tab!`, 'success')
+
+    try {
+      await moveOrderToReady(orderId)
+      void loadOrders(true)
+    } catch (err) {
+      console.error('Failed to move order to ready:', err)
+      showToast('Failed to move order to Done', 'error')
+      void loadOrders(true)
+    }
   }
 
   function handleMoveToCooking(orderId: number) {
@@ -285,29 +304,6 @@ export default function DispatcherInterface() {
         console.error('Failed to persist cooking status:', err)
         setOrders(previousOrders)
         showToast('Failed to move order', 'error')
-      })
-  }
-
-  function handleMoveToReady(orderId: number) {
-    const previousOrders = orders
-    setOrders((currentOrders) =>
-      currentOrders.map((order) =>
-        order.orderId === orderId
-          ? {
-            ...order,
-            orderStatus: 'READY',
-          }
-          : order,
-      ),
-    )
-    showToast('Order marked as done (Ready for serving)', 'success')
-
-    void moveOrderToReady(orderId)
-      .then(() => loadOrders(true))
-      .catch((err) => {
-        console.error('Failed to persist ready status:', err)
-        setOrders(previousOrders)
-        showToast('Failed to mark order as done', 'error')
       })
   }
 
@@ -467,7 +463,8 @@ export default function DispatcherInterface() {
           ) : (
             filteredOrders.map((order) => {
               const groupedItems = groupOrderItems(order)
-              const allDone = groupedItems.length > 0 && groupedItems.every((item) => item.cookingCount === 0)
+              const activeItems = order.items.filter((i) => i.status !== 'CANCELLED')
+              const doneCount = activeItems.filter((i) => i.status === 'DONE').length
 
               return (
                 <div key={order.orderId} className="dispatcher-order-card">
@@ -487,72 +484,111 @@ export default function DispatcherInterface() {
                     </div>
                   )}
 
-                  {/* Items List with Cooking Steppers in cooking stage */}
+                  {/* Items List */}
                   <div className="dispatcher-order-items">
-                    {groupedItems.map((group) => (
-                      <div key={group.itemId} className="dispatcher-order-item">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="dispatcher-item-name flex-1">
-                            {group.name}
-                            {group.isFlagged && (
-                              <span className="dispatcher-flag-badge ml-1.5">
-                                <Flag className="h-2.5 w-2.5" />
-                                Flagged
-                              </span>
-                            )}
-                          </span>
+                    {activeTableStage === 'cooking' ? (
+                      /* ── Cooking Stage: Individual Items with Mark Button ── */
+                      activeItems.map((item) => {
+                        const isDone = item.status === 'DONE'
 
-                          {activeTableStage === 'cooking' ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[11px] font-bold text-slate-400">
-                                {group.doneCount}/{group.totalQuantity} done
-                              </span>
-                              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                                <button
-                                  onClick={(e) => handleTableCookingCountChange(order.orderId, group.itemId, -1, e)}
-                                  disabled={group.cookingCount <= 0}
-                                  className="w-6 h-6 rounded flex items-center justify-center bg-white hover:bg-slate-200 disabled:opacity-30 text-slate-700 font-bold cursor-pointer"
-                                  title="Click: -1 | Shift+Click: Set to 0 (All Done)"
+                        // If multiple items share the same name in this order, distinguish with (#1, #2...)
+                        const matchingItems = activeItems.filter((i) => i.name === item.name)
+                        let itemLabel = item.name
+                        if (matchingItems.length > 1) {
+                          const unitIndex = matchingItems.findIndex((i) => i.orderItemId === item.orderItemId) + 1
+                          itemLabel = `${item.name} (#${unitIndex})`
+                        }
+
+                        return (
+                          <div
+                            key={item.orderItemId}
+                            className={`dispatcher-order-item transition-all duration-200 ${
+                              isDone ? 'bg-emerald-50/50 rounded-xl px-2 py-1.5 border border-emerald-100' : ''
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span
+                                  className={`dispatcher-item-name truncate ${
+                                    isDone ? 'line-through text-slate-400 font-normal' : 'text-[#14274E] font-bold'
+                                  }`}
                                 >
-                                  <Minus className="w-3 h-3" />
-                                </button>
-                                <span className="w-6 text-center text-xs font-black text-[#14274E]">
-                                  {group.cookingCount}
+                                  {itemLabel}
                                 </span>
-                                <button
-                                  onClick={(e) => handleTableCookingCountChange(order.orderId, group.itemId, 1, e)}
-                                  disabled={group.cookingCount >= group.totalQuantity}
-                                  className="w-6 h-6 rounded flex items-center justify-center bg-[#14274E] hover:bg-[#203c73] disabled:opacity-30 text-white font-bold cursor-pointer"
-                                  title="Click: +1 | Shift+Click: Set to Max (All Cooking)"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                </button>
+                                {item.isFlagged && (
+                                  <span className="dispatcher-flag-badge shrink-0">
+                                    <Flag className="h-2.5 w-2.5" />
+                                    Flagged
+                                  </span>
+                                )}
                               </div>
-                            </div>
-                          ) : activeTableStage === 'preparing' ? (
-                            <div className="flex items-center gap-2">
+
                               <button
                                 type="button"
-                                onClick={() => handleToggleItemFlag(order.orderId, group.itemId, !group.isFlagged)}
-                                className={[
-                                  'px-2 py-0.5 text-[10px] font-extrabold rounded-md flex items-center gap-1 transition-all cursor-pointer border',
-                                  group.isFlagged
-                                    ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 shadow-2xs'
-                                    : 'bg-white text-slate-400 border-slate-200 hover:border-amber-300 hover:text-amber-600',
-                                ].join(' ')}
-                                title={group.isFlagged ? 'Unflag item' : 'Flag item as unavailable / out of stock'}
+                                onClick={() => handleToggleItemDone(order.orderId, item.orderItemId)}
+                                className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95 shrink-0 ${
+                                  isDone
+                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                    : 'bg-white hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 text-slate-700 border border-slate-200'
+                                }`}
+                                title={isDone ? 'Item cooked (click to unmark)' : 'Click to mark as done'}
                               >
-                                <Flag className="w-2.5 h-2.5" fill={group.isFlagged ? 'currentColor' : 'none'} />
-                                <span>{group.isFlagged ? 'Flagged' : 'Flag'}</span>
+                                {isDone ? (
+                                  <>
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                                    <span>Done</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 text-slate-400" />
+                                    <span>Mark Done</span>
+                                  </>
+                                )}
                               </button>
-                              <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
                             </div>
-                          ) : (
-                            <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
-                          )}
+                          </div>
+                        )
+                      })
+                    ) : (
+                      /* ── Requested & Done Stages: Grouped Items View ── */
+                      groupedItems.map((group) => (
+                        <div key={group.itemId} className="dispatcher-order-item">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="dispatcher-item-name flex-1">
+                              {group.name}
+                              {group.isFlagged && (
+                                <span className="dispatcher-flag-badge ml-1.5">
+                                  <Flag className="h-2.5 w-2.5" />
+                                  Flagged
+                                </span>
+                              )}
+                            </span>
+
+                            {activeTableStage === 'preparing' ? (
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleItemFlag(order.orderId, group.itemId, !group.isFlagged)}
+                                  className={[
+                                    'px-2 py-0.5 text-[10px] font-extrabold rounded-md flex items-center gap-1 transition-all cursor-pointer border',
+                                    group.isFlagged
+                                      ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 shadow-2xs'
+                                      : 'bg-white text-slate-400 border-slate-200 hover:border-amber-300 hover:text-amber-600',
+                                  ].join(' ')}
+                                  title={group.isFlagged ? 'Unflag item' : 'Flag item as unavailable / out of stock'}
+                                >
+                                  <Flag className="w-2.5 h-2.5" fill={group.isFlagged ? 'currentColor' : 'none'} />
+                                  <span>{group.isFlagged ? 'Flagged' : 'Flag'}</span>
+                                </button>
+                                <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
+                              </div>
+                            ) : (
+                              <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
 
                   {/* Card Actions / State Transitions */}
@@ -577,20 +613,31 @@ export default function DispatcherInterface() {
                     )}
 
                     {activeTableStage === 'cooking' && (
-                      <button
-                        onClick={() => handleMoveToReady(order.orderId)}
-                        disabled={!allDone}
-                        className={[
-                          'w-full py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all shadow-xs',
-                          allDone
-                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
-                            : 'bg-slate-200 text-slate-400 cursor-not-allowed opacity-75',
-                        ].join(' ')}
-                        title={allDone ? 'Click to mark order as done' : 'Cook all items (count to 0) to mark as done'}
-                      >
-                        <CheckCircle className="w-4 h-4" />
-                        <span>{allDone ? 'Mark as Done (Ready) →' : 'Cooking Items Remaining'}</span>
-                      </button>
+                      <div className="w-full pt-1 space-y-2">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                          <span>Cooking Progress</span>
+                          <span className="font-black text-[#14274E]">
+                            {doneCount} of {activeItems.length} items ready
+                          </span>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                          <div
+                            className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                            style={{
+                              width: `${(doneCount / Math.max(1, activeItems.length)) * 100}%`,
+                            }}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleMarkAllDone(order.orderId)}
+                          className="w-full py-2 rounded-xl text-xs font-bold border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                          title="Mark all remaining items as done and move order to Done"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Mark All Done →</span>
+                        </button>
+                      </div>
                     )}
 
                     {activeTableStage === 'done' && (

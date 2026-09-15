@@ -3,6 +3,7 @@ import { ChevronDown, ImagePlus, Replace, Trash2, X } from 'lucide-react'
 import type { Category, DietaryType, MenuItem } from '@/types/menu'
 import type { MenuItemGroup } from '@/services/menuService'
 import { uploadMenuItemImage } from '@/services/storageService'
+import { supabase } from '@/lib/supabase'
 
 export interface NewMenuItemForm {
   imageUrl?: string
@@ -23,18 +24,37 @@ interface NewMenuItemModalProps {
   editItem?: MenuItem | null
   editGroup?: MenuItemGroup | null
   items?: MenuItem[]
+  presetId?: number
   onClose: () => void
   onSubmit: (form: NewMenuItemForm) => Promise<void> | void
 }
 
 export const NewMenuItemModal = memo(function NewMenuItemModal({
-  isOpen, categories, defaultCategoryId, editItem, editGroup, items = [], onClose, onSubmit,
+  isOpen, categories, defaultCategoryId, editItem, editGroup, items = [], presetId, onClose, onSubmit,
 }: NewMenuItemModalProps) {
   const isEditMode = Boolean(editItem || editGroup)
 
+  const effectivePresetId = presetId ?? editItem?.presetId ?? editGroup?.presetId
+
+  const selectableItems = useMemo(() => {
+    return items.filter((item) => {
+      if (item.id === editItem?.id || item.id === editGroup?.id) return false
+      if (effectivePresetId !== undefined && item.presetId !== undefined) {
+        return item.presetId === effectivePresetId
+      }
+      return true
+    })
+  }, [items, editItem?.id, editGroup?.id, effectivePresetId])
+
   const selectableCategories = useMemo(
-    () => categories.filter((c) => c.id !== 'all'),
-    [categories],
+    () => categories.filter((c) => {
+      if (c.id === 'all') return false
+      if (effectivePresetId !== undefined && c.presetId !== undefined) {
+        return c.presetId === effectivePresetId
+      }
+      return true
+    }),
+    [categories, effectivePresetId],
   )
   const firstCategoryId = selectableCategories[0]?.id ?? ''
 
@@ -96,6 +116,30 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
     }
   }, [isOpen, editItem, editGroup, defaultCategoryId, firstCategoryId])
 
+  useEffect(() => {
+    if (!isOpen || !editItem || editGroup) return
+    let active = true
+
+    void supabase
+      .schema('menu')
+      .from('Item_Groups')
+      .select('ITEM_ID')
+      .eq('MENU_GROUP_ID', Number(editItem.id))
+      .then(({ data, error: fetchErr }) => {
+        if (!fetchErr && data && active && data.length > 0) {
+          const loadedIds = data.map((r: Record<string, unknown>) => String(r['ITEM_ID']))
+          setForm((current) => ({
+            ...current,
+            itemIds: Array.from(new Set([...current.itemIds, ...loadedIds])),
+          }))
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [isOpen, editItem, editGroup])
+
   if (!isOpen) return null
 
   function update<K extends keyof typeof form>(field: K, value: (typeof form)[K]) {
@@ -149,6 +193,9 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         finalImageUrl = await uploadMenuItemImage(imageFile, form.name || 'dish')
       }
 
+      const selectableIds = new Set(selectableItems.map((item) => item.id))
+      const sanitizedItemIds = form.itemIds.filter((id) => selectableIds.has(id))
+
       await onSubmit({
         imageUrl:    finalImageUrl?.trim() || undefined,
         name:        form.name.trim(),
@@ -158,7 +205,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         isAvailable: form.isAvailable,
         description: form.description,
         orderLimit: Number.isFinite(orderLimit) && orderLimit >= 0 ? orderLimit : 0,
-        itemIds: form.itemIds,
+        itemIds: sanitizedItemIds,
       })
       onClose()
     } catch (err: unknown) {
@@ -300,11 +347,11 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
             <input type="number" min="0" step="1" value={form.orderLimitRaw} onChange={(event) => update('orderLimitRaw', event.target.value)} disabled={isSaving} />
           </label>
 
-          {items.length > 0 && (
+          {selectableItems.length > 0 && (
             <fieldset className="menu-group-item-picker">
               <legend>Group items (optional)</legend>
               <div className="menu-group-item-list">
-                {items.filter((item) => item.id !== editItem?.id).map((item) => (
+                {selectableItems.map((item) => (
                   <label key={item.id} className="menu-group-item-option">
                     <input type="checkbox" checked={form.itemIds.includes(item.id)} onChange={(event) => update('itemIds', event.target.checked ? [...form.itemIds, item.id] : form.itemIds.filter((id) => id !== item.id))} disabled={isSaving} />
                     <img src={item.imageUrl} alt="" />

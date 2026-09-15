@@ -40,6 +40,7 @@ interface CashierRightPanelProps {
   onPrintReceipt: () => void
   onReorder: (order: Order) => void
   onDeleteCancelledOrder: (order: Order) => void
+  onOpenVoidModal?: (order: Order, initialItemId?: number) => void
   // Punch Order State
   punchCart: CartItem[]
   diningType: DiningType
@@ -66,6 +67,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   onPrintReceipt,
   onReorder,
   onDeleteCancelledOrder,
+  onOpenVoidModal,
   punchCart,
   diningType,
   onDiningTypeChange,
@@ -582,7 +584,19 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                                 <div className="ml-5 space-y-1 pb-1">
                                   {group.items?.map((item) => (
                                     <div key={item.orderItemId} className="flex items-center justify-between text-[11px] text-slate-500">
-                                      <span>Item #{item.orderItemId}</span>
+                                      <div className="flex items-center gap-2">
+                                        <span>Item #{item.orderItemId}</span>
+                                        {item.status !== 'CANCELLED' && onOpenVoidModal && (
+                                          <button
+                                            type="button"
+                                            onClick={() => onOpenVoidModal(ord, item.orderItemId)}
+                                            className="px-1.5 py-0.5 rounded text-[10px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors cursor-pointer"
+                                            title="Void this specific item (requires admin password)"
+                                          >
+                                            Void
+                                          </button>
+                                        )}
+                                      </div>
                                       <span className={item.status === 'CANCELLED' ? 'font-bold text-rose-600' : 'font-semibold text-slate-500'}>
                                         {item.status}
                                         {item.status === 'CANCELLED' && item.rejectionReason && ` — ${item.rejectionReason}`}
@@ -596,8 +610,21 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                         })}
                       </div>
 
-                      <div className="pt-1 border-t border-slate-100 text-[11px] font-bold text-slate-500">
-                        {ord.items?.length ?? 0} individual item{(ord.items?.length ?? 0) !== 1 ? 's' : ''}
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-500">
+                          {ord.items?.length ?? 0} individual item{(ord.items?.length ?? 0) !== 1 ? 's' : ''}
+                        </span>
+                        {onOpenVoidModal && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenVoidModal(ord)}
+                            className="px-2.5 py-1 rounded-xl text-xs font-black text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
+                            title="Void this order or select items to void (requires admin password)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                            <span>Void Order</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   )

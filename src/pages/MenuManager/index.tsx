@@ -188,6 +188,7 @@ export default function MenuManagerPage() {
         itemIds:        form.itemIds,
       })
       reload()
+      void fetchMenuItemGroups().then(setGroups).catch(() => {})
       showToast(`Updated "${form.name}" successfully!`, 'success')
     } catch (err: unknown) {
       setItems((current) => current.map((item) => item.id === editingItem.id ? previous : item))
@@ -757,7 +758,8 @@ export default function MenuManagerPage() {
     <NewMenuItemModal
       isOpen={isEditModalOpen}
       categories={categories}
-      items={items}
+      items={items.filter((item) => item.presetId === (editingItem?.presetId ?? activePresetId))}
+      presetId={editingItem?.presetId ?? activePresetId}
       editItem={editingItem}
       onClose={() => { setEditModalOpen(false); setEditingItem(null) }}
       onSubmit={async (form) => {
@@ -776,7 +778,8 @@ export default function MenuManagerPage() {
     <NewMenuItemModal
       isOpen={isItemModalOpen}
       categories={categories}
-      items={items}
+      items={items.filter((item) => item.presetId === (editingGroup?.presetId ?? activePresetId))}
+      presetId={editingGroup?.presetId ?? activePresetId}
       editGroup={editingGroup}
       defaultCategoryId={selectedCategoryId}
       onClose={() => { setItemModalOpen(false); setEditingGroup(null) }}

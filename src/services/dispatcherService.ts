@@ -205,6 +205,15 @@ export async function moveOrderToCooking(orderId: number): Promise<void> {
 }
 
 export async function moveOrderToReady(orderId: number): Promise<void> {
+  // Ensure all non-cancelled items are set to DONE
+  const { error: itemsError } = await supabase
+    .from('Order_Items')
+    .update({ ORDER_ITEM_STATUS: 'DONE' })
+    .eq('ORDER_ID', orderId)
+    .neq('ORDER_ITEM_STATUS', 'CANCELLED')
+
+  if (itemsError) console.warn('[moveOrderToReady] Order_Items update warning:', itemsError)
+
   // Step: "Mark as Done" -> ORDER_STATUS = READY (shows in Dispatcher Done tab)
   const { error: orderError } = await supabase
     .from('Restaurant_Orders')
@@ -219,6 +228,20 @@ export async function moveOrderToReady(orderId: number): Promise<void> {
     actor: 'Dispatcher',
     reason: 'Items cooked, order marked as done',
   })
+
+  broadcastOrderUpdate({ type: 'tables' })
+}
+
+export async function updateOrderItemStatus(
+  orderItemId: number,
+  status: 'DONE' | 'COOKING',
+): Promise<void> {
+  const { error } = await supabase
+    .from('Order_Items')
+    .update({ ORDER_ITEM_STATUS: status })
+    .eq('ORDER_ITEM_ID', orderItemId)
+
+  if (error) throw error
 
   broadcastOrderUpdate({ type: 'tables' })
 }

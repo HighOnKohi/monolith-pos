@@ -23,17 +23,26 @@ interface NewMenuGroupModalProps {
   items: MenuItem[]
   categories: Category[]
   editGroup?: MenuGroupValue | null
+  presetId?: number
   onClose: () => void
   onSubmit: (form: NewMenuGroupForm) => Promise<void> | void
 }
 
-export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items, categories, editGroup, onClose, onSubmit }: NewMenuGroupModalProps) {
+export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items, categories, editGroup, presetId, onClose, onSubmit }: NewMenuGroupModalProps) {
   const [form, setForm] = useState({ name: '', description: '', price: '', imageUrl: '', status: 'AVAILABLE', orderLimit: '0', categoryId: '', itemIds: [] as string[] })
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const selectableItems = items.filter((item) => {
+    if (item.id === editGroup?.id) return false
+    if (presetId !== undefined && item.presetId !== undefined) {
+      return item.presetId === presetId
+    }
+    return true
+  })
 
   useEffect(() => {
     if (!isOpen) return
@@ -114,7 +123,7 @@ export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items
           <fieldset className="menu-group-item-picker">
             <legend>Items in this group</legend>
             <div className="menu-group-item-list">
-              {items.map((item) => <label key={item.id} className="menu-group-item-option"><input type="checkbox" checked={form.itemIds.includes(item.id)} onChange={(event) => update('itemIds', event.target.checked ? [...form.itemIds, item.id] : form.itemIds.filter((id) => id !== item.id))} disabled={isSaving} /><img src={item.imageUrl} alt="" /><span>{item.name}</span><strong>₱{item.price.toFixed(2)}</strong></label>)}
+              {selectableItems.map((item) => <label key={item.id} className="menu-group-item-option"><input type="checkbox" checked={form.itemIds.includes(item.id)} onChange={(event) => update('itemIds', event.target.checked ? [...form.itemIds, item.id] : form.itemIds.filter((id) => id !== item.id))} disabled={isSaving} /><img src={item.imageUrl} alt="" /><span>{item.name}</span><strong>₱{item.price.toFixed(2)}</strong></label>)}
             </div>
           </fieldset>
           {error && <p className="menu-modal-error" role="alert">{error}</p>}

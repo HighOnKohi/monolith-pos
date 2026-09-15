@@ -6,8 +6,11 @@ import {
   createOrder,
   settleTableOrders,
   deleteOrder,
+  voidOrderItems,
 } from '@/services/orderService'
 import { useMenu } from '@/hooks/useMenu'
+import { useAuth } from '@/hooks/useAuth'
+import { verifyAdminPassword } from '@/services/authVerificationService'
 import { fetchServiceMenuItems } from '@/services/menuService'
 import type { BillRequest } from '@/types/bill'
 import type { Order } from '@/types/order'
@@ -24,6 +27,7 @@ import { CategoryCardsRow } from './components/CategoryCardsRow'
 import { ProductCard } from './components/ProductCard'
 import { CashierRightPanel, type CashierRightTab, type DiscountInfo } from './components/CashierRightPanel'
 import { TableSelectorModal, type TableItem } from './components/TableSelectorModal'
+import { VoidOrderModal } from './components/VoidOrderModal'
 import { TableAlertsBanner } from '@/components/alerts/TableAlertsBanner'
 import {
   resolveTableAssistance,
@@ -37,6 +41,7 @@ import { useServiceSession } from '@/hooks/useServiceSession'
 import { logCashierAction } from '@/services/cashierAuditService'
 
 export default function CashierPage() {
+  const { user } = useAuth()
   const { shift: serviceShift } = useServiceSession()
 
   // ── 1. Data States ──
@@ -54,6 +59,9 @@ export default function CashierPage() {
 
   // Popovers & Modals
   const [isTableSelectorOpen, setIsTableSelectorOpen] = useState(false)
+  const [voidTargetOrder, setVoidTargetOrder] = useState<Order | null>(null)
+  const [voidInitialItemId, setVoidInitialItemId] = useState<number | null>(null)
+  const [isVoidModalOpen, setIsVoidModalOpen] = useState(false)
 
   // Receipt state
   const [currentReceipt, setCurrentReceipt] = useState<ReceiptSnapshot | null>(null)
@@ -579,6 +587,54 @@ export default function CashierPage() {
     }
   }
 
+  // ── Void Order / Items Handler (Pending Orders) ──
+  const handleOpenVoidModal = (order: Order, initialItemId?: number) => {
+    setVoidTargetOrder(order)
+    setVoidInitialItemId(initialItemId ?? null)
+    setIsVoidModalOpen(true)
+  }
+
+  const handleConfirmVoid = async (orderId: number, orderItemIds: number[], password: string) => {
+    const authRes = await verifyAdminPassword(password, user?.email)
+    if (!authRes.valid) {
+      throw new Error(authRes.error || 'Incorrect administrator password.')
+    }
+
+    const { orderDeleted, tableReset, voidedCount } = await voidOrderItems(
+      orderId,
+      orderItemIds,
+      selectedGroup.anchorTableId,
+      selectedGroup.memberTableIds,
+    )
+
+    void logCashierAction({
+      action: 'ORDER_CANCELLED',
+      shiftType: 'SERVICE',
+      shiftId: serviceShift?.shiftId,
+      staffId: serviceShift?.staffId,
+      entityType: 'ORDER',
+      entityId: String(orderId),
+      description: `Admin voided ${voidedCount} item(s) from Order #${orderId} for ${selectedGroup.displayLabel}`,
+      metadata: {
+        order_id: orderId,
+        table_id: selectedGroup.anchorTableId,
+        voided_count: voidedCount,
+        order_deleted: orderDeleted,
+        table_reset: tableReset,
+      },
+    })
+
+    showToast(
+      orderDeleted
+        ? `Order #${orderId} voided and cancelled successfully.`
+        : `Voided ${voidedCount} item(s) from Order #${orderId}.`,
+      'success',
+    )
+
+    await loadTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
+    await loadTables()
+  }
+
   // ── 7. Punch Cart Handlers ──
   const handleAddToCart = (item: MenuItem) => {
     setPunchCart((prev) => {
@@ -881,6 +937,7 @@ export default function CashierPage() {
             onPrintReceipt={handlePrintReceipt}
             onReorder={handleReorder}
             onDeleteCancelledOrder={handleDeleteCancelledOrder}
+            onOpenVoidModal={handleOpenVoidModal}
             punchCart={punchCart}
             diningType={diningType}
             onDiningTypeChange={setDiningType}
@@ -915,6 +972,20 @@ export default function CashierPage() {
           onClose={() => setShowReceiptModal(false)}
         />
       )}
+
+      {/* Admin-Authorized Void Order / Items Modal */}
+      <VoidOrderModal
+        isOpen={isVoidModalOpen}
+        order={voidTargetOrder}
+        tableLabel={selectedGroup.displayLabel}
+        initialItemId={voidInitialItemId}
+        onClose={() => {
+          setIsVoidModalOpen(false)
+          setVoidTargetOrder(null)
+          setVoidInitialItemId(null)
+        }}
+        onConfirmVoid={handleConfirmVoid}
+      />
     </div>
   )
 }
