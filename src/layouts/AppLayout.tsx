@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Menu } from 'lucide-react'
 import { AppSidebar } from '@/components/layout/AppSidebar'
+import { BusinessDayStatusIndicator } from '@/components/layout/BusinessDayStatusIndicator'
 import { MenuProvider } from '@/hooks/useMenu'
 
 export default function AppLayout() {
@@ -47,9 +48,12 @@ export default function AppLayout() {
                 <span className="font-extrabold text-xs sm:text-sm text-[#14274E] tracking-tight">{pageTitle}</span>
               </div>
             </div>
-            <span className="text-[10px] sm:text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-              Staff
-            </span>
+            <div className="flex items-center gap-2">
+              <BusinessDayStatusIndicator collapsed={true} />
+              <span className="text-[10px] sm:text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                Staff
+              </span>
+            </div>
           </div>
 
           <main className="flex-1 min-h-0 overflow-hidden">

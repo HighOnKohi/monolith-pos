@@ -234,6 +234,30 @@ export function useOrders(
     }
   }, [tableId, targetTableIds, applyFetchedOrders])
 
+  // Automatically clear settled orders 30 seconds after completion
+  useEffect(() => {
+    if (pastOrders.length === 0) return
+
+    const timestamps = pastOrders
+      .map((o) => (o.completedAt ? new Date(o.completedAt).getTime() : 0))
+      .filter((t) => t > 0)
+
+    const newestTime = timestamps.length > 0 ? Math.max(...timestamps) : Date.now()
+    const elapsedMs = Date.now() - newestTime
+    const remainingMs = Math.max(0, 30 * 1000 - elapsedMs)
+
+    if (remainingMs <= 0) {
+      setPastOrders([])
+      return
+    }
+
+    const timer = setTimeout(() => {
+      setPastOrders([])
+    }, remainingMs)
+
+    return () => clearTimeout(timer)
+  }, [pastOrders])
+
   // Initial fetch + Visibility sync
   useEffect(() => {
     if (!tableId || targetTableIds.length === 0) return
@@ -264,7 +288,7 @@ export function useOrders(
         'postgres_changes',
         {
           event: '*',
-          schema: 'public',
+          schema: 'orders',
           table: 'Restaurant_Orders',
         },
         (payload) => {
@@ -280,7 +304,7 @@ export function useOrders(
         'postgres_changes',
         {
           event: '*',
-          schema: 'public',
+          schema: 'orders',
           table: 'Order_Items',
         },
         () => {

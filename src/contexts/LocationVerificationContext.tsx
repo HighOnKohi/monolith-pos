@@ -34,6 +34,8 @@ export interface LocationVerificationContextType {
   errorMessage: string | null
   isBorderline: boolean
   allowedLocations: AllowedLocation[]
+  debugBypass: boolean
+  toggleDebugBypass: () => void
   checkLocation: () => Promise<boolean>
   retry: () => Promise<boolean>
   reset: () => void
@@ -58,6 +60,18 @@ export function LocationVerificationProvider({ children }: LocationVerificationP
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isBorderline, setIsBorderline] = useState(false)
   const [locationsVersion, setLocationsVersion] = useState(0)
+
+  // Debug bypass: skip location gate for development/testing
+  const [debugBypass, setDebugBypass] = useState<boolean>(() => {
+    try { return localStorage.getItem('monolith_debug_bypass_location') === 'true' } catch { return false }
+  })
+  const toggleDebugBypass = useCallback(() => {
+    setDebugBypass((prev) => {
+      const next = !prev
+      try { localStorage.setItem('monolith_debug_bypass_location', String(next)) } catch { /* ignore */ }
+      return next
+    })
+  }, [])
 
   // Primary verification runner
   const performLocationCheck = useCallback(async (): Promise<boolean> => {
@@ -180,7 +194,7 @@ export function LocationVerificationProvider({ children }: LocationVerificationP
 
   const value: LocationVerificationContextType = {
     status,
-    isVerified: status === 'verified',
+    isVerified: debugBypass || status === 'verified',
     matchedLocation,
     closestLocation,
     distanceMeters,
@@ -189,6 +203,8 @@ export function LocationVerificationProvider({ children }: LocationVerificationP
     errorMessage,
     isBorderline,
     allowedLocations: currentAllowedLocations,
+    debugBypass,
+    toggleDebugBypass,
     checkLocation,
     retry,
     reset,

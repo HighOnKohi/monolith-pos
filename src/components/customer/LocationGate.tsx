@@ -10,6 +10,7 @@ import {
   ChevronUp,
   Compass,
   Radio,
+  Bug,
 } from 'lucide-react'
 import logo from '@/assets/images/monolith-logo-nobg.png'
 import { useLocationVerification } from '@/contexts/LocationVerificationContext'
@@ -24,6 +25,8 @@ export function LocationGate() {
     accuracy,
     errorMessage,
     isBorderline,
+    debugBypass,
+    toggleDebugBypass,
     checkLocation,
     retry,
   } = useLocationVerification()
@@ -35,7 +38,7 @@ export function LocationGate() {
   const venueName = closestLocation?.name ?? 'Siena College of Taytay'
 
   return (
-    <div className="min-h-screen w-full bg-[#F1F6F9] flex flex-col items-center justify-between p-4 sm:p-6 text-[#14274E] relative overflow-hidden select-none">
+    <div className="min-h-[100dvh] w-full bg-[#F1F6F9] flex flex-col items-center justify-between p-4 sm:p-6 text-[#14274E] relative overflow-y-auto select-none">
       {/* Subtle Background Radial Elements */}
       <div className="absolute -top-32 -right-32 w-80 h-80 bg-[#E9C46A]/15 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute -bottom-32 -left-32 w-80 h-80 bg-[#14274E]/10 rounded-full blur-3xl pointer-events-none" />
@@ -58,10 +61,21 @@ export function LocationGate() {
           </div>
         </div>
 
-        {/* Security Badge */}
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/80 border border-[#14274E]/15 shadow-2xs backdrop-blur-xs">
-          <ShieldCheck className="w-3.5 h-3.5 text-[#14274E]" />
-          <span className="text-[10px] font-bold text-[#14274E]">Protected Access</span>
+        {/* Top Actions: Debug Bypass is always visible in mobile & desktop headers */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleDebugBypass}
+            className={[
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all cursor-pointer shadow-xs active:scale-95',
+              debugBypass
+                ? 'bg-amber-400 text-amber-950 border-amber-500 font-black ring-2 ring-amber-300'
+                : 'bg-white text-amber-800 border-amber-300 hover:bg-amber-50 font-bold',
+            ].join(' ')}
+            title={debugBypass ? 'Debug bypass active. Click to disable.' : 'Click to bypass location check (debug mode)'}
+          >
+            <Bug className="w-3.5 h-3.5 text-amber-700" />
+            <span>{debugBypass ? 'Bypass: ON' : 'Debug Bypass'}</span>
+          </button>
         </div>
       </header>
 
@@ -135,7 +149,16 @@ export function LocationGate() {
                 <span>Allow Location Access</span>
               </button>
 
-              <p className="text-[11px] text-[#9BA4B4] mt-4 font-medium">
+              <button
+                type="button"
+                onClick={toggleDebugBypass}
+                className="w-full mt-2.5 py-2 text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center justify-center gap-1.5 cursor-pointer rounded-xl bg-amber-50 border border-amber-200/80 active:scale-95 transition-all"
+              >
+                <Bug className="w-3.5 h-3.5" />
+                <span>Bypass Location Check (Debug Mode)</span>
+              </button>
+
+              <p className="text-[11px] text-[#9BA4B4] mt-3 font-medium">
                 Your coordinates are only used once to verify proximity and are never shared.
               </p>
             </div>
@@ -206,6 +229,15 @@ export function LocationGate() {
                 <RefreshCw className="w-4 h-4 text-[#E9C46A]" />
                 <span>Try Again</span>
               </button>
+
+              <button
+                type="button"
+                onClick={toggleDebugBypass}
+                className="w-full mt-2.5 py-2 text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center justify-center gap-1.5 cursor-pointer rounded-xl bg-amber-50 border border-amber-200/80 active:scale-95 transition-all"
+              >
+                <Bug className="w-3.5 h-3.5" />
+                <span>Bypass Location Check (Debug Mode)</span>
+              </button>
             </div>
           )}
 
@@ -258,6 +290,15 @@ export function LocationGate() {
                 <RefreshCw className="w-4 h-4 text-[#E9C46A]" />
                 <span>Check Location Again</span>
               </button>
+
+              <button
+                type="button"
+                onClick={toggleDebugBypass}
+                className="w-full mt-2.5 py-2 text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center justify-center gap-1.5 cursor-pointer rounded-xl bg-amber-50 border border-amber-200/80 active:scale-95 transition-all"
+              >
+                <Bug className="w-3.5 h-3.5" />
+                <span>Bypass Location Check (Debug Mode)</span>
+              </button>
             </div>
           )}
 
@@ -294,6 +335,15 @@ export function LocationGate() {
                 <RefreshCw className="w-4 h-4 text-[#E9C46A]" />
                 <span>Try Again</span>
               </button>
+
+              <button
+                type="button"
+                onClick={toggleDebugBypass}
+                className="w-full mt-2.5 py-2 text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center justify-center gap-1.5 cursor-pointer rounded-xl bg-amber-50 border border-amber-200/80 active:scale-95 transition-all"
+              >
+                <Bug className="w-3.5 h-3.5" />
+                <span>Bypass Location Check (Debug Mode)</span>
+              </button>
             </div>
           )}
 
@@ -301,10 +351,25 @@ export function LocationGate() {
       </main>
 
       {/* Footer Info */}
-      <footer className="w-full max-w-md text-center py-2 z-10">
+      <footer className="w-full max-w-md text-center py-2 z-10 flex flex-col items-center gap-2">
         <p className="text-[11px] text-[#9BA4B4]">
           Monolith POS &bull; {venueName} &bull; Radius: {formatDistance(targetRadius)}
         </p>
+
+        {/* Debug Toggle */}
+        <button
+          onClick={toggleDebugBypass}
+          className={[
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold transition-all cursor-pointer border',
+            debugBypass
+              ? 'bg-amber-100 text-amber-800 border-amber-300 shadow-xs'
+              : 'bg-white/60 text-[#9BA4B4] border-[#14274E]/10 hover:border-amber-300 hover:text-amber-600',
+          ].join(' ')}
+          title={debugBypass ? 'Location check is BYPASSED (debug mode). Click to re-enable.' : 'Click to bypass location check (debug mode)'}
+        >
+          <Bug className="w-3 h-3" />
+          <span>{debugBypass ? 'Debug Bypass: ON' : 'Debug Bypass: OFF'}</span>
+        </button>
       </footer>
     </div>
   )

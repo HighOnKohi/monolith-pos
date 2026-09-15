@@ -32,8 +32,13 @@ import {
 } from '@/services/assistanceService'
 import { resolveBillOutRequest } from '@/services/billService'
 import type { AssistanceRequest } from '@/types/assistance'
+import { ServiceShiftHeaderBar } from '@/components/service/ServiceShiftHeaderBar'
+import { useServiceSession } from '@/hooks/useServiceSession'
+import { logCashierAction } from '@/services/cashierAuditService'
 
 export default function CashierPage() {
+  const { shift: serviceShift } = useServiceSession()
+
   // ── 1. Data States ──
   const [tables, setTables] = useState<TableItem[]>([])
   const [selectedTableId, setSelectedTableId] = useState<number>(1)
@@ -360,12 +365,22 @@ export default function CashierPage() {
       const resolvedIds = await resolveTableAssistance(tableId)
       setTables((prev) => prev.map((t) => resolvedIds.includes(t.TABLE_ID) ? { ...t, STATUS: 'OCCUPIED', BILL_OUT_REQUESTED: false } : t))
       showToast('Assistance alert cleared.', 'info')
+      void logCashierAction({
+        action: 'TABLE_ASSISTANCE_CLEARED',
+        shiftType: 'SERVICE',
+        shiftId: serviceShift?.shiftId,
+        staffId: serviceShift?.staffId,
+        entityType: 'TABLE',
+        entityId: String(tableId),
+        description: `Cleared assistance alert for Table ${tableId}`,
+        metadata: { shift_type: 'SERVICE' },
+      })
     } catch (err) {
       console.error(err)
       setTables(previousTables)
       showToast('Failed to clear assistance alert.', 'error')
     }
-  }, [showToast, tables])
+  }, [showToast, tables, serviceShift?.shiftId, serviceShift?.staffId])
 
   const handleClearBillOut = useCallback(async (tableId: number) => {
     const previousTables = tables
@@ -377,13 +392,23 @@ export default function CashierPage() {
       const resolvedIds = await resolveBillOutRequest(tableId)
       setTables((prev) => prev.map((t) => resolvedIds.includes(t.TABLE_ID) ? { ...t, BILL_OUT_REQUESTED: false } : t))
       showToast('Bill out request cleared.', 'info')
+      void logCashierAction({
+        action: 'TABLE_BILL_CLEARED',
+        shiftType: 'SERVICE',
+        shiftId: serviceShift?.shiftId,
+        staffId: serviceShift?.staffId,
+        entityType: 'TABLE',
+        entityId: String(tableId),
+        description: `Cleared bill out request for Table ${tableId}`,
+        metadata: { shift_type: 'SERVICE' },
+      })
     } catch (err) {
       console.error(err)
       setTables(previousTables)
       setBillRequests(previousRequests)
       showToast('Failed to clear bill out request.', 'error')
     }
-  }, [billRequests, showToast, tables])
+  }, [billRequests, showToast, tables, serviceShift?.shiftId, serviceShift?.staffId])
 
   // Bill Settlement Handler
   const handleCompletePayment = async (discountInfo: DiscountInfo) => {
@@ -450,6 +475,30 @@ export default function CashierPage() {
 
       showToast(`${tableNum} bill settled and marked Available!`, 'success')
       await loadInitialData()
+
+      void logCashierAction({
+        action: 'PAYMENT_COMPLETED',
+        shiftType: 'SERVICE',
+        shiftId: serviceShift?.shiftId,
+        staffId: serviceShift?.staffId,
+        entityType: 'TABLE',
+        entityId: String(tableId),
+        description: `Settled bill for ${tableNum} (₱${snapshot.grandTotal.toFixed(2)}) via ${activeBillRequest?.paymentMethod || 'CASH'}`,
+        metadata: {
+          table_num: tableNum,
+          table_id: tableId,
+          member_table_ids: selectedGroup.memberTableIds,
+          total: snapshot.grandTotal,
+          subtotal: snapshot.baseSubtotal,
+          vat: snapshot.taxAmount,
+          discount_type: discountInfo.discountType,
+          custom_percent: discountInfo.customPercent,
+          orders_count: previousOrders.length,
+          order_ids: previousOrders.map((o) => o.orderId),
+          payment_method: activeBillRequest?.paymentMethod || 'CASH',
+          shift_type: 'SERVICE',
+        },
+      })
     } catch (err) {
       console.error('Payment completion error:', err)
       setTableOrders(previousOrders)
@@ -503,6 +552,22 @@ export default function CashierPage() {
       await deleteOrder(order.orderId)
       showToast(`Cancelled Order #${order.orderId} deleted.`, 'success')
       await loadTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
+
+      void logCashierAction({
+        action: 'ORDER_DELETED',
+        shiftType: 'SERVICE',
+        shiftId: serviceShift?.shiftId,
+        staffId: serviceShift?.staffId,
+        entityType: 'ORDER',
+        entityId: String(order.orderId),
+        description: `Deleted cancelled order #${order.orderId} for ${selectedGroup.displayLabel}`,
+        metadata: {
+          order_id: order.orderId,
+          table_id: selectedGroup.anchorTableId,
+          total_bill: order.totalBill,
+          shift_type: 'SERVICE',
+        },
+      })
     } catch (err) {
       console.error('Failed to delete cancelled order:', err)
       setTableOrders(previousOrders)
@@ -552,6 +617,8 @@ export default function CashierPage() {
     setIsSubmittingOrder(true)
     const previousOrders = tableOrders
     const previousTables = tables
+    const cartSnapshot = punchCart
+    const noteSnapshot = serverNote
 
     try {
       const subtotal = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
@@ -583,11 +650,43 @@ export default function CashierPage() {
       setServerNote('')
       setActiveRightTab('pending')
 
-      await createOrder(selectedGroup.anchorTableId, punchCart, diningType, total, 'Cashier', serverNote)
+      await createOrder(
+        selectedGroup.anchorTableId,
+        punchCart,
+        diningType,
+        total,
+        'Cashier',
+        serverNote,
+        undefined,
+        {
+          staffId: serviceShift?.staffId,
+          shiftId: null,
+        },
+      )
 
       showToast(`Order sent to Kitchen for ${selectedGroup.displayLabel}!`, 'success')
       await loadTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
       await loadTables()
+
+      void logCashierAction({
+        action: 'ORDER_CREATED',
+        shiftType: 'SERVICE',
+        shiftId: serviceShift?.shiftId,
+        staffId: serviceShift?.staffId,
+        entityType: 'TABLE',
+        entityId: String(selectedGroup.anchorTableId),
+        description: `Sent order of ${cartSnapshot.reduce((sum, i) => sum + i.quantity, 0)} item(s) to Kitchen for ${selectedGroup.displayLabel} (₱${total.toFixed(2)})`,
+        metadata: {
+          table_id: selectedGroup.anchorTableId,
+          table_label: selectedGroup.displayLabel,
+          dining_type: diningType,
+          total,
+          server_note: noteSnapshot,
+          items_count: cartSnapshot.reduce((sum, i) => sum + i.quantity, 0),
+          items: cartSnapshot.map((i) => ({ id: i.item.id, name: i.item.name, qty: i.quantity, price: i.item.price })),
+          shift_type: 'SERVICE',
+        },
+      })
     } catch (err) {
       console.error('Failed to punch order:', err)
       setTableOrders(previousOrders)
@@ -648,6 +747,11 @@ export default function CashierPage() {
 
       <div className="service-interface-layout">
         <div className="inner-service-interface-container">
+          {/* Service Shift Status & End Shift Header */}
+          <div className="px-6 pt-3 pb-1 shrink-0">
+            <ServiceShiftHeaderBar />
+          </div>
+
           <div className="service-interface-header">
             <CashierHeader
               searchQuery={searchQuery}

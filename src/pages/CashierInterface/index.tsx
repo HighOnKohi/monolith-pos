@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   X,
   GitMerge,
+  BellRing,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllTables, fetchOrderSummariesForIds, type TableData } from '@/services/tableService'
@@ -22,6 +23,38 @@ import { resolveTableGroupByList } from '@/services/tableGroupService'
 import { buildReceiptSnapshot } from '@/components/receipt/buildReceipt'
 import { ReceiptPreviewModal } from '@/components/receipt/ReceiptPreviewModal'
 import type { ReceiptSnapshot } from '@/components/receipt/types'
+import { TableAlertsBanner } from '@/components/alerts/TableAlertsBanner'
+import { CashierShiftHeaderBar } from '@/components/cashier/CashierShiftHeaderBar'
+import { logCashierAction } from '@/services/cashierAuditService'
+import {
+  resolveTableAssistance,
+  recordAssistanceRequest,
+  removeAssistanceRequest,
+} from '@/services/assistanceService'
+import type { AssistanceRequest } from '@/types/assistance'
+
+function playNotificationChime() {
+  try {
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    if (!AudioContextClass) return
+    const ctx = new AudioContextClass()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime) // D5
+    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.1) // A5
+    gain.gain.setValueAtTime(0.2, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start()
+    osc.stop(ctx.currentTime + 0.45)
+  } catch {
+    // Audio context may be restricted before first user interaction
+  }
+}
 
 // Active order statuses displayed in cashier
 const ALL_ACTIVE_ORDER_STATUSES: OrderStatus[] = [
@@ -60,6 +93,13 @@ export default function CashierInterface() {
   const [removeBusy, setRemoveBusy] = useState(false)
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false)
   const [error, setError] = useState('')
+
+  // Toast feedback state for alerts and assistance
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
+  const showToast = useCallback((text: string, type: 'success' | 'info' | 'error' = 'info') => {
+    setToastMessage({ text, type })
+    setTimeout(() => setToastMessage(null), 4000)
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -110,9 +150,29 @@ export default function CashierInterface() {
       .channel('cashier-interface-sync')
       .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Presets' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Orders' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Order_Items' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Bill_Requests' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Restaurant_Orders' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Order_Items' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Bill_Requests' }, () => void load())
+      .subscribe()
+
+    // Realtime subscription for Assistance broadcasts
+    const assistanceChannel = supabase
+      .channel('cashier-table-assistance')
+      .on('broadcast', { event: 'assistance_request' }, (payload) => {
+        if (payload?.payload) {
+          const assistReq = payload.payload as AssistanceRequest
+          recordAssistanceRequest(assistReq)
+          playNotificationChime()
+          showToast(`🔔 Table ${assistReq.tableNum ?? assistReq.tableId} is calling: ${assistReq.title}`, 'info')
+        }
+        void load()
+      })
+      .on('broadcast', { event: 'assistance_resolved' }, (payload) => {
+        const tId = payload?.payload?.tableId
+        const tIds = payload?.payload?.tableIds
+        removeAssistanceRequest(tId, tIds)
+        void load()
+      })
       .subscribe()
 
     return () => {
@@ -120,8 +180,9 @@ export default function CashierInterface() {
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('focus', handleVisibility)
       void supabase.removeChannel(channel)
+      void supabase.removeChannel(assistanceChannel)
     }
-  }, [load])
+  }, [load, showToast])
 
   // Tables group calculations
   const groups = useMemo(() => {
@@ -308,6 +369,71 @@ export default function CashierInterface() {
     })
   }
 
+  const handleClearAssistance = useCallback(async (tableId: number) => {
+    const previousTables = tables
+    const affectedIds = resolveTableGroupByList(tableId, tables).memberTableIds
+    setTables((prev) =>
+      prev.map((t) =>
+        affectedIds.includes(t.TABLE_ID)
+          ? { ...t, STATUS: 'OCCUPIED', BILL_OUT_REQUESTED: false }
+          : t,
+      ),
+    )
+    try {
+      const resolvedIds = await resolveTableAssistance(tableId)
+      setTables((prev) =>
+        prev.map((t) =>
+          resolvedIds.includes(t.TABLE_ID)
+            ? { ...t, STATUS: 'OCCUPIED', BILL_OUT_REQUESTED: false }
+            : t,
+        ),
+      )
+      showToast('Assistance alert cleared.', 'info')
+      void logCashierAction({
+        action: 'TABLE_ASSISTANCE_CLEARED',
+        entityType: 'TABLE',
+        entityId: String(tableId),
+        description: `Cleared assistance alert for Table ${tableId}`,
+      })
+    } catch (err) {
+      console.error(err)
+      setTables(previousTables)
+      showToast('Failed to clear assistance alert.', 'error')
+    }
+  }, [tables, showToast])
+
+  const handleClearBillOut = useCallback(async (tableId: number) => {
+    const previousTables = tables
+    const previousRequests = billRequests
+    const affectedIds = resolveTableGroupByList(tableId, tables).memberTableIds
+    setTables((prev) =>
+      prev.map((t) =>
+        affectedIds.includes(t.TABLE_ID) ? { ...t, BILL_OUT_REQUESTED: false } : t,
+      ),
+    )
+    setBillRequests((prev) => prev.filter((r) => !affectedIds.includes(r.tableId)))
+    try {
+      const resolvedIds = await resolveBillOutRequest(tableId)
+      setTables((prev) =>
+        prev.map((t) =>
+          resolvedIds.includes(t.TABLE_ID) ? { ...t, BILL_OUT_REQUESTED: false } : t,
+        ),
+      )
+      showToast('Bill out request cleared.', 'info')
+      void logCashierAction({
+        action: 'TABLE_BILL_CLEARED',
+        entityType: 'TABLE',
+        entityId: String(tableId),
+        description: `Cleared bill out request for Table ${tableId}`,
+      })
+    } catch (err) {
+      console.error(err)
+      setTables(previousTables)
+      setBillRequests(previousRequests)
+      showToast('Failed to clear bill out request.', 'error')
+    }
+  }, [billRequests, tables, showToast])
+
   async function settleTable() {
     if (!selectedTableGroup || orders.length === 0) return
     setBusy(true)
@@ -326,6 +452,17 @@ export default function CashierInterface() {
     const previousOrders = orders
     const previousSelectedId = selectedId
     const memberIds = selectedTableGroup.group.memberTableIds
+    const settledTotal = total
+    const settledSubtotal = subtotal
+    const settledPwdCount = pwdCount
+    const settledSeniorCount = seniorCount
+    const settledCustomTotal = customTotal
+    const settledOrdersCount = orders.length
+    const settledOrderIds = orders.map((o) => o.orderId)
+    const anchorId = selectedTableGroup.group.anchorTableId
+    const tableNums = selectedTableGroup.group.memberTableNums
+    const payMethod = activeBillRequest?.paymentMethod || 'CASH'
+
     setOrders([])
     setItemDiscounts(new Map())
     setBillRequests((prev) => prev.filter((request) => !memberIds.includes(request.tableId)))
@@ -349,6 +486,26 @@ export default function CashierInterface() {
       await resolveBillOutRequest(selectedTableGroup.group.anchorTableId)
       setReceipt(snapshot)
       await load()
+
+      void logCashierAction({
+        action: 'PAYMENT_COMPLETED',
+        entityType: 'TABLE',
+        entityId: String(anchorId),
+        description: `Settled bill for Table ${tableNums.join(' + ')} (${money(settledTotal)}) via ${payMethod}`,
+        metadata: {
+          anchor_table_id: anchorId,
+          member_table_ids: memberIds,
+          table_nums: tableNums,
+          total: settledTotal,
+          subtotal: settledSubtotal,
+          pwd_count: settledPwdCount,
+          senior_count: settledSeniorCount,
+          custom_discount: settledCustomTotal,
+          orders_count: settledOrdersCount,
+          order_ids: settledOrderIds,
+          payment_method: payMethod,
+        },
+      })
     } catch (err) {
       console.error('[CashierInterface] Settlement failed:', err)
       setTables(previousTables)
@@ -367,6 +524,11 @@ export default function CashierInterface() {
     if (!selectedTableGroup || orders.length === 0) return
     setRemoveBusy(true)
     setError('')
+    const removedAnchorId = selectedTableGroup.group.anchorTableId
+    const removedLabel = selectedTableGroup.group.displayLabel
+    const removedOrderIds = orders.map((o) => o.orderId)
+    const removedTotal = total
+
     try {
       const memberIds = selectedTableGroup.group.memberTableIds
       for (const order of orders) {
@@ -393,6 +555,18 @@ export default function CashierInterface() {
       setOrders([])
       setShowRemoveConfirm(false)
       await load()
+
+      void logCashierAction({
+        action: 'ORDER_CANCELLED',
+        entityType: 'TABLE',
+        entityId: String(removedAnchorId),
+        description: `Removed active order(s) for Table ${removedLabel}`,
+        metadata: {
+          table_id: removedAnchorId,
+          order_ids: removedOrderIds,
+          order_total: removedTotal,
+        },
+      })
     } catch (err) {
       console.error('[CashierInterface] Failed to remove table order:', err)
       setError(err instanceof Error ? err.message : 'Failed to remove table order.')
@@ -401,13 +575,44 @@ export default function CashierInterface() {
     }
   }
 
-  const enabledTablesCount = groups.filter((g) => g.summary.activeOrderCount > 0).length
+  const enabledTablesCount = groups.filter(({ group, summary }) => {
+    const hasAssistance = group.memberTableIds.some(
+      (id) => tables.find((t) => t.TABLE_ID === id)?.STATUS === 'HAS_REQUEST',
+    )
+    const hasBillOut =
+      group.memberTableIds.some((id) => tables.find((t) => t.TABLE_ID === id)?.BILL_OUT_REQUESTED) ||
+      billRequests.some((r) => group.memberTableIds.includes(r.tableId) && (r.status === 'REQUESTED' || r.status === 'PROCESSING'))
+    return summary.activeOrderCount > 0 || hasAssistance || hasBillOut
+  }).length
 
   return (
     <div className="cashier-interface-page staff-page">
+      {/* Toast Alert for live assistance requests */}
+      {toastMessage && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-2xl shadow-xl border bg-[#14274E] text-white text-xs font-bold animate-slide-down flex items-center gap-2">
+          <span>{toastMessage.text}</span>
+        </div>
+      )}
+
       {error && <div className="ci-error">{error}</div>}
       <div className="cashier-interface-layout">
         <section className="inner-cashier-container">
+          {/* Cashier Shift Status & End Shift Header */}
+          <CashierShiftHeaderBar className="mb-3" />
+
+          {/* Table Alerts Banner (Assistance & Bill Out) matching Service Interface */}
+          <TableAlertsBanner
+            tables={tables}
+            billRequests={billRequests}
+            onSelectTable={(tableId) => {
+              void selectTable(tableId)
+              showToast(`Selected Table ${tableId}`, 'info')
+            }}
+            onClearAssistance={handleClearAssistance}
+            onClearBillOut={handleClearBillOut}
+            className="mb-3"
+          />
+
           {/* Header */}
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2.5">
             <h2 className="text-sm font-black text-[#14274E]">
@@ -422,24 +627,49 @@ export default function CashierInterface() {
           {/* Tables Cards Grid */}
           <div className="ci-table-grid">
             {groups.map(({ table, group, summary }) => {
-              const enabled = summary.activeOrderCount > 0
+              const hasAssistance = group.memberTableIds.some(
+                (id) => tables.find((t) => t.TABLE_ID === id)?.STATUS === 'HAS_REQUEST',
+              )
+              const hasBillOut =
+                group.memberTableIds.some((id) => tables.find((t) => t.TABLE_ID === id)?.BILL_OUT_REQUESTED) ||
+                billRequests.some((r) => group.memberTableIds.includes(r.tableId) && (r.status === 'REQUESTED' || r.status === 'PROCESSING'))
+
+              const enabled = summary.activeOrderCount > 0 || hasAssistance || hasBillOut
               return (
                 <button
                   key={table.TABLE_ID}
                   type="button"
                   disabled={!enabled}
-                  className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${group.isMerged ? 'is-merged' : ''} ${selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
+                  className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${group.isMerged ? 'is-merged' : ''} ${
+                    hasAssistance ? 'has-assistance' : ''
+                  } ${
+                    hasBillOut && !hasAssistance ? 'has-billout' : ''
+                  } ${selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
                     }`}
                   onClick={() => void selectTable(group.anchorTableId)}
                 >
                   <div className="ci-table-top">
                     <span className="flex items-center gap-1.5">Table {group.memberTableNums.join(' + ')}</span>
-                    {group.isMerged && (
-                      <span className="ci-merged-badge">
-                        <GitMerge className="w-3 h-3" />
-                        Merged
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1">
+                      {hasAssistance && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white animate-pulse shadow-xs">
+                          <BellRing className="w-2.5 h-2.5" />
+                          Help
+                        </span>
+                      )}
+                      {hasBillOut && !hasAssistance && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white animate-pulse shadow-xs">
+                          <Receipt className="w-2.5 h-2.5" />
+                          Bill
+                        </span>
+                      )}
+                      {group.isMerged && (
+                        <span className="ci-merged-badge">
+                          <GitMerge className="w-3 h-3" />
+                          Merged
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className={`tm-pax-row ${group.currentGuestCount >= group.capacity ? 'tm-pax-full' : ''}`}>
                     <Users className="ci-icon" />

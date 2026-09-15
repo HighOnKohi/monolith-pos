@@ -19,9 +19,15 @@ import { OrderLogsPagination } from './components/OrderLogsPagination'
 import { OrderDetailsDrawer } from './components/OrderDetailsDrawer'
 import { exportOrderLogsToCsv } from './utils/orderLogsCsv'
 import { exportOrderLogsPdf } from './utils/orderLogsPdf'
+import { CashierAuditLogsTab } from './components/CashierAuditLogsTab'
+import { BusinessDayManagementTab } from './components/BusinessDayManagementTab'
 import { subscribeToOrderUpdates } from '@/services/dispatcherService'
+import { ClipboardList, ShieldCheck, Store } from 'lucide-react'
 
 export default function OrderLogsPage() {
+  // ── Top Navigation Tabs ──
+  const [activeTab, setActiveTab] = useState<'orders' | 'audit' | 'business-day'>('orders')
+
   // ── Filter & Search State ──
   const [search, setSearch] = useState<string>('')
   const [datePreset, setDatePreset] = useState<DatePreset>('last7days')
@@ -161,6 +167,20 @@ export default function OrderLogsPage() {
 
     const channel = supabase
       .channel('order_logs_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'system_history', table: 'Completed_Orders' },
+        () => {
+          loadOrderLogs()
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Completed_Orders' },
+        () => {
+          loadOrderLogs()
+        },
+      )
       .on(
         'postgres_changes',
         { event: '*', schema: 'analytics', table: 'Completed_Orders' },
@@ -314,96 +334,144 @@ export default function OrderLogsPage() {
 
   return (
     <div className="order-logs-page-container staff-page space-y-4 pb-12">
-      {/* Header with Title & Action Buttons */}
-      <OrderLogsHeader
-        onRefresh={loadOrderLogs}
-        onPrint={handlePrint}
-        onExportCsv={handleExportCsv}
-        onExportPdf={handleExportPdf}
-        loading={loading}
-      />
-
-      {/* Summary KPI Cards across all filtered results */}
-      {data && (
-        <div className="no-print">
-          <OrderLogsSummaryCards summary={data.summary} loading={loading} />
-        </div>
-      )}
-
-      {/* Filter and Search Bar */}
-      <div className="no-print">
-        <OrderLogsFilterBar
-          search={search}
-          onSearchChange={handleSearchChange}
-          datePreset={datePreset}
-          onDatePresetChange={handleDatePresetChange}
-          customStartDate={customStartDate}
-          customEndDate={customEndDate}
-          onCustomDateChange={handleCustomDateChange}
-          orderStatus={orderStatus}
-          onOrderStatusChange={handleOrderStatusChange}
-          paymentStatus={paymentStatus}
-          onPaymentStatusChange={handlePaymentStatusChange}
-          paymentMethod={paymentMethod}
-          onPaymentMethodChange={handlePaymentMethodChange}
-          orderSource={orderSource}
-          onOrderSourceChange={handleOrderSourceChange}
-          tableId={tableId}
-          onTableIdChange={handleTableIdChange}
-          availableTables={availableTables}
-          onClearFilters={handleClearFilters}
-          hasActiveFilters={hasActiveFilters}
-        />
+      {/* Top Tab Switcher: Order Logs vs. Cashier Operational Audit */}
+      <div className="no-print flex items-center bg-slate-200/70 p-1 rounded-2xl w-fit gap-1 border border-slate-200">
+        <button
+          type="button"
+          onClick={() => setActiveTab('orders')}
+          className={`px-4 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'orders'
+              ? 'bg-white text-[#14274E] shadow-xs'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <ClipboardList className="w-4 h-4" />
+          <span>Order History Logs</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('audit')}
+          className={`px-4 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'audit'
+              ? 'bg-white text-[#14274E] shadow-xs'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 text-[#14274E]" />
+          <span>Staff Operational Audit</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('business-day')}
+          className={`px-4 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'business-day'
+              ? 'bg-white text-[#14274E] shadow-xs'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Store className="w-4 h-4 text-emerald-600" />
+          <span>Business Day &amp; Daily Summary</span>
+        </button>
       </div>
 
-      {/* Main Order Logs Table */}
-      {error ? (
-        <div className="bg-white rounded-2xl p-8 border border-rose-200 text-center space-y-3">
-          <p className="text-sm font-black text-rose-800">Error Loading Order Logs</p>
-          <p className="text-xs text-rose-600">{error}</p>
-          <button
-            type="button"
-            onClick={loadOrderLogs}
-            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
-          >
-            Retry Loading
-          </button>
-        </div>
-      ) : (
-        <OrderLogsTable
-          orders={data?.orders ?? []}
-          loading={loading && !data}
-          sortBy={sortBy}
-          sortOrder={sortOrder}
-          onSortChange={handleSortChange}
-          onSelectOrder={handleSelectOrder}
-          selectedOrderId={selectedOrder?.orderId}
-        />
-      )}
-
-      {/* Pagination Controls */}
-      {data && (
-        <div className="no-print">
-          <OrderLogsPagination
-            currentPage={data.currentPage}
-            totalPages={data.totalPages}
-            totalCount={data.totalCount}
-            pageSize={pageSize}
-            onPageChange={(p) => setPage(p)}
-            onPageSizeChange={(s) => {
-              setPageSize(s)
-              setPage(1)
-            }}
+      {activeTab === 'orders' ? (
+        <>
+          {/* Header with Title & Action Buttons */}
+          <OrderLogsHeader
+            onRefresh={loadOrderLogs}
+            onPrint={handlePrint}
+            onExportCsv={handleExportCsv}
+            onExportPdf={handleExportPdf}
+            loading={loading}
           />
-        </div>
-      )}
 
-      {/* Slide-Over Order Details Drawer */}
-      <OrderDetailsDrawer
-        order={selectedOrder}
-        isOpen={drawerOpen}
-        onClose={handleCloseDrawer}
-      />
+          {/* Summary KPI Cards across all filtered results */}
+          {data && (
+            <div className="no-print">
+              <OrderLogsSummaryCards summary={data.summary} loading={loading} />
+            </div>
+          )}
+
+          {/* Filter and Search Bar */}
+          <div className="no-print">
+            <OrderLogsFilterBar
+              search={search}
+              onSearchChange={handleSearchChange}
+              datePreset={datePreset}
+              onDatePresetChange={handleDatePresetChange}
+              customStartDate={customStartDate}
+              customEndDate={customEndDate}
+              onCustomDateChange={handleCustomDateChange}
+              orderStatus={orderStatus}
+              onOrderStatusChange={handleOrderStatusChange}
+              paymentStatus={paymentStatus}
+              onPaymentStatusChange={handlePaymentStatusChange}
+              paymentMethod={paymentMethod}
+              onPaymentMethodChange={handlePaymentMethodChange}
+              orderSource={orderSource}
+              onOrderSourceChange={handleOrderSourceChange}
+              tableId={tableId}
+              onTableIdChange={handleTableIdChange}
+              availableTables={availableTables}
+              onClearFilters={handleClearFilters}
+              hasActiveFilters={hasActiveFilters}
+            />
+          </div>
+
+          {/* Main Order Logs Table */}
+          {error ? (
+            <div className="bg-white rounded-2xl p-8 border border-rose-200 text-center space-y-3">
+              <p className="text-sm font-black text-rose-800">Error Loading Order Logs</p>
+              <p className="text-xs text-rose-600">{error}</p>
+              <button
+                type="button"
+                onClick={loadOrderLogs}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Retry Loading
+              </button>
+            </div>
+          ) : (
+            <OrderLogsTable
+              orders={data?.orders ?? []}
+              loading={loading && !data}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              onSortChange={handleSortChange}
+              onSelectOrder={handleSelectOrder}
+              selectedOrderId={selectedOrder?.orderId}
+            />
+          )}
+
+          {/* Pagination Controls */}
+          {data && (
+            <div className="no-print">
+              <OrderLogsPagination
+                currentPage={data.currentPage}
+                totalPages={data.totalPages}
+                totalCount={data.totalCount}
+                pageSize={pageSize}
+                onPageChange={(p) => setPage(p)}
+                onPageSizeChange={(s) => {
+                  setPageSize(s)
+                  setPage(1)
+                }}
+              />
+            </div>
+          )}
+
+          {/* Slide-Over Order Details Drawer */}
+          <OrderDetailsDrawer
+            order={selectedOrder}
+            isOpen={drawerOpen}
+            onClose={handleCloseDrawer}
+          />
+        </>
+      ) : activeTab === 'audit' ? (
+        <CashierAuditLogsTab />
+      ) : (
+        <BusinessDayManagementTab />
+      )}
     </div>
   )
 }

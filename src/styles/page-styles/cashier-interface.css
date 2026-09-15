@@ -80,6 +80,22 @@
   border-color: #4f46e5;
   box-shadow: 0 0 0 1px #4f46e5, 0 4px 14px rgba(79, 70, 229, 0.25);
 }
+.ci-table-card.has-assistance {
+  border: 3.3px solid #f43f5e !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fff1f2 100%);
+  box-shadow: 0 4px 14px rgba(244, 63, 94, 0.2);
+}
+.ci-table-card.has-assistance:hover:not(:disabled) {
+  border-color: #e11d48 !important;
+}
+.ci-table-card.has-billout {
+  border: 3.3px solid #f59e0b !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fffbeb 100%);
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.2);
+}
+.ci-table-card.has-billout:hover:not(:disabled) {
+  border-color: #d97706 !important;
+}
 .ci-table-card.is-disabled { cursor: not-allowed; opacity: .48; filter: grayscale(.15); border: 3.3px solid #9ba4b4; box-shadow: 0 1px 4px rgba(20, 39, 78, 0.233); }
 .ci-table-top { display: flex; align-items: center; justify-content: space-between; font-size: .8rem; font-weight: 800; gap: 0.5rem; }
 .ci-merged-badge {

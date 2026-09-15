@@ -28,11 +28,34 @@ import { LocationVerificationProvider } from '@/contexts/LocationVerificationCon
 import { CustomerLocationGuard } from '@/components/customer/CustomerLocationGuard'
 import { useParams } from 'react-router-dom'
 
+import { CashierRouteGuard } from '@/components/cashier/CashierRouteGuard'
+import { ServiceRouteGuard } from '@/components/service/ServiceRouteGuard'
+
 function wrap(Component: React.ComponentType) {
   return (
     <Suspense fallback={<PageLoader />}>
       <Component />
     </Suspense>
+  )
+}
+
+function wrapCashier(Component: React.ComponentType) {
+  return (
+    <CashierRouteGuard>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </CashierRouteGuard>
+  )
+}
+
+function wrapService(Component: React.ComponentType) {
+  return (
+    <ServiceRouteGuard>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </ServiceRouteGuard>
   )
 }
 
@@ -135,8 +158,8 @@ export const router = createBrowserRouter([
           { path: 'dispatcher', element: wrap(DispatcherInterface) },
           { path: 'kitchen', element: <Navigate to="/dispatcher" replace /> },
           { path: 'order-viewer', element: wrap(OrderViewerPage) },
-          { path: 'service', element: wrap(CashierPage) },
-          { path: 'cashier', element: wrap(CashierInterfacePage) },
+          { path: 'service', element: wrapService(CashierPage) },
+          { path: 'cashier', element: wrapCashier(CashierInterfacePage) },
           { path: 'tables', element: wrap(TableManagerPage) },
           { path: 'menu', element: wrap(MenuManagerPage) },
           { path: 'analytics', element: wrap(AnalyticsPage) },

@@ -22,6 +22,8 @@ import { useBillRequest } from '@/hooks/useBillRequest'
 import { useTableGroup } from '@/services/tableGroupService'
 import { getCachedTableAssistance, clearCachedTableAssistance } from '@/services/assistanceService'
 import { compressTableOrders } from '@/services/orderService'
+import { useBusinessDay } from '@/hooks/useBusinessDay'
+import { Store } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import type { MenuItem } from '@/types/menu'
 import type { PaymentMethod } from '@/types/bill'
@@ -211,8 +213,15 @@ export default function CustomerPage() {
     }
   }
 
+  const { isOpen } = useBusinessDay()
+
   // Handlers
   const handlePlaceOrder = async () => {
+    if (!isOpen) {
+      alert('Ordering Unavailable: The restaurant is currently not accepting orders. Please try again when the business day opens.')
+      return
+    }
+
     // Duplication protection: acquire cooperative lock before submitting
     if (isLockedByOther) return // another device is placing right now
 
@@ -267,6 +276,13 @@ export default function CustomerPage() {
       />
 
       <BillRequestBanner billRequest={billRequest} />
+
+      {!isOpen && (
+        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2.5 text-center text-xs font-bold text-amber-900 flex items-center justify-center gap-2 animate-fade-in shadow-2xs">
+          <Store className="w-4 h-4 text-amber-700 shrink-0" />
+          <span>Ordering Unavailable: The restaurant is currently not accepting orders.</span>
+        </div>
+      )}
 
       {activeTab === 'menu' && (
         <div className="flex flex-col h-full w-full max-w-full min-w-0 animate-fade-in">

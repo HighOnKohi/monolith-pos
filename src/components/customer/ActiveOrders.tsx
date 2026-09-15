@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Order } from '@/types/order'
 import { compressTableOrders } from '@/services/orderService'
 import { OrderStatusTracker } from './OrderStatusTracker'
@@ -14,6 +14,26 @@ interface ActiveOrdersProps {
 export function ActiveOrders({ orders, pastOrders, onRequestBill, onBrowseMenu }: ActiveOrdersProps) {
   const [showBatches, setShowBatches] = useState(false)
 
+  // Countdown timer for settled past orders (30 seconds auto-clear)
+  const newestCompletedAt = pastOrders?.[0]?.completedAt
+  const [secondsLeft, setSecondsLeft] = useState<number>(() => {
+    if (!newestCompletedAt) return 30
+    const elapsed = Math.floor((Date.now() - new Date(newestCompletedAt).getTime()) / 1000)
+    return Math.max(0, 30 - elapsed)
+  })
+
+  useEffect(() => {
+    if (!pastOrders || pastOrders.length === 0) return
+    const updateCountdown = () => {
+      if (!newestCompletedAt) return
+      const elapsed = Math.floor((Date.now() - new Date(newestCompletedAt).getTime()) / 1000)
+      setSecondsLeft(Math.max(0, 30 - elapsed))
+    }
+    updateCountdown()
+    const interval = setInterval(updateCountdown, 1000)
+    return () => clearInterval(interval)
+  }, [newestCompletedAt, pastOrders])
+
   if (orders.length === 0) {
     if (pastOrders && pastOrders.length > 0) {
       const pastCompressed = compressTableOrders(pastOrders)
@@ -26,7 +46,14 @@ export function ActiveOrders({ orders, pastOrders, onRequestBill, onBrowseMenu }
                   <CheckCircle2 className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-extrabold text-emerald-950">Table Order Settled</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-extrabold text-emerald-950">Table Order Settled</h3>
+                    {secondsLeft > 0 && (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 border border-emerald-300/60 px-2 py-0.5 rounded-full">
+                        Clearing in {secondsLeft}s
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-emerald-800/90 font-medium mt-0.5">
                     Your previous order was completed and paid. Thank you!
                   </p>

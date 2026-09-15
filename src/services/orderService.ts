@@ -53,8 +53,12 @@ export async function createOrder(
   total: number,
   requestedFrom: 'Cashier' | 'Customer' = 'Customer',
   serverNote?: string,
-
   guestCount?: number,
+  attribution?: {
+    shiftId?: number | null
+    staffId?: number | null
+    businessDayId?: number | null
+  },
 ): Promise<Order> {
   // Determine party size / guest count
   let partySize = guestCount
@@ -72,23 +76,84 @@ export async function createOrder(
     }
   }
 
+  // Ensure REQUESTED_FROM strictly obeys DB check constraint: 'Cashier' | 'Customer'
+  const validRequestedFrom: 'Cashier' | 'Customer' =
+    String(requestedFrom).toLowerCase() === 'customer' ? 'Customer' : 'Cashier'
+
+  // Resolve active attribution tags (supporting both Service and Cashier shifts)
+  const rawDayId =
+    attribution?.businessDayId ??
+    (Number(localStorage.getItem('monolith_active_business_day_id')) || null)
+  const activeDayId = rawDayId && rawDayId < 1000000000000 ? rawDayId : null
+
+  // Restaurant_Orders.SHIFT_ID foreign key constraint references staff."Cashier_Shifts".
+  // Never fallback to stale cashier shift IDs from localStorage for new orders.
+  const rawShiftId = attribution?.shiftId ?? null
+  const activeShiftId = rawShiftId && rawShiftId < 1000000000000 ? rawShiftId : null
+
+  const rawStaffId =
+    attribution?.staffId ??
+    (Number(localStorage.getItem('monolith_service_staff_id')) ||
+      Number(localStorage.getItem('monolith_cashier_staff_id')) ||
+      null)
+  const activeStaffId = rawStaffId && rawStaffId < 1000000000000 ? rawStaffId : null
+
   // 1. Insert the order
-  const { data: orderData, error: orderError } = await supabase
+  const payload: Record<string, unknown> = {
+    TABLE_ID: tableId,
+    ORDER_STATUS: 'REQUESTED',
+    ORDER_TYPE: DINING_TYPE_MAP[diningType],
+    TOTAL_BILL: total,
+    REQUESTED_FROM: validRequestedFrom,
+    SERVER_NOTE: serverNote?.trim() || null,
+    GUEST_COUNT: partySize,
+    TIME: new Date().toISOString(),
+  }
+
+  if (activeDayId) payload.BUSINESS_DAY_ID = activeDayId
+  if (activeShiftId) payload.SHIFT_ID = activeShiftId
+  if (activeStaffId) payload.STAFF_ID = activeStaffId
+
+  let orderData: Record<string, unknown> | null = null
+  const { data: insertedData, error: orderError } = await supabase
     .from('Restaurant_Orders')
-    .insert({
-      TABLE_ID: tableId,
-      ORDER_STATUS: 'REQUESTED',
-      ORDER_TYPE: DINING_TYPE_MAP[diningType],
-      TOTAL_BILL: total,
-      REQUESTED_FROM: requestedFrom,
-      SERVER_NOTE: serverNote?.trim() || null,
-      GUEST_COUNT: partySize,
-      TIME: new Date().toISOString(),
-    })
+    .insert(payload)
     .select()
     .single()
 
-  if (orderError || !orderData) throw orderError ?? new Error('Failed to create order')
+  if (orderError) {
+    // If error is caused by missing attribution columns or foreign key mismatch (e.g. 23503, 42703), retry with base payload
+    if (
+      orderError.code === '23503' ||
+      orderError.code === '42703' ||
+      orderError.message?.includes('column') ||
+      orderError.message?.includes('foreign key') ||
+      orderError.message?.includes('fkey')
+    ) {
+      console.warn('[orderService] Order insert hit constraint/column issue, retrying without optional tags:', orderError)
+      const basePayload = {
+        TABLE_ID: tableId,
+        ORDER_STATUS: 'REQUESTED',
+        ORDER_TYPE: DINING_TYPE_MAP[diningType],
+        TOTAL_BILL: total,
+        REQUESTED_FROM: validRequestedFrom,
+        SERVER_NOTE: serverNote?.trim() || null,
+        GUEST_COUNT: partySize,
+        TIME: new Date().toISOString(),
+      }
+      const { data: retryData, error: retryError } = await supabase
+        .from('Restaurant_Orders')
+        .insert(basePayload)
+        .select()
+        .single()
+      if (retryError || !retryData) throw retryError ?? new Error('Failed to create order')
+      orderData = retryData as Record<string, unknown>
+    } else {
+      throw orderError
+    }
+  } else {
+    orderData = insertedData as Record<string, unknown>
+  }
 
   const orderId = Number((orderData as Record<string, unknown>)['ORDER_ID'])
 
@@ -186,19 +251,45 @@ export async function fetchRecentCompletedOrders(
   memberTableIds?: number[],
 ): Promise<Order[]> {
   const targetIds = memberTableIds && memberTableIds.length > 0 ? memberTableIds : [tableId]
-  const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()
+  // Only query orders settled within the last 30 seconds
+  const thirtySecondsAgo = new Date(Date.now() - 30 * 1000).toISOString()
 
-  const { data, error } = await supabase
-    .from('Completed_Orders')
-    .select('*')
-    .in('TABLE_ID', targetIds)
-    .gte('COMPLETED_AT', fourHoursAgo)
-    .order('COMPLETED_AT', { ascending: false })
-    .limit(10)
+  let data: Record<string, unknown>[] | null = null
+  try {
+    const res = await supabase
+      .schema('system_history')
+      .from('Completed_Orders')
+      .select('*')
+      .in('TABLE_ID', targetIds)
+      .gte('COMPLETED_AT', thirtySecondsAgo)
+      .order('COMPLETED_AT', { ascending: false })
+      .limit(10)
+    if (!res.error && res.data) {
+      data = res.data
+    } else {
+      throw res.error
+    }
+  } catch {
+    const res = await supabase
+      .from('Completed_Orders')
+      .select('*')
+      .in('TABLE_ID', targetIds)
+      .gte('COMPLETED_AT', thirtySecondsAgo)
+      .order('COMPLETED_AT', { ascending: false })
+      .limit(10)
+    data = res.data
+  }
 
-  if (error || !data) return []
+  if (!data) return []
 
-  return data.map((row) => {
+  const now = Date.now()
+  return data
+    .filter((row) => {
+      const rawTimestamp = (row['COMPLETED_AT'] || row['TIME']) as string | number | undefined
+      const completedTime = rawTimestamp ? new Date(rawTimestamp).getTime() : 0
+      return now - completedTime <= 30 * 1000
+    })
+    .map((row) => {
     const rawItems = Array.isArray(row['ORDER_ITEMS']) ? (row['ORDER_ITEMS'] as any[]) : []
     const items: OrderItem[] = rawItems.map((it: any, idx: number) => ({
       orderItemId: idx + 1,
@@ -407,7 +498,18 @@ export async function deleteOrder(orderId: number): Promise<void> {
   if (orderError) throw orderError
 }
 
-export async function settleTableOrders(tableId: number, memberTableIds?: number[]): Promise<void> {
+export interface SettleOrderAttribution {
+  businessDayId?: number | null
+  shiftId?: number | null
+  staffId?: number | null
+  cashierName?: string | null
+}
+
+export async function settleTableOrders(
+  tableId: number,
+  memberTableIds?: number[],
+  attribution?: SettleOrderAttribution,
+): Promise<void> {
   const targetIds = memberTableIds && memberTableIds.length > 0 ? memberTableIds : [tableId]
   const { data: activeOrders, error: fetchErr } = await supabase
     .from('Restaurant_Orders')
@@ -532,6 +634,17 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
   }
 
   // 3. Save completed orders into Completed_Orders log table
+  const rawDayId = attribution?.businessDayId ?? (Number(localStorage.getItem('monolith_active_business_day_id')) || null)
+  const attrDayId = rawDayId && rawDayId < 1000000000000 ? rawDayId : null
+
+  const rawShiftId = attribution?.shiftId ?? (Number(localStorage.getItem('monolith_service_shift_id')) || Number(localStorage.getItem('monolith_cashier_shift_id')) || null)
+  const attrShiftId = rawShiftId && rawShiftId < 1000000000000 ? rawShiftId : null
+
+  const rawStaffId = attribution?.staffId ?? (Number(localStorage.getItem('monolith_service_staff_id')) || Number(localStorage.getItem('monolith_cashier_staff_id')) || null)
+  const attrStaffId = rawStaffId && rawStaffId < 1000000000000 ? rawStaffId : null
+
+  const attrCashierName = attribution?.cashierName ?? null
+
   const completedRows = activeOrders.map((o) => {
     const oId = Number(o['ORDER_ID'])
     const tId = Number(o['TABLE_ID'])
@@ -542,9 +655,22 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
     const total = Number(o['TOTAL_BILL']) || subtotal
     const discount = Math.max(subtotal - total, 0)
 
+    const rawOrderDay = Number(o['BUSINESS_DAY_ID']) || null
+    const safeOrderDay = rawOrderDay && rawOrderDay < 1000000000000 ? rawOrderDay : attrDayId
+
+    const rawOrderShift = Number(o['SHIFT_ID']) || null
+    const safeOrderShift = rawOrderShift && rawOrderShift < 1000000000000 ? rawOrderShift : attrShiftId
+
+    const rawOrderStaff = Number(o['STAFF_ID']) || null
+    const safeOrderStaff = rawOrderStaff && rawOrderStaff < 1000000000000 ? rawOrderStaff : attrStaffId
+
     return {
       ORIGINAL_ORDER_ID: oId,
       TABLE_ID: tId,
+      BUSINESS_DAY_ID: safeOrderDay,
+      SHIFT_ID: safeOrderShift,
+      STAFF_ID: safeOrderStaff,
+      CASHIER_NAME: attrCashierName,
       TABLE_NUM: tableNumMap.get(tId) ?? tId,
       ORDER_TYPE: String(o['ORDER_TYPE'] || 'DINE-IN'),
       REQUESTED_FROM: String(o['REQUESTED_FROM'] || 'Cashier'),
@@ -567,9 +693,42 @@ export async function settleTableOrders(tableId: number, memberTableIds?: number
 
   if (completedRows.length > 0) {
     try {
-      const { error: insertErr } = await supabase.from('Completed_Orders').insert(completedRows)
+      let insertErr: Error | { message: string; code?: string } | null = null
+      try {
+        const res = await supabase.schema('system_history').from('Completed_Orders').insert(completedRows)
+        insertErr = res.error
+      } catch (err) {
+        insertErr = err as Error
+      }
+
       if (insertErr) {
-        console.error('[orderService] Failed to archive orders into Completed_Orders:', insertErr)
+        const { error: fallbackErr } = await supabase.from('Completed_Orders').insert(completedRows)
+        if (fallbackErr) {
+          console.warn('[orderService] Completed_Orders initial insert hit constraint/column issue, retrying without optional foreign keys:', fallbackErr)
+          // Strip optional foreign keys and retry
+          const sanitizedRows = completedRows.map((r) => {
+            const copy = { ...r }
+            delete copy.BUSINESS_DAY_ID
+            delete copy.SHIFT_ID
+            delete copy.STAFF_ID
+            return copy
+          })
+
+          try {
+            const { error: retrySchemaErr } = await supabase
+              .schema('system_history')
+              .from('Completed_Orders')
+              .insert(sanitizedRows)
+            if (retrySchemaErr) {
+              const { error: finalErr } = await supabase.from('Completed_Orders').insert(sanitizedRows)
+              if (finalErr) {
+                console.error('[orderService] Failed to archive orders into Completed_Orders even without FK tags:', finalErr)
+              }
+            }
+          } catch (retryEx) {
+            console.error('[orderService] Failed to archive orders into Completed_Orders retry exception:', retryEx)
+          }
+        }
       }
     } catch (insertEx) {
       console.warn('[orderService] Archive exception:', insertEx)

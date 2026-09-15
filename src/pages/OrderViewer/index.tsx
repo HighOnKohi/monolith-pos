@@ -46,8 +46,8 @@ export default function OrderViewer() {
     // 3. Supabase Postgres Changes listeners for multi-device realtime
     const ordersChannel = supabase
       .channel('order-viewer-table-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Orders' }, () => void loadData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Order_Items' }, () => void loadData())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Restaurant_Orders' }, () => void loadData())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Order_Items' }, () => void loadData())
       .subscribe()
 
     return () => {
