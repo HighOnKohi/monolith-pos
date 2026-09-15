@@ -148,8 +148,8 @@ export async function logCashierAction(params: LogCashierActionParams): Promise<
       params.shiftType === 'SERVICE' ||
       params.metadata?.['shift_type'] === 'SERVICE' ||
       (Boolean(localStorage.getItem('monolith_service_shift_id')) &&
-        params.action !== 'CASHIER_SHIFT_STARTED' &&
-        params.action !== 'CASHIER_SHIFT_ENDED')
+        params.action !== 'SHIFT_STARTED' &&
+        params.action !== 'SHIFT_ENDED')
 
     // Audit_Logs.SHIFT_ID foreign key constraint references staff."Cashier_Shifts".
     // Service shifts must not be inserted into SHIFT_ID column, but kept in METADATA.

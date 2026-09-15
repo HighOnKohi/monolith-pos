@@ -14,6 +14,7 @@ import { AdvanceOrderTableModal } from './components/AdvanceOrderTableModal'
 import { AdvanceOrderBottomNav, type AdvanceOrderTabType } from './components/AdvanceOrderBottomNav'
 
 import { useMenu } from '@/hooks/useMenu'
+import { useBusinessDay } from '@/hooks/useBusinessDay'
 import type { MenuItem } from '@/types/menu'
 import type { CartItem, DiningType } from '@/types/cart'
 import type { AdvanceOrder } from '@/types/advanceOrder'
@@ -52,6 +53,7 @@ export default function AdvanceOrderPage() {
   }, [])
 
   // ─── States ─────────────────────────────────────────────────────────────────
+  const { isOpen } = useBusinessDay()
   const [activeTab, setActiveTab] = useState<AdvanceOrderTabType>('menu')
   const [activeOrder, setActiveOrder] = useState<AdvanceOrder | null>(null)
   const [isLoadingOrder, setIsLoadingOrder] = useState(true)
@@ -306,6 +308,11 @@ export default function AdvanceOrderPage() {
   }
 
   const handlePlaceOrder = async () => {
+    if (!isOpen) {
+      setOrderError('Ordering is unavailable. The operational business day has ended or is closed.')
+      return
+    }
+
     // 1. Validate customer name
     const trimmedName = customerName.trim()
     if (!trimmedName) {

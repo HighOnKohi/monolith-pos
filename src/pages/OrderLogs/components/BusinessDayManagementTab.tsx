@@ -1,9 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
-  Calendar,
-  Clock,
-  User,
-  ShieldCheck,
   AlertTriangle,
   RefreshCw,
   Download,
@@ -11,26 +7,23 @@ import {
   CreditCard,
   Banknote,
   Smartphone,
-  ShoppingBag,
   Users,
   Search,
   CheckCircle2,
   XCircle,
-  ChevronRight,
   TrendingUp,
   Percent,
   Receipt,
   X,
   Loader2,
   Store,
-  FileSpreadsheet,
+  FileDown,
 } from 'lucide-react'
+import { exportBusinessDayPdf } from '../utils/businessDayPdf'
 import { useBusinessDay } from '@/hooks/useBusinessDay'
 import { useAuthContext } from '@/contexts/AuthContext'
 import type {
   DailySummary,
-  CashierDailyPerformance,
-  DailyTransactionRow,
   ActiveOrdersCheckResult,
   ActiveShiftsCheckResult,
 } from '@/types/businessDay'
@@ -203,6 +196,12 @@ export function BusinessDayManagementTab() {
     URL.revokeObjectURL(url)
   }
 
+  // Export Daily Summary PDF
+  const handleExportPdf = () => {
+    if (!summary) return
+    exportBusinessDayPdf(summary)
+  }
+
   const handlePrint = () => {
     window.print()
   }
@@ -276,6 +275,15 @@ export function BusinessDayManagementTab() {
 
             {summary && (
               <>
+                <button
+                  type="button"
+                  onClick={handleExportPdf}
+                  title="Export structured PDF report"
+                  className="px-3.5 py-2 bg-[#14274E] hover:bg-[#1f3b73] active:bg-[#0f1d3b] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                >
+                  <FileDown className="w-3.5 h-3.5 text-[#E9C46A]" />
+                  <span>Save as PDF</span>
+                </button>
                 <button
                   type="button"
                   onClick={handleExportCsv}

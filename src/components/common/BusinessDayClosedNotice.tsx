@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import monolithLogoYellow from '@/assets/images/monolith-logo-yellow.png'
 
 interface BusinessDayClosedNoticeProps {
-  mode?: 'cashier' | 'service' | 'customer'
+  mode?: 'cashier' | 'service' | 'customer' | 'kitchen'
   onRetry?: () => void
 }
 
@@ -37,6 +37,14 @@ export function BusinessDayClosedNotice({
         'The restaurant is currently not accepting dining or takeout orders. Our register and kitchen are offline.',
       hint: 'Please try again later or ask your server once the business day opens.',
       showAdminAction: false,
+    },
+    kitchen: {
+      tag: 'Kitchen Display Locked',
+      title: 'Business Day Closed',
+      description:
+        'The kitchen order display and dispatcher interface are currently offline because the operational business day is closed.',
+      hint: 'Please contact a manager or system administrator to start the business day from the management portal to begin processing tickets.',
+      showAdminAction: true,
     },
   }[mode]
 

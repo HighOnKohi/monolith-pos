@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Search,
   User,
-  Clock,
-  Filter,
   ShieldCheck,
   RefreshCw,
   Download,
@@ -15,7 +13,6 @@ import {
   LogIn,
   ShoppingBag,
   Trash2,
-  Calendar,
   Store,
   AlertTriangle,
 } from 'lucide-react'

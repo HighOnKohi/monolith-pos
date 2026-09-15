@@ -1,6 +1,5 @@
 import { useBusinessDay } from '@/hooks/useBusinessDay'
 import { useNavigate } from 'react-router-dom'
-import { Calendar, Store } from 'lucide-react'
 
 interface BusinessDayStatusIndicatorProps {
   collapsed?: boolean

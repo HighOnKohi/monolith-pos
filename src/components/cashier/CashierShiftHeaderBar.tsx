@@ -4,7 +4,6 @@ import {
   Clock,
   LogOut,
   AlertTriangle,
-  Receipt,
   Grid,
   DollarSign,
   X,

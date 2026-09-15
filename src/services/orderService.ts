@@ -707,10 +707,10 @@ export async function settleTableOrders(
           console.warn('[orderService] Completed_Orders initial insert hit constraint/column issue, retrying without optional foreign keys:', fallbackErr)
           // Strip optional foreign keys and retry
           const sanitizedRows = completedRows.map((r) => {
-            const copy = { ...r }
-            delete copy.BUSINESS_DAY_ID
-            delete copy.SHIFT_ID
-            delete copy.STAFF_ID
+            const copy: Record<string, unknown> = { ...r }
+            delete copy['BUSINESS_DAY_ID']
+            delete copy['SHIFT_ID']
+            delete copy['STAFF_ID']
             return copy
           })
 

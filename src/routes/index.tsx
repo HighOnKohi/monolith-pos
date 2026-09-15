@@ -30,12 +30,34 @@ import { useParams } from 'react-router-dom'
 
 import { CashierRouteGuard } from '@/components/cashier/CashierRouteGuard'
 import { ServiceRouteGuard } from '@/components/service/ServiceRouteGuard'
+import { KitchenRouteGuard } from '@/components/kitchen/KitchenRouteGuard'
+import { CustomerDayGuard } from '@/components/customer/CustomerDayGuard'
 
 function wrap(Component: React.ComponentType) {
   return (
     <Suspense fallback={<PageLoader />}>
       <Component />
     </Suspense>
+  )
+}
+
+function wrapKitchen(Component: React.ComponentType) {
+  return (
+    <KitchenRouteGuard>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </KitchenRouteGuard>
+  )
+}
+
+function wrapAdvanceOrder(Component: React.ComponentType) {
+  return (
+    <CustomerDayGuard>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </CustomerDayGuard>
   )
 }
 
@@ -80,13 +102,15 @@ function CustomerRouteWrapper() {
   }, [location])
 
   return (
-    <LocationVerificationProvider>
-      <CustomerLocationGuard>
-        <Suspense fallback={<PageLoader />}>
-          <CustomerPage />
-        </Suspense>
-      </CustomerLocationGuard>
-    </LocationVerificationProvider>
+    <CustomerDayGuard>
+      <LocationVerificationProvider>
+        <CustomerLocationGuard>
+          <Suspense fallback={<PageLoader />}>
+            <CustomerPage />
+          </Suspense>
+        </CustomerLocationGuard>
+      </LocationVerificationProvider>
+    </CustomerDayGuard>
   )
 }
 
@@ -138,11 +162,11 @@ export const router = createBrowserRouter([
       },
       {
         path: 'advance-order',
-        element: wrap(AdvanceOrderPage),
+        element: wrapAdvanceOrder(AdvanceOrderPage),
       },
       {
         path: 'advance-order/:token',
-        element: wrap(AdvanceOrderPage),
+        element: wrapAdvanceOrder(AdvanceOrderPage),
       },
     ],
   },
@@ -155,9 +179,9 @@ export const router = createBrowserRouter([
         element: <AppLayout />,
         children: [
           { path: '/', element: <Navigate to="/dispatcher" replace /> },
-          { path: 'dispatcher', element: wrap(DispatcherInterface) },
+          { path: 'dispatcher', element: wrapKitchen(DispatcherInterface) },
           { path: 'kitchen', element: <Navigate to="/dispatcher" replace /> },
-          { path: 'order-viewer', element: wrap(OrderViewerPage) },
+          { path: 'order-viewer', element: wrapKitchen(OrderViewerPage) },
           { path: 'service', element: wrapService(CashierPage) },
           { path: 'cashier', element: wrapCashier(CashierInterfacePage) },
           { path: 'tables', element: wrap(TableManagerPage) },
