@@ -22,13 +22,13 @@ export async function fetchMenuPresets(): Promise<MenuPreset[]> {
 }
 
 export async function setDefaultMenuPreset(presetId: number): Promise<void> {
-  // 1. Reset all presets to IS_DEFAULT = false
+  // 1. Reset other presets to IS_DEFAULT = false
   try {
     await supabase
       .schema('menu')
       .from('Menu_Presets')
       .update({ IS_DEFAULT: false })
-      .neq('PRESET_ID', 0)
+      .neq('PRESET_ID', presetId)
   } catch (err) {
     console.warn('[menuService] Notice when resetting IS_DEFAULT on Menu_Presets:', err)
   }

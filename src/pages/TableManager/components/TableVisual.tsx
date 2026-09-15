@@ -1,5 +1,5 @@
 import React, { memo } from 'react'
-import { Users, GitMerge, QrCode } from 'lucide-react'
+import { Users, GitMerge, Check, RotateCw } from 'lucide-react'
 import type { TableType } from '@/services/tableLayoutService'
 
 interface ChairProps {
@@ -9,7 +9,7 @@ interface ChairProps {
 }
 
 /**
- * Realistic Leather Dining Armchair matching reference aesthetic
+ * Modern Minimalist Dining Chair matching Monolith POS aesthetic
  */
 export const Chair: React.FC<ChairProps> = memo(({ rotation = 0, size = 20, className = '' }) => {
   return (
@@ -26,59 +26,37 @@ export const Chair: React.FC<ChairProps> = memo(({ rotation = 0, size = 20, clas
         viewBox="0 0 100 100"
         width={size}
         height={size}
-        className="w-full h-full drop-shadow-md"
+        className="w-full h-full drop-shadow-xs"
       >
-        {/* Outer Armchair frame */}
+        {/* Modern Contoured Chair Backrest Frame */}
         <path
-          d="M 16,82 C 12,82 10,75 10,65 L 10,32 C 10,16 26,10 50,10 C 74,10 90,16 90,32 L 90,65 C 90,75 88,82 84,82 C 80,82 78,76 78,70 L 78,38 C 78,28 68,22 50,22 C 32,22 22,28 22,38 L 22,70 C 22,76 20,82 16,82 Z"
-          fill="#9C6421"
-          stroke="#6E4211"
+          d="M 18,74 C 14,74 12,68 12,60 L 12,36 C 12,18 28,12 50,12 C 72,12 88,18 88,36 L 88,60 C 88,68 86,74 82,74 C 78,74 76,68 76,62 L 76,40 C 76,28 66,22 50,22 C 34,22 24,28 24,40 L 24,62 C 24,68 22,74 18,74 Z"
+          fill="#334155"
+          stroke="#1E293B"
           strokeWidth="3.5"
           strokeLinejoin="round"
-        />
-
-        {/* Armchair side pads */}
-        <rect
-          x="10"
-          y="42"
-          width="12"
-          height="36"
-          rx="5"
-          fill="#BA7F2E"
-          stroke="#6E4211"
-          strokeWidth="2.5"
-        />
-        <rect
-          x="78"
-          y="42"
-          width="12"
-          height="36"
-          rx="5"
-          fill="#BA7F2E"
-          stroke="#6E4211"
-          strokeWidth="2.5"
         />
 
         {/* Seat Cushion Pad */}
         <rect
           x="22"
-          y="30"
+          y="32"
           width="56"
           height="48"
-          rx="8"
-          fill="#D49339"
-          stroke="#825114"
-          strokeWidth="3"
+          rx="10"
+          fill="#F1F5F9"
+          stroke="#94A3B8"
+          strokeWidth="3.5"
         />
 
-        {/* Seat Cushion highlight */}
+        {/* Inner Highlight Layer */}
         <rect
           x="26"
-          y="34"
+          y="36"
           width="48"
-          height="38"
-          rx="5"
-          fill="#E8A94B"
+          height="40"
+          rx="7"
+          fill="#FFFFFF"
           opacity="0.9"
         />
       </svg>
@@ -134,7 +112,7 @@ export const TableShapeIcon: React.FC<{
           </defs>
         </svg>
       )
-    case 2: // Rectangle 1x3
+    case 2: // Rectangle Horizontal 3x1
       return (
         <svg
           width={Math.round(size * 1.7)}
@@ -154,9 +132,9 @@ export const TableShapeIcon: React.FC<{
             strokeWidth="1.5"
           />
           <rect
-            x="5"
+            x="4.5"
             y="5.5"
-            width="28"
+            width="29"
             height="11"
             rx="2.5"
             fill="#FFF1BD"
@@ -164,6 +142,43 @@ export const TableShapeIcon: React.FC<{
           />
           <defs>
             <linearGradient id="goldGradRect" x1="2" y1="3" x2="36" y2="19" gradientUnits="userSpaceOnUse">
+              <stop stopColor="#F5D77F" />
+              <stop offset="0.5" stopColor="#D4AF37" />
+              <stop offset="1" stopColor="#A88118" />
+            </linearGradient>
+          </defs>
+        </svg>
+      )
+    case 5: // Rectangle Vertical 1x3
+      return (
+        <svg
+          width={size}
+          height={Math.round(size * 1.7)}
+          viewBox="0 0 22 38"
+          fill="none"
+          className={`shrink-0 drop-shadow-xs ${className}`}
+        >
+          <rect
+            x="3"
+            y="2"
+            width="16"
+            height="34"
+            rx="4"
+            fill="url(#goldGradRectVert)"
+            stroke="#9C7A14"
+            strokeWidth="1.5"
+          />
+          <rect
+            x="5.5"
+            y="4.5"
+            width="11"
+            height="29"
+            rx="2.5"
+            fill="#FFF1BD"
+            opacity="0.45"
+          />
+          <defs>
+            <linearGradient id="goldGradRectVert" x1="3" y1="2" x2="19" y2="36" gradientUnits="userSpaceOnUse">
               <stop stopColor="#F5D77F" />
               <stop offset="0.5" stopColor="#D4AF37" />
               <stop offset="1" stopColor="#A88118" />
@@ -184,7 +199,7 @@ export const TableShapeIcon: React.FC<{
             cx="12"
             cy="12"
             r="9"
-            fill="url(#goldGradCircleSm)"
+            fill="url(#goldGradCircleSmall)"
             stroke="#9C7A14"
             strokeWidth="1.5"
           />
@@ -196,7 +211,7 @@ export const TableShapeIcon: React.FC<{
             opacity="0.45"
           />
           <defs>
-            <linearGradient id="goldGradCircleSm" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+            <linearGradient id="goldGradCircleSmall" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
               <stop stopColor="#F5D77F" />
               <stop offset="0.5" stopColor="#D4AF37" />
               <stop offset="1" stopColor="#A88118" />
@@ -207,8 +222,8 @@ export const TableShapeIcon: React.FC<{
     case 4: // Big Circle 2x2
       return (
         <svg
-          width={Math.round(size * 1.2)}
-          height={Math.round(size * 1.2)}
+          width={Math.round(size * 1.35)}
+          height={Math.round(size * 1.35)}
           viewBox="0 0 28 28"
           fill="none"
           className={`shrink-0 drop-shadow-xs ${className}`}
@@ -217,19 +232,19 @@ export const TableShapeIcon: React.FC<{
             cx="14"
             cy="14"
             r="12"
-            fill="url(#goldGradCircleLg)"
+            fill="url(#goldGradCircleBig)"
             stroke="#9C7A14"
             strokeWidth="1.5"
           />
           <circle
             cx="14"
             cy="14"
-            r="8"
+            r="8.5"
             fill="#FFF1BD"
             opacity="0.45"
           />
           <defs>
-            <linearGradient id="goldGradCircleLg" x1="2" y1="2" x2="26" y2="26" gradientUnits="userSpaceOnUse">
+            <linearGradient id="goldGradCircleBig" x1="2" y1="2" x2="26" y2="26" gradientUnits="userSpaceOnUse">
               <stop stopColor="#F5D77F" />
               <stop offset="0.5" stopColor="#D4AF37" />
               <stop offset="1" stopColor="#A88118" />
@@ -255,14 +270,36 @@ export interface TableVisualProps {
   mergeGroupId?: number | null
   isSelected?: boolean
   isEditMode?: boolean
+  isQrPrintMode?: boolean
+  isPrintSelected?: boolean
+  onTogglePrintSelect?: () => void
+  onRotate?: () => void
   hideChairs?: {
     top?: boolean[] | boolean
     bottom?: boolean[] | boolean
-    left?: boolean
-    right?: boolean
+    left?: boolean | boolean[]
+    right?: boolean | boolean[]
     radial?: boolean[]
   }
-  onOpenQr?: () => void
+}
+
+/**
+ * Picks active chair slot indices up to target capacity from unblocked perimeter spots.
+ */
+function pickDynamicChairSlots(
+  priorityOrder: number[],
+  unblockedMask: boolean[],
+  targetCapacity: number,
+): Set<number> {
+  const activeSlots = new Set<number>()
+  const unblockedSlots = priorityOrder.filter((slot) => unblockedMask[slot])
+  const maxToTake = Math.max(0, Math.min(targetCapacity, unblockedSlots.length))
+
+  for (let i = 0; i < maxToTake; i++) {
+    activeSlots.add(unblockedSlots[i])
+  }
+
+  return activeSlots
 }
 
 export const TableVisual: React.FC<TableVisualProps> = memo(({
@@ -276,15 +313,18 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   mergeGroupId: _mergeGroupId = null,
   isSelected = false,
   isEditMode = false,
+  isQrPrintMode = false,
+  isPrintSelected = false,
+  onTogglePrintSelect,
+  onRotate,
   hideChairs = {},
-  onOpenQr,
 }) => {
   const getStatusDetails = () => {
     switch (status) {
       case 'OCCUPIED':
         return { color: '#3B82F6', text: 'Occupied', ring: 'ring-blue-500', bg: 'bg-blue-600' }
       case 'RESERVED':
-        return { color: '#EAB308', text: 'Reserved', ring: 'ring-amber-500', bg: 'bg-amber-600' }
+        return { color: '#F59E0B', text: 'Reserved', ring: 'ring-amber-500', bg: 'bg-amber-600' }
       case 'HAS_REQUEST':
         return { color: '#EF4444', text: 'Bill Out', ring: 'ring-rose-500', bg: 'bg-rose-600' }
       case 'UNAVAILABLE':
@@ -296,9 +336,37 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   }
 
   const statusInfo = getStatusDetails()
-  // Smaller chairs spaced away from the table
   const chairSize = Math.max(10, Math.round(cellSize * 0.22))
   const chairOffset = -Math.round(chairSize * 1.15)
+
+  // Border & background style for white tabletop with thick status-colored border
+  const getTabletopStyle = () => {
+    if (isQrPrintMode) {
+      return {
+        backgroundColor: '#FFFFFF',
+      }
+    }
+    return {
+      backgroundColor: '#FFFFFF',
+      borderColor: isEditMode
+        ? isSelected ? '#14274E' : '#475569'
+        : statusInfo.color,
+      borderWidth: '3.5px',
+      borderStyle: 'solid' as const,
+    }
+  }
+
+  const getTabletopClasses = () => {
+    if (isQrPrintMode) {
+      return isPrintSelected
+        ? 'bg-white border-2 border-[#14274E] ring-3 ring-[#14274E]/30 shadow-lg cursor-pointer'
+        : 'bg-white/95 border-2 border-dashed border-slate-300 opacity-70 hover:opacity-100 hover:border-slate-400 cursor-pointer'
+    }
+    if (isSelected) {
+      return 'ring-4 ring-indigo-500/70 shadow-lg scale-102'
+    }
+    return 'shadow-md'
+  }
 
   // ── 1. Type 1: Square Table (1x1) ──
   if (tableType === 1) {
@@ -307,13 +375,23 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
     const hideLeft = Boolean(hideChairs.left)
     const hideRight = Boolean(hideChairs.right)
 
+    const unblockedMask = [!hideTop, !hideBottom, !hideLeft, !hideRight]
+    const priorityOrder = [0, 1, 2, 3]
+    const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
+
     return (
       <div
         className="relative select-none"
         style={{ width: `${cellSize}px`, height: `${cellSize}px` }}
+        onClick={(e) => {
+          if (isQrPrintMode && onTogglePrintSelect) {
+            e.stopPropagation()
+            onTogglePrintSelect()
+          }
+        }}
       >
         {/* Top Chair */}
-        {!hideTop && (
+        {activeSlots.has(0) && (
           <div
             className="absolute left-1/2 -translate-x-1/2 z-0"
             style={{ top: `${chairOffset}px` }}
@@ -323,7 +401,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
         )}
 
         {/* Bottom Chair */}
-        {!hideBottom && (
+        {activeSlots.has(1) && (
           <div
             className="absolute left-1/2 -translate-x-1/2 z-0"
             style={{ bottom: `${chairOffset}px` }}
@@ -333,7 +411,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
         )}
 
         {/* Left Chair */}
-        {!hideLeft && (
+        {activeSlots.has(2) && (
           <div
             className="absolute top-1/2 -translate-y-1/2 z-0"
             style={{ left: `${chairOffset}px` }}
@@ -343,7 +421,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
         )}
 
         {/* Right Chair */}
-        {!hideRight && (
+        {activeSlots.has(3) && (
           <div
             className="absolute top-1/2 -translate-y-1/2 z-0"
             style={{ right: `${chairOffset}px` }}
@@ -354,51 +432,37 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
 
         {/* Tabletop Surface */}
         <div
-          className={`relative z-10 w-full h-full rounded-md flex flex-col items-center justify-center shadow-md transition-all duration-150 ${
-            isSelected
-              ? 'ring-3 ring-blue-500 shadow-blue-500/30'
-              : isMerged
-              ? 'ring-2 ring-indigo-400/90 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
-              : !isEditMode
-              ? `ring-2 ${statusInfo.ring}`
-              : 'border border-slate-700/80'
-          }`}
-          style={{
-            backgroundColor: '#2D3239',
-            backgroundImage: 'radial-gradient(circle at 50% 30%, #3C424C 0%, #252A30 100%)',
-          }}
+          className={`relative z-10 w-full h-full rounded-xl flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
+          style={getTabletopStyle()}
         >
+          {/* QR Print Mode Checkbox */}
+          {isQrPrintMode && (
+            <div
+              className={`absolute top-1 right-1 w-4 h-4 rounded-md flex items-center justify-center transition-all ${
+                isPrintSelected
+                  ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                  : 'bg-white border-2 border-slate-400 text-transparent'
+              }`}
+            >
+              <Check className="w-2.5 h-2.5 stroke-[3.5]" />
+            </div>
+          )}
+
           {/* Merged Indicator Badge */}
-          {isMerged && (
-            <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-indigo-950/90 border border-indigo-400/80 text-[7px] font-black text-indigo-300 flex items-center gap-0.5 leading-none pointer-events-none shadow-xs">
-              <GitMerge className="w-2 h-2 text-indigo-300" />
-              <span>LINK</span>
+          {!isQrPrintMode && isMerged && (
+            <div className="absolute top-1 left-1 p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
+              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
             </div>
           )}
 
           {/* Centered Table Number */}
-          <span className="text-white font-black text-sm sm:text-base tracking-tight leading-none drop-shadow-md">
+          <span className="font-black text-sm sm:text-base tracking-tight leading-none text-[#14274E]">
             {tableNum}
           </span>
 
-          {/* Quick QR Button in View Mode */}
-          {!isEditMode && onOpenQr && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                onOpenQr()
-              }}
-              className="absolute top-1 right-1 p-0.5 rounded bg-black/40 hover:bg-[#14274E] border border-white/10 text-amber-300 transition-colors z-20 cursor-pointer shadow-xs"
-              title={`View / Print QR Code for Table ${tableNum}`}
-            >
-              <QrCode className="w-2.5 h-2.5" />
-            </button>
-          )}
-
-          {/* Corner Seat Counter (Bottom-Right for Square Table) */}
-          <div className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/40 border border-white/10 text-[8px] font-black text-slate-300 flex items-center gap-0.5 leading-none pointer-events-none">
-            <Users className="w-2 h-2 text-slate-400" />
+          {/* Corner Seat Counter */}
+          <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-full text-[8px] font-black flex items-center gap-0.5 leading-none pointer-events-none bg-slate-100/90 text-slate-700 border border-slate-200">
+            <Users className="w-2 h-2 text-slate-500" />
             <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
           </div>
         </div>
@@ -406,7 +470,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
     )
   }
 
-  // ── 2. Type 2: Rectangle Table (1x3) ──
+  // ── 2. Type 2: Rectangle Table (3x1 Horizontal) ──
   if (tableType === 2) {
     const totalWidth = cellSize * 3
     const totalHeight = cellSize
@@ -416,19 +480,38 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
     const hideLeft = Boolean(hideChairs.left)
     const hideRight = Boolean(hideChairs.right)
 
+    const unblockedMask = [
+      !topMask[0],
+      !topMask[1],
+      !topMask[2],
+      !bottomMask[0],
+      !bottomMask[1],
+      !bottomMask[2],
+      !hideLeft,
+      !hideRight,
+    ]
+    const priorityOrder = [1, 4, 6, 7, 0, 3, 2, 5]
+    const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
+
     return (
       <div
         className="relative select-none"
         style={{ width: `${totalWidth}px`, height: `${totalHeight}px` }}
+        onClick={(e) => {
+          if (isQrPrintMode && onTogglePrintSelect) {
+            e.stopPropagation()
+            onTogglePrintSelect()
+          }
+        }}
       >
         {/* Top Chairs */}
         <div
           className="absolute top-0 w-full flex justify-around px-4 z-0"
           style={{ top: `${chairOffset}px` }}
         >
-          {!topMask[0] ? <Chair rotation={0} size={chairSize} /> : <div style={{ width: chairSize }} />}
-          {!topMask[1] ? <Chair rotation={0} size={chairSize} /> : <div style={{ width: chairSize }} />}
-          {!topMask[2] ? <Chair rotation={0} size={chairSize} /> : <div style={{ width: chairSize }} />}
+          {activeSlots.has(0) ? <Chair rotation={0} size={chairSize} /> : <div style={{ width: chairSize }} />}
+          {activeSlots.has(1) ? <Chair rotation={0} size={chairSize} /> : <div style={{ width: chairSize }} />}
+          {activeSlots.has(2) ? <Chair rotation={0} size={chairSize} /> : <div style={{ width: chairSize }} />}
         </div>
 
         {/* Bottom Chairs */}
@@ -436,13 +519,13 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className="absolute bottom-0 w-full flex justify-around px-4 z-0"
           style={{ bottom: `${chairOffset}px` }}
         >
-          {!bottomMask[0] ? <Chair rotation={180} size={chairSize} /> : <div style={{ width: chairSize }} />}
-          {!bottomMask[1] ? <Chair rotation={180} size={chairSize} /> : <div style={{ width: chairSize }} />}
-          {!bottomMask[2] ? <Chair rotation={180} size={chairSize} /> : <div style={{ width: chairSize }} />}
+          {activeSlots.has(3) ? <Chair rotation={180} size={chairSize} /> : <div style={{ width: chairSize }} />}
+          {activeSlots.has(4) ? <Chair rotation={180} size={chairSize} /> : <div style={{ width: chairSize }} />}
+          {activeSlots.has(5) ? <Chair rotation={180} size={chairSize} /> : <div style={{ width: chairSize }} />}
         </div>
 
         {/* Left End Chair */}
-        {!hideLeft && (
+        {activeSlots.has(6) && (
           <div
             className="absolute top-1/2 -translate-y-1/2 z-0"
             style={{ left: `${chairOffset}px` }}
@@ -452,7 +535,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
         )}
 
         {/* Right End Chair */}
-        {!hideRight && (
+        {activeSlots.has(7) && (
           <div
             className="absolute top-1/2 -translate-y-1/2 z-0"
             style={{ right: `${chairOffset}px` }}
@@ -463,51 +546,181 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
 
         {/* Tabletop Surface */}
         <div
-          className={`relative z-10 w-full h-full rounded-md flex flex-col items-center justify-center shadow-md transition-all duration-150 ${
-            isSelected
-              ? 'ring-3 ring-blue-500 shadow-blue-500/30'
-              : isMerged
-              ? 'ring-2 ring-indigo-400/90 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
-              : !isEditMode
-              ? `ring-2 ${statusInfo.ring}`
-              : 'border border-slate-700/80'
-          }`}
-          style={{
-            backgroundColor: '#2D3239',
-            backgroundImage: 'radial-gradient(ellipse at 50% 30%, #3C424C 0%, #252A30 100%)',
-          }}
+          className={`relative z-10 w-full h-full rounded-xl flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
+          style={getTabletopStyle()}
         >
-          {/* Merged Indicator Badge */}
-          {isMerged && (
-            <div className="absolute top-1.5 left-2 px-1.5 py-0.5 rounded bg-indigo-950/90 border border-indigo-400/80 text-[7px] font-black text-indigo-300 flex items-center gap-0.5 leading-none pointer-events-none shadow-xs">
-              <GitMerge className="w-2 h-2 text-indigo-300" />
-              <span>LINK</span>
+          {/* QR Print Mode Checkbox */}
+          {isQrPrintMode && (
+            <div
+              className={`absolute top-1.5 right-2 w-4 h-4 rounded-md flex items-center justify-center transition-all ${
+                isPrintSelected
+                  ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                  : 'bg-white border-2 border-slate-400 text-transparent'
+              }`}
+            >
+              <Check className="w-2.5 h-2.5 stroke-[3.5]" />
             </div>
           )}
 
-          {/* Centered Table Number */}
-          <span className="text-white font-black text-sm sm:text-base tracking-tight leading-none drop-shadow-md">
-            {tableNum}
-          </span>
+          {/* Merged Indicator Badge */}
+          {!isQrPrintMode && isMerged && (
+            <div className="absolute top-1.5 left-2 p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
+              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
+            </div>
+          )}
 
-          {/* Quick QR Button in View Mode */}
-          {!isEditMode && onOpenQr && (
+          {/* Floating Rotate Corner Button */}
+          {isEditMode && isSelected && onRotate && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation()
-                onOpenQr()
+                onRotate()
               }}
-              className="absolute top-1.5 right-2 p-0.5 rounded bg-black/40 hover:bg-[#14274E] border border-white/10 text-amber-300 transition-colors z-20 cursor-pointer shadow-xs"
-              title={`View / Print QR Code for Table ${tableNum}`}
+              className="absolute -top-3 -right-3 z-30 w-7 h-7 rounded-full bg-[#14274E] text-[#E9C46A] hover:bg-[#203c73] hover:scale-110 active:scale-95 shadow-lg border-2 border-white flex items-center justify-center cursor-pointer transition-all"
+              title="Rotate Table 90°"
             >
-              <QrCode className="w-2.5 h-2.5" />
+              <RotateCw className="w-3.5 h-3.5 stroke-[2.5]" />
             </button>
           )}
 
-          {/* Corner Seat Counter (Bottom-Right for Rectangle Table) */}
-          <div className="absolute bottom-1.5 right-2 px-1.5 py-0.5 rounded bg-black/40 border border-white/10 text-[9px] font-black text-slate-300 flex items-center gap-1 leading-none pointer-events-none">
-            <Users className="w-2.5 h-2.5 text-slate-400" />
+          {/* Centered Table Number */}
+          <span className="font-black text-sm sm:text-base tracking-tight leading-none text-[#14274E]">
+            {tableNum}
+          </span>
+
+          {/* Corner Seat Counter */}
+          <div className="absolute bottom-1.5 right-2 px-1.5 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1 leading-none pointer-events-none bg-slate-100/90 text-slate-700 border border-slate-200">
+            <Users className="w-2.5 h-2.5 text-slate-500" />
+            <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── 5. Type 5: Rectangle Table (Vertical 1x3) ──
+  if (tableType === 5) {
+    const totalWidth = cellSize
+    const totalHeight = cellSize * 3
+
+    const leftMask = Array.isArray(hideChairs.left) ? hideChairs.left : [false, false, false]
+    const rightMask = Array.isArray(hideChairs.right) ? hideChairs.right : [false, false, false]
+    const hideTop = Boolean(hideChairs.top)
+    const hideBottom = Boolean(hideChairs.bottom)
+
+    const unblockedMask = [
+      !leftMask[0],
+      !leftMask[1],
+      !leftMask[2],
+      !rightMask[0],
+      !rightMask[1],
+      !rightMask[2],
+      !hideTop,
+      !hideBottom,
+    ]
+    const priorityOrder = [1, 4, 6, 7, 0, 3, 2, 5]
+    const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
+
+    return (
+      <div
+        className="relative select-none"
+        style={{ width: `${totalWidth}px`, height: `${totalHeight}px` }}
+        onClick={(e) => {
+          if (isQrPrintMode && onTogglePrintSelect) {
+            e.stopPropagation()
+            onTogglePrintSelect()
+          }
+        }}
+      >
+        {/* Left Flank Chairs */}
+        <div
+          className="absolute left-0 h-full flex flex-col justify-around py-4 z-0"
+          style={{ left: `${chairOffset}px` }}
+        >
+          {activeSlots.has(0) ? <Chair rotation={270} size={chairSize} /> : <div style={{ height: chairSize }} />}
+          {activeSlots.has(1) ? <Chair rotation={270} size={chairSize} /> : <div style={{ height: chairSize }} />}
+          {activeSlots.has(2) ? <Chair rotation={270} size={chairSize} /> : <div style={{ height: chairSize }} />}
+        </div>
+
+        {/* Right Flank Chairs */}
+        <div
+          className="absolute right-0 h-full flex flex-col justify-around py-4 z-0"
+          style={{ right: `${chairOffset}px` }}
+        >
+          {activeSlots.has(3) ? <Chair rotation={90} size={chairSize} /> : <div style={{ height: chairSize }} />}
+          {activeSlots.has(4) ? <Chair rotation={90} size={chairSize} /> : <div style={{ height: chairSize }} />}
+          {activeSlots.has(5) ? <Chair rotation={90} size={chairSize} /> : <div style={{ height: chairSize }} />}
+        </div>
+
+        {/* Top End Chair */}
+        {activeSlots.has(6) && (
+          <div
+            className="absolute left-1/2 -translate-x-1/2 z-0"
+            style={{ top: `${chairOffset}px` }}
+          >
+            <Chair rotation={0} size={chairSize} />
+          </div>
+        )}
+
+        {/* Bottom End Chair */}
+        {activeSlots.has(7) && (
+          <div
+            className="absolute left-1/2 -translate-x-1/2 z-0"
+            style={{ bottom: `${chairOffset}px` }}
+          >
+            <Chair rotation={180} size={chairSize} />
+          </div>
+        )}
+
+        {/* Tabletop Surface */}
+        <div
+          className={`relative z-10 w-full h-full rounded-xl flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
+          style={getTabletopStyle()}
+        >
+          {/* Floating Rotate Corner Button */}
+          {isEditMode && isSelected && onRotate && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRotate()
+              }}
+              className="absolute -top-3 -right-3 z-30 w-7 h-7 rounded-full bg-[#14274E] text-[#E9C46A] hover:bg-[#203c73] hover:scale-110 active:scale-95 shadow-lg border-2 border-white flex items-center justify-center cursor-pointer transition-all"
+              title="Rotate Table 90°"
+            >
+              <RotateCw className="w-3.5 h-3.5 stroke-[2.5]" />
+            </button>
+          )}
+
+          {/* QR Print Mode Checkbox */}
+          {isQrPrintMode && (
+            <div
+              className={`absolute top-1.5 right-2 w-4 h-4 rounded-md flex items-center justify-center transition-all ${
+                isPrintSelected
+                  ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                  : 'bg-white border-2 border-slate-400 text-transparent'
+              }`}
+            >
+              <Check className="w-2.5 h-2.5 stroke-[3.5]" />
+            </div>
+          )}
+
+          {/* Merged Indicator Badge */}
+          {!isQrPrintMode && isMerged && (
+            <div className="absolute top-1.5 left-2 p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
+              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
+            </div>
+          )}
+
+          {/* Centered Table Number */}
+          <span className="font-black text-sm sm:text-base tracking-tight leading-none text-[#14274E]">
+            {tableNum}
+          </span>
+
+          {/* Corner Seat Counter */}
+          <div className="absolute bottom-1.5 px-1.5 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1 leading-none pointer-events-none bg-slate-100/90 text-slate-700 border border-slate-200">
+            <Users className="w-2.5 h-2.5 text-slate-500" />
             <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
           </div>
         </div>
@@ -522,12 +735,22 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
     const hideLeft = Boolean(hideChairs.left)
     const hideRight = Boolean(hideChairs.right)
 
+    const unblockedMask = [!hideTop, !hideBottom, !hideLeft, !hideRight]
+    const priorityOrder = [0, 1, 2, 3]
+    const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
+
     return (
       <div
         className="relative select-none"
         style={{ width: `${cellSize}px`, height: `${cellSize}px` }}
+        onClick={(e) => {
+          if (isQrPrintMode && onTogglePrintSelect) {
+            e.stopPropagation()
+            onTogglePrintSelect()
+          }
+        }}
       >
-        {!hideTop && (
+        {activeSlots.has(0) && (
           <div
             className="absolute left-1/2 -translate-x-1/2 z-0"
             style={{ top: `${chairOffset}px` }}
@@ -536,7 +759,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           </div>
         )}
 
-        {!hideBottom && (
+        {activeSlots.has(1) && (
           <div
             className="absolute left-1/2 -translate-x-1/2 z-0"
             style={{ bottom: `${chairOffset}px` }}
@@ -545,7 +768,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           </div>
         )}
 
-        {!hideLeft && (
+        {activeSlots.has(2) && (
           <div
             className="absolute top-1/2 -translate-y-1/2 z-0"
             style={{ left: `${chairOffset}px` }}
@@ -554,7 +777,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           </div>
         )}
 
-        {!hideRight && (
+        {activeSlots.has(3) && (
           <div
             className="absolute top-1/2 -translate-y-1/2 z-0"
             style={{ right: `${chairOffset}px` }}
@@ -565,51 +788,37 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
 
         {/* Circular Tabletop Surface */}
         <div
-          className={`relative z-10 w-full h-full rounded-full flex flex-col items-center justify-center shadow-md transition-all duration-150 ${
-            isSelected
-              ? 'ring-3 ring-blue-500 shadow-blue-500/30'
-              : isMerged
-              ? 'ring-2 ring-indigo-400/90 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
-              : !isEditMode
-              ? `ring-2 ${statusInfo.ring}`
-              : 'border border-slate-700/80'
-          }`}
-          style={{
-            backgroundColor: '#2D3239',
-            backgroundImage: 'radial-gradient(circle at 45% 35%, #3C424C 0%, #252A30 100%)',
-          }}
+          className={`relative z-10 w-full h-full rounded-full flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
+          style={getTabletopStyle()}
         >
-          {/* Merged Indicator Badge */}
-          {isMerged && (
-            <div className="absolute top-1 left-1/2 -translate-x-1/2 px-1 py-0.5 rounded bg-indigo-950/90 border border-indigo-400/80 text-[7px] font-black text-indigo-300 flex items-center gap-0.5 leading-none pointer-events-none shadow-xs">
-              <GitMerge className="w-2 h-2 text-indigo-300" />
-              <span>LINK</span>
+          {/* QR Print Mode Checkbox (Tucked in Top-Right Quadrant) */}
+          {isQrPrintMode && (
+            <div
+              className={`absolute top-1.5 right-2 w-4 h-4 rounded-full flex items-center justify-center transition-all ${
+                isPrintSelected
+                  ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                  : 'bg-white border-2 border-slate-400 text-transparent'
+              }`}
+            >
+              <Check className="w-2.5 h-2.5 stroke-[3.5]" />
+            </div>
+          )}
+
+          {/* Merged Indicator Badge (Tucked in Top-Left Quadrant so it never covers table number) */}
+          {!isQrPrintMode && isMerged && (
+            <div className="absolute top-1.5 left-2 p-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
+              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
             </div>
           )}
 
           {/* Centered Table Number */}
-          <span className="text-white font-black text-sm sm:text-base tracking-tight leading-none drop-shadow-md">
+          <span className="font-black text-sm sm:text-base tracking-tight leading-none text-[#14274E]">
             {tableNum}
           </span>
 
-          {/* Quick QR Button in View Mode */}
-          {!isEditMode && onOpenQr && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                onOpenQr()
-              }}
-              className="absolute right-1 top-1 p-0.5 rounded-full bg-black/40 hover:bg-[#14274E] border border-white/10 text-amber-300 transition-colors z-20 cursor-pointer shadow-xs"
-              title={`View / Print QR Code for Table ${tableNum}`}
-            >
-              <QrCode className="w-2.5 h-2.5" />
-            </button>
-          )}
-
-          {/* Seat Counter Below Table Number for Circle Tables */}
-          <div className="flex items-center gap-0.5 mt-0.5 text-[8px] sm:text-[9px] font-bold text-slate-300 pointer-events-none">
-            <Users className="w-2 h-2 text-slate-400" />
+          {/* Seat Counter Below Table Number */}
+          <div className="px-1.5 py-0.5 rounded-full text-[8px] font-black flex items-center gap-0.5 leading-none pointer-events-none mt-1 bg-slate-100/90 text-slate-700 border border-slate-200 shadow-2xs">
+            <Users className="w-2 h-2 text-slate-500" />
             <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
           </div>
         </div>
@@ -621,17 +830,27 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   if (tableType === 4) {
     const totalSize = cellSize * 2
     const radialMask = hideChairs.radial || []
-    const radius = (totalSize / 2) + Math.round(chairSize * 0.7)
+    const radius = totalSize / 2 + Math.round(chairSize * 0.7)
     const angles = [0, 60, 120, 180, 240, 300]
+
+    const unblockedMask = angles.map((_, i) => !radialMask[i])
+    const priorityOrder = [0, 3, 2, 5, 1, 4]
+    const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
 
     return (
       <div
         className="relative select-none"
         style={{ width: `${totalSize}px`, height: `${totalSize}px` }}
+        onClick={(e) => {
+          if (isQrPrintMode && onTogglePrintSelect) {
+            e.stopPropagation()
+            onTogglePrintSelect()
+          }
+        }}
       >
-        {/* 6 Fixed Radial Chairs around 360 degrees */}
+        {/* Dynamic Radial Chairs */}
         {angles.map((deg, idx) => {
-          if (radialMask[idx]) return null
+          if (!activeSlots.has(idx)) return null
           const rad = (deg - 90) * (Math.PI / 180)
           const cx = totalSize / 2 + radius * Math.cos(rad) - chairSize / 2
           const cy = totalSize / 2 + radius * Math.sin(rad) - chairSize / 2
@@ -652,51 +871,37 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
 
         {/* Big Circular Tabletop Surface */}
         <div
-          className={`relative z-10 w-full h-full rounded-full flex flex-col items-center justify-center shadow-lg transition-all duration-150 ${
-            isSelected
-              ? 'ring-3 ring-blue-500 shadow-blue-500/30'
-              : isMerged
-              ? 'ring-2 ring-indigo-400/90 shadow-[0_0_14px_rgba(99,102,241,0.4)]'
-              : !isEditMode
-              ? `ring-2 ${statusInfo.ring}`
-              : 'border border-slate-700/80'
-          }`}
-          style={{
-            backgroundColor: '#2D3239',
-            backgroundImage: 'radial-gradient(circle at 45% 35%, #3C424C 0%, #252A30 100%)',
-          }}
+          className={`relative z-10 w-full h-full rounded-full flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
+          style={getTabletopStyle()}
         >
-          {/* Merged Indicator Badge */}
-          {isMerged && (
-            <div className="absolute top-1.5 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-indigo-950/90 border border-indigo-400/80 text-[8px] font-black text-indigo-300 flex items-center gap-0.5 leading-none pointer-events-none shadow-xs">
-              <GitMerge className="w-2.5 h-2.5 text-indigo-300" />
-              <span>MERGED</span>
+          {/* QR Print Mode Checkbox (Tucked in Top-Right Quadrant) */}
+          {isQrPrintMode && (
+            <div
+              className={`absolute top-3 right-4 w-4.5 h-4.5 rounded-full flex items-center justify-center transition-all ${
+                isPrintSelected
+                  ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                  : 'bg-white border-2 border-slate-400 text-transparent'
+              }`}
+            >
+              <Check className="w-3 h-3 stroke-[3.5]" />
+            </div>
+          )}
+
+          {/* Merged Indicator Badge (Tucked in Top-Left Quadrant so it never covers table number) */}
+          {!isQrPrintMode && isMerged && (
+            <div className="absolute top-3 left-4 p-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
+              <GitMerge className="w-3 h-3 text-indigo-600" />
             </div>
           )}
 
           {/* Centered Table Number */}
-          <span className="text-white font-black text-base sm:text-lg tracking-tight leading-none drop-shadow-md">
+          <span className="font-black text-lg sm:text-xl tracking-tight leading-none text-[#14274E]">
             {tableNum}
           </span>
 
-          {/* Quick QR Button in View Mode */}
-          {!isEditMode && onOpenQr && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                onOpenQr()
-              }}
-              className="absolute right-3 top-3 p-1 rounded-full bg-black/40 hover:bg-[#14274E] border border-white/10 text-amber-300 transition-colors z-20 cursor-pointer shadow-xs"
-              title={`View / Print QR Code for Table ${tableNum}`}
-            >
-              <QrCode className="w-3 h-3" />
-            </button>
-          )}
-
-          {/* Seat Counter Below Table Number for Circle Tables */}
-          <div className="flex items-center gap-1 mt-0.5 text-[10px] sm:text-xs font-bold text-slate-300 pointer-events-none">
-            <Users className="w-2.5 h-2.5 text-slate-400" />
+          {/* Seat Counter Below Table Number */}
+          <div className="px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1 leading-none pointer-events-none mt-1.5 bg-slate-100/90 text-slate-700 border border-slate-200 shadow-2xs">
+            <Users className="w-2.5 h-2.5 text-slate-500" />
             <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
           </div>
         </div>

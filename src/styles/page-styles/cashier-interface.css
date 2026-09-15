@@ -42,6 +42,51 @@
   letter-spacing: .06em;
 }
 
+.ci-tables-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.ci-table-group-container {
+  border: 2.5px dashed #818cf8;
+  border-radius: 1.25rem;
+  padding: 0.85rem 1rem 1.1rem;
+  margin: 0;
+  background: rgba(240, 243, 255, 0.4);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.ci-table-group-container:hover {
+  border-color: #6366f1;
+  background: rgba(238, 242, 255, 0.6);
+}
+
+.ci-table-group-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #4338ca;
+  background: #ffffff;
+  border: 1.5px dashed #818cf8;
+  border-radius: 9999px;
+  margin-left: 0.5rem;
+  box-shadow: 0 1px 3px rgba(99, 102, 241, 0.1);
+  user-select: none;
+}
+
+.ci-table-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-top: 0.35rem;
+}
+
 .ci-table-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -68,16 +113,20 @@
 .ci-table-card:hover:not(:disabled) { border: 3.3px solid #5b6475; box-shadow: 0 1px 4px rgba(20, 39, 78, 0.233); }
 .ci-table-card.is-selected { border: 3.3px solid #14274e; box-shadow: 0 1px 4px rgba(20, 39, 78, 0.233); }
 .ci-table-card.is-selected:hover { border: 3.3px solid #14274e; }
+.ci-table-card.is-group-selected {
+  border: 3.3px solid #6366f1;
+  box-shadow: 0 0 0 1px #6366f1, 0 4px 14px rgba(99, 102, 241, 0.18);
+}
 .ci-table-card.is-merged {
-  border-color: #818cf8;
+  border: 3.3px dashed #818cf8;
   background: linear-gradient(180deg, #ffffff 0%, #f5f7ff 100%);
   box-shadow: 0 4px 14px rgba(99, 102, 241, 0.12);
 }
 .ci-table-card.is-merged:hover:not(:disabled) {
-  border-color: #6366f1;
+  border: 3.3px dashed #6366f1;
 }
 .ci-table-card.is-merged.is-selected {
-  border-color: #4f46e5;
+  border: 3.3px dashed #4f46e5;
   box-shadow: 0 0 0 1px #4f46e5, 0 4px 14px rgba(79, 70, 229, 0.25);
 }
 .ci-table-card.has-assistance {

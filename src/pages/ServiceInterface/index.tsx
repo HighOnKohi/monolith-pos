@@ -17,7 +17,7 @@ import { buildReceiptSnapshot } from '@/components/receipt/buildReceipt'
 import { ReceiptPreviewModal } from '@/components/receipt/ReceiptPreviewModal'
 import type { ReceiptSnapshot } from '@/components/receipt/types'
 import { resolveTableGroupByList } from '@/services/tableGroupService'
-import type { TableData } from '@/services/tableService'
+import { fetchAllTables, type TableData } from '@/services/tableService'
 
 import { CashierHeader } from './components/CashierHeader'
 import { CategoryCardsRow } from './components/CategoryCardsRow'
@@ -132,14 +132,7 @@ export default function CashierPage() {
   // ── 5. Fetch Data ──
   const loadTables = useCallback(async (): Promise<TableItem[]> => {
     try {
-      const { data, error } = await supabase
-        .schema('tables')
-        .from('Restaurant_Tables')
-        .select('*')
-        .order('TABLE_NUM')
-
-      if (error) throw error
-      const tList = (data as TableItem[]) ?? []
+      const tList = (await fetchAllTables()) as unknown as TableItem[]
       setTables((prev) => {
         if (prev.length === tList.length) {
           const isSame = prev.every((oldT, idx) => {
@@ -287,6 +280,15 @@ export default function CashierPage() {
         { event: '*', schema: 'tables', table: 'Table_Layout_Presets' },
         () => {
           loadTables()
+          loadInitialData()
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'tables', table: 'Table_Layout_Info' },
+        () => {
+          loadTables()
+          loadInitialData()
         }
       )
       .subscribe()
@@ -296,6 +298,7 @@ export default function CashierPage() {
       loadInitialData()
     }
     window.addEventListener('monolith-order-update', handleOrderUpdate)
+    window.addEventListener('table-layout-preset-changed', handleOrderUpdate)
 
     // Realtime subscription for Assistance broadcasts
     const assistanceChannel = supabase
@@ -317,6 +320,7 @@ export default function CashierPage() {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('monolith-order-update', handleOrderUpdate)
+      window.removeEventListener('table-layout-preset-changed', handleOrderUpdate)
       supabase.removeChannel(billChannel)
       supabase.removeChannel(ordersChannel)
       supabase.removeChannel(tablesChannel)

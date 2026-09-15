@@ -19,7 +19,9 @@
   margin-top: 15px;
   margin-left: 0px;
   padding: 0 1.25rem;
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
+  z-index: 40;
 }
 
 .Sidebar-header-logo {
@@ -79,25 +81,196 @@
   gap: 0.125rem;
 }
 
+/* ─── Dropdown Nav Groups & Sub Options ───────────────────────────── */
+
+.Nav-group {
+  margin-bottom: 12px;
+  border-radius: 1.25rem;
+  transition: background-color 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.Nav-group.is-expanded:not(.is-sidebar-collapsed) {
+  background: #f1f5f9;
+  border: 1px solid rgba(20, 39, 78, 0.08);
+  box-shadow: inset 0 1px 2px rgba(20, 39, 78, 0.02);
+  overflow: hidden;
+}
+
+.Nav-group.is-collapsed-group {
+  background: transparent;
+  border: 1px solid transparent;
+}
+
 .Nav-group-button {
   border: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
+  margin-bottom: 0;
 }
 
-.Nav-group-button .Nav-button-title-main { flex: 1; }
-.Nav-group-chevron { width: 1rem; height: 1rem; transition: transform 150ms ease; }
-.Nav-group-chevron.is-collapsed { transform: rotate(-90deg); }
-.Nav-group-children { padding-left: 0.8rem; }
-.Nav-group-children.is-collapsed { padding-left: 0; }
-.Nav-group-children-wrapper { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 0.3s ease, opacity 0.3s ease; overflow: hidden; opacity: 1; }
-.Nav-group-children-wrapper.is-collapsed { grid-template-rows: 0fr; opacity: 0; }
-.Nav-group-children-inner { min-height: 0; }
-.Nav-group-children .Nav-button { min-height: 2.8rem; margin-bottom: 4px; border-radius: 1rem; }
-.Nav-group-children .Nav-button-title-main { font-size: 0.9rem; }
-.app-sidebar.sidebar-collapsed .Nav-group-children { padding-left: 0; }
-.app-sidebar.sidebar-collapsed .Nav-group-button { margin-bottom: 12px; }
+.Nav-group.is-expanded:not(.is-sidebar-collapsed) .Nav-group-button {
+  background: #e2e8f0;
+  border-radius: 1.25rem 1.25rem 0 0;
+  margin-bottom: 0;
+  color: #14274e;
+  font-weight: 700;
+}
+
+.Nav-group.is-expanded:not(.is-sidebar-collapsed) .Nav-group-button:hover {
+  background: #cbd5e1;
+}
+
+.Nav-group.is-collapsed-group .Nav-group-button {
+  margin-bottom: 0;
+  border-radius: 1.5rem;
+}
+
+.Nav-group.is-collapsed-group .Nav-group-button:hover {
+  background: #f3f6fa;
+  color: #14274e;
+}
+
+.Nav-group-button .Nav-button-title-main {
+  flex: 1;
+}
+
+.Nav-group-chevron {
+  width: 1rem;
+  height: 1rem;
+  color: #64748b;
+  transition: transform 200ms ease, color 150ms ease;
+}
+
+.Nav-group.is-expanded .Nav-group-chevron {
+  color: #14274e;
+}
+
+.Nav-group-chevron.is-collapsed {
+  transform: rotate(-90deg);
+  color: #94a3b8;
+}
+
+.Nav-group-children-wrapper {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+  overflow: hidden;
+  opacity: 1;
+}
+
+.Nav-group-children-wrapper.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.Nav-group-children-inner {
+  min-height: 0;
+}
+
+.Nav-group-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.Nav-group-children.is-collapsed {
+  padding: 0;
+}
+
+/* Sub-option item button & tree line pointer (Full-width integrated container) */
+.Nav-sub-item-btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 2.75rem;
+  height: 2.75rem;
+  padding: 0 0.75rem 0 0;
+  text-decoration: none;
+  margin: 0;
+  color: #394867;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.Nav-sub-item-btn:hover {
+  background: #e2e8f0;
+  color: #14274e;
+}
+
+.Nav-sub-item-btn.is-active {
+  background: #14274e;
+  color: #E9C46A;
+  box-shadow: 0 4px 12px rgba(20, 39, 78, 0.18);
+}
+
+.Nav-sub-item-btn.is-active .Nav-sub-title {
+  color: #E9C46A;
+  font-weight: 700;
+}
+
+/* Tree Line Pointer (Contained inside the navbar container) */
+.Nav-sub-line-pointer {
+  position: relative;
+  width: 2.1rem;
+  height: 2.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.Nav-sub-line-v {
+  position: absolute;
+  left: 1rem;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: #cbd5e1;
+  transition: background-color 150ms ease;
+}
+
+.Nav-sub-line-v.is-first {
+  top: 0;
+}
+
+.Nav-sub-line-v.is-last {
+  bottom: 50%;
+}
+
+.Nav-sub-line-v.is-active {
+  background-color: #E9C46A;
+}
+
+.Nav-sub-line-h {
+  position: absolute;
+  left: 1rem;
+  top: 50%;
+  width: 0.75rem;
+  height: 2px;
+  background-color: #cbd5e1;
+  transform: translateY(-50%);
+  transition: background-color 150ms ease;
+}
+
+.Nav-sub-line-h.is-active {
+  background-color: #E9C46A;
+}
+
+.app-sidebar.sidebar-collapsed .Nav-group {
+  margin-bottom: 12px;
+  background: transparent !important;
+  border: none !important;
+}
+
+.app-sidebar.sidebar-collapsed .Nav-group-children {
+  padding-left: 0;
+  gap: 4px;
+}
+
+.app-sidebar.sidebar-collapsed .Nav-group-button {
+  margin-bottom: 6px;
+}
 
 .Nav-button {
   display: flex;
@@ -122,8 +295,12 @@
 
 .Nav-button.is-active {
   background: #14274e;
-  color: #ffffff;
+  color: #E9C46A;
   box-shadow: 0 7px 15px rgba(20, 47, 98, 0.18);
+}
+
+.Nav-button.is-active .Nav-button-title-main {
+  color: #E9C46A;
 }
 
 .Nav-button-icon {
@@ -144,7 +321,7 @@
 
 .Nav-button.is-active .Nav-button-icon {
   background: rgba(255, 255, 255, 0);
-  color: #ffffff;
+  color: #E9C46A;
 }
 
 /* Active navigation icon size and color */

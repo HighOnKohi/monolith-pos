@@ -34,10 +34,10 @@ function buildGroupInfoFromMembers(
   const isMerged = sortedMembers.length > 1
 
   const displayLabel = isMerged
-    ? `Table ${memberTableNums.join(' + ')}`
-    : `Table ${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
+    ? `Table #${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}+`
+    : `Table #${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
   const shortDisplayLabel = isMerged
-    ? `T${memberTableNums.join('+')}`
+    ? `T${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}+`
     : `T${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
 
   const capacity = isMerged
@@ -93,7 +93,7 @@ export function resolveTableGroupByList(
       anchorTableNum: targetTableId,
       memberTableIds: [targetTableId],
       memberTableNums: [targetTableId],
-      displayLabel: `Table ${targetTableId}`,
+      displayLabel: `Table #${targetTableId}`,
       shortDisplayLabel: `T${targetTableId}`,
       isMerged: false,
       capacity: 4,
@@ -156,7 +156,7 @@ export async function resolveTableGroup(targetTableId: number): Promise<TableGro
       anchorTableNum: targetTableId,
       memberTableIds: [targetTableId],
       memberTableNums: [targetTableId],
-      displayLabel: `Table ${targetTableId}`,
+      displayLabel: `Table #${targetTableId}`,
       shortDisplayLabel: `T${targetTableId}`,
       isMerged: false,
       capacity: 4,

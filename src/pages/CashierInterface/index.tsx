@@ -143,69 +143,153 @@ export default function CashierInterface() {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') void load()
     }
+    const handlePresetChange = () => void load()
+
     document.addEventListener('visibilitychange', handleVisibility)
     window.addEventListener('focus', handleVisibility)
+    window.addEventListener('table-layout-preset-changed', handlePresetChange)
+    window.addEventListener('monolith-order-update', handlePresetChange)
 
     const channel = supabase
       .channel('cashier-interface-sync')
       .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Presets' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Restaurant_Orders' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Order_Items' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Bill_Requests' }, () => void load())
-      .subscribe()
-
-    // Realtime subscription for Assistance broadcasts
-    const assistanceChannel = supabase
-      .channel('cashier-table-assistance')
-      .on('broadcast', { event: 'assistance_request' }, (payload) => {
-        if (payload?.payload) {
-          const assistReq = payload.payload as AssistanceRequest
-          recordAssistanceRequest(assistReq)
-          playNotificationChime()
-          showToast(`🔔 Table ${assistReq.tableNum ?? assistReq.tableId} is calling: ${assistReq.title}`, 'info')
-        }
-        void load()
-      })
-      .on('broadcast', { event: 'assistance_resolved' }, (payload) => {
-        const tId = payload?.payload?.tableId
-        const tIds = payload?.payload?.tableIds
-        removeAssistanceRequest(tId, tIds)
-        void load()
-      })
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Info' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Orders' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Order_Items' }, () => void load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Bill_Requests' }, () => void load())
       .subscribe()
 
     return () => {
       unsubscribeBus()
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('focus', handleVisibility)
+      window.removeEventListener('table-layout-preset-changed', handlePresetChange)
+      window.removeEventListener('monolith-order-update', handlePresetChange)
       void supabase.removeChannel(channel)
       void supabase.removeChannel(assistanceChannel)
     }
   }, [load, showToast])
 
-  // Tables group calculations
-  const groups = useMemo(() => {
-    const seen = new Set<number>()
-    return tables.flatMap((table) => {
-      if (seen.has(table.TABLE_ID)) return []
-      const group = resolveTableGroupByList(table.TABLE_ID, tables)
-      group.memberTableIds.forEach((id) => seen.add(id))
-      const summary = group.memberTableIds.reduce(
-        (result, id) => {
-          const item = summaries.get(id)
+  // Tables group calculations & hierarchy: Merge Groups first, then Standalone Tables
+  const { mergedGroups, standaloneTables, enabledTablesCount } = useMemo(() => {
+    const processedTableIds = new Set<number>()
+    const merged: Array<{
+      groupId: number
+      anchorTableNum: number
+      groupInfo: ReturnType<typeof resolveTableGroupByList>
+      groupSummary: { totalBill: number; activeOrderCount: number }
+      tables: Array<{
+        table: TableData
+        summary: { totalBill: number; activeOrderCount: number }
+        enabled: boolean
+      }>
+    }> = []
+    const standalone: Array<{
+      table: TableData
+      groupInfo: ReturnType<typeof resolveTableGroupByList>
+      summary: { totalBill: number; activeOrderCount: number }
+      enabled: boolean
+    }> = []
+
+    for (const table of tables) {
+      if (processedTableIds.has(table.TABLE_ID)) continue
+
+      const groupInfo = resolveTableGroupByList(table.TABLE_ID, tables)
+      if (groupInfo.isMerged) {
+        const memberTables = tables
+          .filter((t) => groupInfo.memberTableIds.includes(t.TABLE_ID))
+          .sort((a, b) => (a.TABLE_NUM || a.TABLE_ID) - (b.TABLE_NUM || b.TABLE_ID))
+
+        memberTables.forEach((t) => processedTableIds.add(t.TABLE_ID))
+
+        const groupSummary = groupInfo.memberTableIds.reduce(
+          (result, id) => {
+            const item = summaries.get(id)
+            return {
+              totalBill: result.totalBill + (item?.totalBill ?? 0),
+              activeOrderCount: result.activeOrderCount + (item?.activeOrderCount ?? 0),
+            }
+          },
+          { totalBill: 0, activeOrderCount: 0 },
+        )
+
+        const groupEnabled = groupSummary.activeOrderCount > 0
+
+        const tableItems = memberTables.map((t) => {
+          const tableSummary = summaries.get(t.TABLE_ID) ?? { totalBill: 0, activeOrderCount: 0 }
+          const enabled = groupEnabled || tableSummary.activeOrderCount > 0
           return {
-            totalBill: result.totalBill + (item?.totalBill ?? 0),
-            activeOrderCount: result.activeOrderCount + (item?.activeOrderCount ?? 0),
+            table: t,
+            summary: tableSummary,
+            enabled,
           }
-        },
-        { totalBill: 0, activeOrderCount: 0 },
-      )
-      return [{ table, group, summary }]
-    })
+        })
+
+        merged.push({
+          groupId: groupInfo.anchorTableId,
+          anchorTableNum: groupInfo.anchorTableNum,
+          groupInfo,
+          groupSummary,
+          tables: tableItems,
+        })
+      } else {
+        processedTableIds.add(table.TABLE_ID)
+        const tableSummary = summaries.get(table.TABLE_ID) ?? { totalBill: 0, activeOrderCount: 0 }
+        const enabled = tableSummary.activeOrderCount > 0
+        standalone.push({
+          table,
+          groupInfo,
+          summary: tableSummary,
+          enabled,
+        })
+      }
+    }
+
+    // Sort merge groups by their anchor table number ascending
+    merged.sort((a, b) => a.anchorTableNum - b.anchorTableNum)
+
+    // Sort standalone tables by their table number ascending
+    standalone.sort((a, b) => (a.table.TABLE_NUM || a.table.TABLE_ID) - (b.table.TABLE_NUM || b.table.TABLE_ID))
+
+    // Total count of accessible active tables
+    const activeCount = tables.filter((t) => {
+      const s = summaries.get(t.TABLE_ID)
+      if (s && s.activeOrderCount > 0) return true
+      const g = resolveTableGroupByList(t.TABLE_ID, tables)
+      if (g.isMerged) {
+        return g.memberTableIds.some((id) => (summaries.get(id)?.activeOrderCount ?? 0) > 0)
+      }
+      return false
+    }).length
+
+    return {
+      mergedGroups: merged,
+      standaloneTables: standalone,
+      enabledTablesCount: activeCount,
+    }
   }, [tables, summaries])
 
-  const selectedTableGroup = groups.find(({ group }) => group.anchorTableId === selectedId) ?? null
+  const selectedTableGroup = useMemo(() => {
+    if (!selectedId) return null
+    const group = resolveTableGroupByList(selectedId, tables)
+    const summary = group.memberTableIds.reduce(
+      (result, id) => {
+        const item = summaries.get(id)
+        return {
+          totalBill: result.totalBill + (item?.totalBill ?? 0),
+          activeOrderCount: result.activeOrderCount + (item?.activeOrderCount ?? 0),
+        }
+      },
+      { totalBill: 0, activeOrderCount: 0 },
+    )
+    const anchorTable =
+      tables.find((t) => t.TABLE_ID === group.anchorTableId) ||
+      tables.find((t) => t.TABLE_ID === selectedId) ||
+      null
+    return anchorTable ? { table: anchorTable, group, summary } : null
+  }, [selectedId, tables, summaries])
+
   const activeBillRequest = selectedTableGroup
     ? billRequests.find((request) => selectedTableGroup.group.memberTableIds.includes(request.tableId)) ?? null
     : null
@@ -575,15 +659,7 @@ export default function CashierInterface() {
     }
   }
 
-  const enabledTablesCount = groups.filter(({ group, summary }) => {
-    const hasAssistance = group.memberTableIds.some(
-      (id) => tables.find((t) => t.TABLE_ID === id)?.STATUS === 'HAS_REQUEST',
-    )
-    const hasBillOut =
-      group.memberTableIds.some((id) => tables.find((t) => t.TABLE_ID === id)?.BILL_OUT_REQUESTED) ||
-      billRequests.some((r) => group.memberTableIds.includes(r.tableId) && (r.status === 'REQUESTED' || r.status === 'PROCESSING'))
-    return summary.activeOrderCount > 0 || hasAssistance || hasBillOut
-  }).length
+  const enabledTablesCount = groups.filter((g) => g.summary.activeOrderCount > 0).length
 
   return (
     <div className="cashier-interface-page staff-page">
@@ -627,49 +703,24 @@ export default function CashierInterface() {
           {/* Tables Cards Grid */}
           <div className="ci-table-grid">
             {groups.map(({ table, group, summary }) => {
-              const hasAssistance = group.memberTableIds.some(
-                (id) => tables.find((t) => t.TABLE_ID === id)?.STATUS === 'HAS_REQUEST',
-              )
-              const hasBillOut =
-                group.memberTableIds.some((id) => tables.find((t) => t.TABLE_ID === id)?.BILL_OUT_REQUESTED) ||
-                billRequests.some((r) => group.memberTableIds.includes(r.tableId) && (r.status === 'REQUESTED' || r.status === 'PROCESSING'))
-
-              const enabled = summary.activeOrderCount > 0 || hasAssistance || hasBillOut
+              const enabled = summary.activeOrderCount > 0
               return (
                 <button
                   key={table.TABLE_ID}
                   type="button"
                   disabled={!enabled}
-                  className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${group.isMerged ? 'is-merged' : ''} ${
-                    hasAssistance ? 'has-assistance' : ''
-                  } ${
-                    hasBillOut && !hasAssistance ? 'has-billout' : ''
-                  } ${selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
+                  className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${group.isMerged ? 'is-merged' : ''} ${selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
                     }`}
                   onClick={() => void selectTable(group.anchorTableId)}
                 >
                   <div className="ci-table-top">
                     <span className="flex items-center gap-1.5">Table {group.memberTableNums.join(' + ')}</span>
-                    <div className="flex items-center gap-1">
-                      {hasAssistance && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white animate-pulse shadow-xs">
-                          <BellRing className="w-2.5 h-2.5" />
-                          Help
-                        </span>
-                      )}
-                      {hasBillOut && !hasAssistance && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white animate-pulse shadow-xs">
-                          <Receipt className="w-2.5 h-2.5" />
-                          Bill
-                        </span>
-                      )}
-                      {group.isMerged && (
-                        <span className="ci-merged-badge">
-                          <GitMerge className="w-3 h-3" />
-                          Merged
-                        </span>
-                      )}
-                    </div>
+                    {group.isMerged && (
+                      <span className="ci-merged-badge">
+                        <GitMerge className="w-3 h-3" />
+                        Merged
+                      </span>
+                    )}
                   </div>
                   <div className={`tm-pax-row ${group.currentGuestCount >= group.capacity ? 'tm-pax-full' : ''}`}>
                     <Users className="ci-icon" />
