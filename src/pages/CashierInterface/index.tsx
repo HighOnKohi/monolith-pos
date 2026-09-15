@@ -10,7 +10,6 @@ import {
   AlertTriangle,
   X,
   GitMerge,
-  BellRing,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllTables, fetchOrderSummariesForIds, type TableData } from '@/services/tableService'
@@ -158,6 +157,26 @@ export default function CashierInterface() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Orders' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Order_Items' }, () => void load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Bill_Requests' }, () => void load())
+      .subscribe()
+
+    // Realtime subscription for Assistance broadcasts
+    const assistanceChannel = supabase
+      .channel('cashier-table-assistance')
+      .on('broadcast', { event: 'assistance_request' }, (payload) => {
+        if (payload?.payload) {
+          const assistReq = payload.payload as AssistanceRequest
+          recordAssistanceRequest(assistReq)
+          playNotificationChime()
+          showToast(`🔔 Table ${assistReq.tableNum ?? assistReq.tableId} is calling: ${assistReq.title}`, 'info')
+        }
+        void load()
+      })
+      .on('broadcast', { event: 'assistance_resolved' }, (payload) => {
+        const tId = payload?.payload?.tableId
+        const tIds = payload?.payload?.tableIds
+        removeAssistanceRequest(tId, tIds)
+        void load()
+      })
       .subscribe()
 
     return () => {
@@ -659,8 +678,6 @@ export default function CashierInterface() {
     }
   }
 
-  const enabledTablesCount = groups.filter((g) => g.summary.activeOrderCount > 0).length
-
   return (
     <div className="cashier-interface-page staff-page">
       {/* Toast Alert for live assistance requests */}
@@ -700,38 +717,96 @@ export default function CashierInterface() {
             </span>
           </div>
 
-          {/* Tables Cards Grid */}
-          <div className="ci-table-grid">
-            {groups.map(({ table, group, summary }) => {
-              const enabled = summary.activeOrderCount > 0
-              return (
-                <button
-                  key={table.TABLE_ID}
-                  type="button"
-                  disabled={!enabled}
-                  className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${group.isMerged ? 'is-merged' : ''} ${selectedTableGroup?.group.anchorTableId === group.anchorTableId ? 'is-selected' : ''
-                    }`}
-                  onClick={() => void selectTable(group.anchorTableId)}
-                >
-                  <div className="ci-table-top">
-                    <span className="flex items-center gap-1.5">Table {group.memberTableNums.join(' + ')}</span>
-                    {group.isMerged && (
-                      <span className="ci-merged-badge">
-                        <GitMerge className="w-3 h-3" />
-                        Merged
-                      </span>
-                    )}
-                  </div>
-                  <div className={`tm-pax-row ${group.currentGuestCount >= group.capacity ? 'tm-pax-full' : ''}`}>
-                    <Users className="ci-icon" />
-                    <span>
-                      {group.currentGuestCount}/{group.capacity}
-                    </span>
-                  </div>
-                </button>
-              )
-            })}
-            {groups.length === 0 && <div className="ci-empty">No tables available.</div>}
+          {/* Tables Hierarchy */}
+          <div className="ci-tables-wrapper">
+            {/* 1. Merge Groups appear FIRST in hierarchy */}
+            {mergedGroups.map((groupItem) => (
+              <fieldset
+                key={`cashier-group-${groupItem.groupId}`}
+                className="ci-table-group-container"
+              >
+                <legend className="ci-table-group-legend">
+                  <GitMerge className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                  <span>Table Group</span>
+                </legend>
+                <div className="ci-table-group-grid">
+                  {groupItem.tables.map(({ table, enabled }) => {
+                    const isCardSelected = selectedId === table.TABLE_ID
+                    const isGroupMemberSelected =
+                      !isCardSelected &&
+                      Boolean(selectedTableGroup?.group.memberTableIds.includes(table.TABLE_ID))
+
+                    return (
+                      <button
+                        key={table.TABLE_ID}
+                        type="button"
+                        disabled={!enabled}
+                        className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${
+                          isCardSelected ? 'is-selected' : isGroupMemberSelected ? 'is-group-selected' : ''
+                        }`}
+                        onClick={() => void selectTable(table.TABLE_ID)}
+                      >
+                        <div className="ci-table-top">
+                          <span className="flex items-center gap-1.5 font-extrabold">
+                            Table #{table.TABLE_NUM || table.TABLE_ID}
+                          </span>
+                        </div>
+                        <div
+                          className={`tm-pax-row ${
+                            table.CURRENT_GUEST_COUNT >= table.GUEST_CAPACITY ? 'tm-pax-full' : ''
+                          }`}
+                        >
+                          <Users className="ci-icon" />
+                          <span>
+                            {table.CURRENT_GUEST_COUNT}/{table.GUEST_CAPACITY}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </fieldset>
+            ))}
+
+            {/* 2. Standalone Tables Grid */}
+            {standaloneTables.length > 0 && (
+              <div className="ci-table-grid">
+                {standaloneTables.map(({ table, enabled }) => {
+                  const isSelected = selectedId === table.TABLE_ID
+                  return (
+                    <button
+                      key={table.TABLE_ID}
+                      type="button"
+                      disabled={!enabled}
+                      className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${
+                        isSelected ? 'is-selected' : ''
+                      }`}
+                      onClick={() => void selectTable(table.TABLE_ID)}
+                    >
+                      <div className="ci-table-top">
+                        <span className="flex items-center gap-1.5 font-extrabold">
+                          Table #{table.TABLE_NUM || table.TABLE_ID}
+                        </span>
+                      </div>
+                      <div
+                        className={`tm-pax-row ${
+                          table.CURRENT_GUEST_COUNT >= table.GUEST_CAPACITY ? 'tm-pax-full' : ''
+                        }`}
+                      >
+                        <Users className="ci-icon" />
+                        <span>
+                          {table.CURRENT_GUEST_COUNT}/{table.GUEST_CAPACITY}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {mergedGroups.length === 0 && standaloneTables.length === 0 && (
+              <div className="ci-empty">No tables available.</div>
+            )}
           </div>
         </section>
 

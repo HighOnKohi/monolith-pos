@@ -179,14 +179,11 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
         </aside>
       </>}
       <aside className={['app-sidebar hidden lg:flex flex-col shrink-0 h-full bg-white border-r border-secondary/15 transition-all duration-200', collapsed ? 'sidebar-collapsed' : 'sidebar-expanded'].join(' ')} aria-label="Application navigation">
-<<<<<<< HEAD
-        <div className="Sidebar-header"><div className="Sidebar-header-logo"><img src={monolithLogoYellow} alt="Monolith Logo" className="w-8 h-8 object-contain drop-shadow-xs" /></div>{!collapsed && <span className="Sidebar-header-title">Monolith</span>}</div>
-        <div className="px-2.5 py-1.5 border-b border-secondary/10">
-          <BusinessDayStatusIndicator collapsed={collapsed} />
-=======
         <div className="Sidebar-header">
           <LogoUserMenu collapsed={collapsed} />
->>>>>>> 164f5afd8fde771d255c0a57a22c9840833b2703
+        </div>
+        <div className="px-2.5 py-1.5 border-b border-secondary/10">
+          <BusinessDayStatusIndicator collapsed={collapsed} />
         </div>
         <SidebarContent collapsed={collapsed} />
         <div className="Sidebar-footer"><button onClick={() => setCollapsed((value) => !value)} className="Sidebar-footer-button" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>{collapsed ? <PanelLeftOpen className="Sidebar-footer-icon" /> : <><PanelLeftClose className="Sidebar-footer-icon" /><span>Collapse</span></>}</button></div>
