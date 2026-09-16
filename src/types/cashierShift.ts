@@ -69,8 +69,50 @@ export interface ShiftSummaryMetrics {
   startedAt: string
 }
 
+export interface ShiftPaymentBreakdown {
+  method: string
+  count: number
+  total: number
+  percentage: number
+}
+
+export interface ShiftTransactionRow {
+  orderId: number
+  time: string
+  tableLabel: string
+  staffId: number | null
+  cashierName: string
+  shiftId: number | null
+  paymentMethod: string
+  amount: number
+  discount: number
+  status: string
+}
+
+export interface CashierShiftSummary {
+  shift: CashierShift
+  grossRevenue: number
+  subtotalRevenue: number
+  totalDiscounts: number
+  completedOrdersCount: number
+  cancelledOrdersCount: number
+  customersServed: number
+  tablesHandled: number
+  averageOrderValue: number
+  averageSpendPerCustomer: number
+  durationMinutes: number
+  paymentBreakdown: ShiftPaymentBreakdown[]
+  adjustments: {
+    discounts: number
+    refunds: number
+    voids: number
+  }
+  transactionsList: ShiftTransactionRow[]
+}
+
 export interface CashierStaffValidationResult {
   valid: boolean
   error?: string
   staff?: StaffCodeItem
 }
+

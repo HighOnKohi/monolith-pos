@@ -83,7 +83,9 @@ function getActiveAuthUserId(): string | null {
 
 function getStoredShiftId(): number | null {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_SHIFT_ID_KEY)
+    const raw =
+      localStorage.getItem(LOCAL_STORAGE_SHIFT_ID_KEY) ||
+      localStorage.getItem('monolith_service_shift_id')
     if (raw) return Number(raw) || null
   } catch {
     // ignore
@@ -93,7 +95,9 @@ function getStoredShiftId(): number | null {
 
 function getStoredStaffId(): number | null {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_STAFF_ID_KEY)
+    const raw =
+      localStorage.getItem(LOCAL_STORAGE_STAFF_ID_KEY) ||
+      localStorage.getItem('monolith_service_staff_id')
     if (raw) return Number(raw) || null
   } catch {
     // ignore

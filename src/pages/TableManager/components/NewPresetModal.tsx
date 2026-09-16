@@ -4,7 +4,7 @@ import { X, Layers } from 'lucide-react'
 interface NewPresetModalProps {
   isOpen: boolean
   onClose: () => void
-  onCreate: (name: string, isDefault: boolean) => Promise<void>
+  onCreate: (name: string, maxPax: number, isDefault: boolean) => Promise<void>
 }
 
 export const NewPresetModal: React.FC<NewPresetModalProps> = ({
@@ -13,6 +13,7 @@ export const NewPresetModal: React.FC<NewPresetModalProps> = ({
   onCreate,
 }) => {
   const [name, setName] = useState('')
+  const [maxPax, setMaxPax] = useState('50')
   const [isDefault, setIsDefault] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -26,11 +27,23 @@ export const NewPresetModal: React.FC<NewPresetModalProps> = ({
       return
     }
 
+    const parsedPax = parseInt(maxPax, 10)
+    if (isNaN(parsedPax) || parsedPax <= 0) {
+      setError('Maximum Pax must be a positive number greater than 0')
+      return
+    }
+
+    if (parsedPax > 200) {
+      setError('Maximum Pax cannot exceed 200 seats')
+      return
+    }
+
     try {
       setIsSubmitting(true)
       setError(null)
-      await onCreate(name.trim(), isDefault)
+      await onCreate(name.trim(), parsedPax, isDefault)
       setName('')
+      setMaxPax('50')
       setIsDefault(false)
       onClose()
     } catch (err) {
@@ -83,6 +96,24 @@ export const NewPresetModal: React.FC<NewPresetModalProps> = ({
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#14274E]/20 focus:bg-white transition-all"
               autoFocus
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">
+              Maximum Pax (Seating Capacity)
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={200}
+              value={maxPax}
+              onChange={(e) => setMaxPax(e.target.value)}
+              placeholder="e.g. 50"
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#14274E]/20 focus:bg-white transition-all"
+            />
+            <p className="text-[11px] text-slate-400 mt-1">
+              Tables will be automatically distributed to match this capacity.
+            </p>
           </div>
 
           <div className="pt-2">

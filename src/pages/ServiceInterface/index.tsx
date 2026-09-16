@@ -561,25 +561,13 @@ export default function CashierPage() {
     const previousOrders = tableOrders
     setTableOrders((prev) => prev.filter((item) => item.orderId !== order.orderId))
     try {
-      await deleteOrder(order.orderId)
+      await deleteOrder(order.orderId, {
+        staffId: serviceShift?.staffId,
+        shiftId: serviceShift?.shiftId,
+        reason: `Deleted cancelled order #${order.orderId} for ${selectedGroup.displayLabel}`,
+      })
       showToast(`Cancelled Order #${order.orderId} deleted.`, 'success')
       await loadTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
-
-      void logCashierAction({
-        action: 'ORDER_DELETED',
-        shiftType: 'SERVICE',
-        shiftId: serviceShift?.shiftId,
-        staffId: serviceShift?.staffId,
-        entityType: 'ORDER',
-        entityId: String(order.orderId),
-        description: `Deleted cancelled order #${order.orderId} for ${selectedGroup.displayLabel}`,
-        metadata: {
-          order_id: order.orderId,
-          table_id: selectedGroup.anchorTableId,
-          total_bill: order.totalBill,
-          shift_type: 'SERVICE',
-        },
-      })
     } catch (err) {
       console.error('Failed to delete cancelled order:', err)
       setTableOrders(previousOrders)
@@ -600,29 +588,17 @@ export default function CashierPage() {
       throw new Error(authRes.error || 'Incorrect administrator password.')
     }
 
-    const { orderDeleted, tableReset, voidedCount } = await voidOrderItems(
+    const { orderDeleted, voidedCount } = await voidOrderItems(
       orderId,
       orderItemIds,
       selectedGroup.anchorTableId,
       selectedGroup.memberTableIds,
-    )
-
-    void logCashierAction({
-      action: 'ORDER_CANCELLED',
-      shiftType: 'SERVICE',
-      shiftId: serviceShift?.shiftId,
-      staffId: serviceShift?.staffId,
-      entityType: 'ORDER',
-      entityId: String(orderId),
-      description: `Admin voided ${voidedCount} item(s) from Order #${orderId} for ${selectedGroup.displayLabel}`,
-      metadata: {
-        order_id: orderId,
-        table_id: selectedGroup.anchorTableId,
-        voided_count: voidedCount,
-        order_deleted: orderDeleted,
-        table_reset: tableReset,
+      {
+        staffId: serviceShift?.staffId,
+        shiftId: serviceShift?.shiftId,
+        reason: `Admin voided ${orderItemIds.length} item(s) for ${selectedGroup.displayLabel}`,
       },
-    })
+    )
 
     showToast(
       orderDeleted
@@ -677,8 +653,6 @@ export default function CashierPage() {
     setIsSubmittingOrder(true)
     const previousOrders = tableOrders
     const previousTables = tables
-    const cartSnapshot = punchCart
-    const noteSnapshot = serverNote
 
     try {
       const subtotal = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
@@ -727,26 +701,6 @@ export default function CashierPage() {
       showToast(`Order sent to Kitchen for ${selectedGroup.displayLabel}!`, 'success')
       await loadTableOrders(selectedGroup.anchorTableId, selectedGroup.memberTableIds)
       await loadTables()
-
-      void logCashierAction({
-        action: 'ORDER_CREATED',
-        shiftType: 'SERVICE',
-        shiftId: serviceShift?.shiftId,
-        staffId: serviceShift?.staffId,
-        entityType: 'TABLE',
-        entityId: String(selectedGroup.anchorTableId),
-        description: `Sent order of ${cartSnapshot.reduce((sum, i) => sum + i.quantity, 0)} item(s) to Kitchen for ${selectedGroup.displayLabel} (₱${total.toFixed(2)})`,
-        metadata: {
-          table_id: selectedGroup.anchorTableId,
-          table_label: selectedGroup.displayLabel,
-          dining_type: diningType,
-          total,
-          server_note: noteSnapshot,
-          items_count: cartSnapshot.reduce((sum, i) => sum + i.quantity, 0),
-          items: cartSnapshot.map((i) => ({ id: i.item.id, name: i.item.name, qty: i.quantity, price: i.item.price })),
-          shift_type: 'SERVICE',
-        },
-      })
     } catch (err) {
       console.error('Failed to punch order:', err)
       setTableOrders(previousOrders)

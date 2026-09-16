@@ -123,8 +123,8 @@ export function ServiceSessionProvider({ children }: { children: React.ReactNode
   // Live metrics for end shift modal
   const getShiftMetrics = useCallback(async (): Promise<ServiceShiftSummaryMetrics | null> => {
     if (!shift?.startedAt) return null
-    return calculateServiceShiftMetrics(shift.startedAt)
-  }, [shift?.startedAt])
+    return calculateServiceShiftMetrics(shift.startedAt, shift.staffId)
+  }, [shift?.startedAt, shift?.staffId])
 
   const value: ServiceSessionContextValue = {
     shift,

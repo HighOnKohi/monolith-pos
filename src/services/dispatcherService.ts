@@ -4,9 +4,11 @@ import { resolveTableGroupByList } from '@/services/tableGroupService'
 import type { TableData } from '@/services/tableService'
 import { logOrderEvent } from '@/services/orderLogsService'
 import { broadcastMenuItemStatus } from '@/hooks/useRealtimeMenu'
+import { logCashierAction } from '@/services/cashierAuditService'
 
-type DispatcherOrderItem = Omit<OrderItem, 'quantity'> & {
+export type DispatcherOrderItem = Omit<OrderItem, 'quantity'> & {
   rejectionReason?: 'only_1_left' | 'only_2_left' | 'only_3_left' | 'only_4_left' | 'only_5_left' | 'unavailable' | null
+  categoryName?: string
 }
 
 export interface DispatcherOrder extends Omit<Order, 'items'> {
@@ -29,7 +31,7 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
   }
   if (!orders || orders.length === 0) return []
 
-  const orderIds = orders.map((row: any) => Number(row.ORDER_ID))
+  const orderIds = orders.map((row: Record<string, unknown>) => Number(row['ORDER_ID']))
   const { data: itemsData, error: itemsError } = await supabase
     .from('Order_Items')
     .select('ORDER_ITEM_ID, ORDER_ID, ITEM_ID, ORDER_ITEM_STATUS, IS_FLAGGED')
@@ -41,41 +43,82 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
     throw itemsError
   }
 
-  const itemIds = [...new Set((itemsData ?? []).map((row: any) => Number(row.ITEM_ID)).filter(Boolean))]
-  const menuMap = new Map<number, { name: string; price: number }>()
+  const itemIds = [...new Set((itemsData ?? []).map((row: Record<string, unknown>) => Number(row['ITEM_ID'])).filter(Boolean))]
+  const menuMap = new Map<number, { name: string; price: number; categoryName: string }>()
 
   if (itemIds.length > 0) {
+    // 1. Fetch categories
+    const catMap = new Map<number, string>()
+    try {
+      const { data: catData } = await supabase
+        .schema('menu')
+        .from('Menu_Categories')
+        .select('CATEGORY_ID, CATEGORY_NAME')
+
+      if (catData) {
+        catData.forEach((c: Record<string, unknown>) => {
+          catMap.set(Number(c['CATEGORY_ID']), String(c['CATEGORY_NAME']))
+        })
+      } else {
+        const { data: pubCatData } = await supabase
+          .from('Menu_Categories')
+          .select('CATEGORY_ID, CATEGORY_NAME')
+        ;(pubCatData ?? []).forEach((c: Record<string, unknown>) => {
+          catMap.set(Number(c['CATEGORY_ID']), String(c['CATEGORY_NAME']))
+        })
+      }
+    } catch {
+      // Non-blocking
+    }
+
+    // 2. Fetch menu items
     const { data: menuData, error: menuError } = await supabase
       .schema('menu')
       .from('Menu_Items')
-      .select('ITEM_ID, ITEM_NAME, ITEM_PRICE')
+      .select('ITEM_ID, ITEM_NAME, ITEM_PRICE, CATEGORY_ID')
       .in('ITEM_ID', itemIds)
 
-    if (!menuError) {
-      ;(menuData ?? []).forEach((row: any) => {
-        menuMap.set(Number(row.ITEM_ID), {
-          name: String(row.ITEM_NAME ?? `Item #${row.ITEM_ID}`),
-          price: Number(row.ITEM_PRICE ?? 0),
+    if (!menuError && menuData) {
+      menuData.forEach((row: Record<string, unknown>) => {
+        const catId = Number(row['CATEGORY_ID'])
+        menuMap.set(Number(row['ITEM_ID']), {
+          name: String(row['ITEM_NAME'] ?? `Item #${row['ITEM_ID']}`),
+          price: Number(row['ITEM_PRICE'] ?? 0),
+          categoryName: catMap.get(catId) || 'Other',
         })
       })
     } else {
-      console.warn('Dispatcher Menu_Items lookup failed; using item IDs:', menuError)
+      // Fallback without schema
+      const { data: pubMenuData } = await supabase
+        .from('Menu_Items')
+        .select('ITEM_ID, ITEM_NAME, ITEM_PRICE, CATEGORY_ID')
+        .in('ITEM_ID', itemIds)
+
+      ;(pubMenuData ?? []).forEach((row: Record<string, unknown>) => {
+        const catId = Number(row['CATEGORY_ID'])
+        menuMap.set(Number(row['ITEM_ID']), {
+          name: String(row['ITEM_NAME'] ?? `Item #${row['ITEM_ID']}`),
+          price: Number(row['ITEM_PRICE'] ?? 0),
+          categoryName: catMap.get(catId) || 'Other',
+        })
+      })
     }
   }
 
   const itemsByOrder = new Map<number, DispatcherOrderItem[]>()
-  ;(itemsData ?? []).forEach((row: any) => {
-    const orderId = Number(row.ORDER_ID)
-    const menuItem = menuMap.get(Number(row.ITEM_ID))
+  ;(itemsData ?? []).forEach((row: Record<string, unknown>) => {
+    const orderId = Number(row['ORDER_ID'])
+    const menuItem = menuMap.get(Number(row['ITEM_ID']))
     const item: DispatcherOrderItem = {
-      orderItemId: Number(row.ORDER_ITEM_ID),
+      orderItemId: Number(row['ORDER_ITEM_ID']),
       orderId,
-      itemId: String(row.ITEM_ID),
-      status: String(row.ORDER_ITEM_STATUS ?? 'PENDING').toUpperCase(),
-      isFlagged: Boolean(row.IS_FLAGGED),
+      itemId: String(row['ITEM_ID']),
+      status: String(row['ORDER_ITEM_STATUS'] ?? 'PENDING').toUpperCase(),
+      isFlagged: Boolean(row['IS_FLAGGED']),
       rejectionReason: null,
-      name: menuItem?.name ?? `Item #${row.ITEM_ID}`,
+      name: menuItem?.name ?? `Item #${row['ITEM_ID']}`,
       price: menuItem?.price,
+      categoryName: menuItem?.categoryName || 'Other',
     }
     if (!itemsByOrder.has(orderId)) itemsByOrder.set(orderId, [])
     itemsByOrder.get(orderId)!.push(item)
@@ -86,7 +129,7 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
   const allTables = (tablesData as TableData[]) ?? []
 
   return orders
-    .map((row: any) => {
+    .map((row: Record<string, unknown>) => {
       const orderId = Number(row.ORDER_ID)
       const items = itemsByOrder.get(orderId) ?? []
       const hasActiveItems = items.some((item) => item.status !== 'CANCELLED')
@@ -112,11 +155,19 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
     .filter((order): order is DispatcherOrder => order !== null)
 }
 
-export async function fetchOrderViewerData(): Promise<Array<{
+export interface ViewerOrderItem {
+  name: string
+  quantity: number
+  categoryName: string
+}
+
+export interface ViewerOrderData {
   orderId: number
   tableDisplay: string
-  items: Array<{ name: string; quantity: number }>
-}>> {
+  items: ViewerOrderItem[]
+}
+
+export async function fetchOrderViewerData(): Promise<ViewerOrderData[]> {
   // Step 1: fetch orders with items that have PENDING or COOKING status
   const { data: ordersData, error: ordersError } = await supabase
     .from('Restaurant_Orders')
@@ -127,7 +178,7 @@ export async function fetchOrderViewerData(): Promise<Array<{
   if (ordersError) throw ordersError
   if (!ordersData || ordersData.length === 0) return []
 
-  const orderIds = ordersData.map((o: any) => o.ORDER_ID)
+  const orderIds = ordersData.map((o: Record<string, unknown>) => Number(o['ORDER_ID']))
 
   // Step 2: fetch only active (non-cancelled, non-done) items
   const { data: itemsData, error: itemsError } = await supabase
@@ -139,39 +190,90 @@ export async function fetchOrderViewerData(): Promise<Array<{
 
   if (itemsError) throw itemsError
 
-  // Step 3: fetch menu item names
-  const itemIdSet = [...new Set((itemsData ?? []).map((i: any) => i.ITEM_ID).filter(Boolean))]
-  const { data: menuData } = await supabase
-    .from('Menu_Items')
-    .select('ITEM_ID, ITEM_NAME')
-    .in('ITEM_ID', itemIdSet)
+  // Step 3: fetch menu item names and categories
+  const itemIdSet = [...new Set((itemsData ?? []).map((i: Record<string, unknown>) => Number(i['ITEM_ID'])).filter(Boolean))]
 
-  const nameMap = new Map<number, string>()
-  ;(menuData ?? []).forEach((m: any) => nameMap.set(m.ITEM_ID, m.ITEM_NAME))
+  const catMap = new Map<number, string>()
+  try {
+    const { data: catData } = await supabase
+      .schema('menu')
+      .from('Menu_Categories')
+      .select('CATEGORY_ID, CATEGORY_NAME')
+    if (catData) {
+      catData.forEach((c: Record<string, unknown>) => {
+        catMap.set(Number(c['CATEGORY_ID']), String(c['CATEGORY_NAME']))
+      })
+    } else {
+      const { data: pubCat } = await supabase.from('Menu_Categories').select('CATEGORY_ID, CATEGORY_NAME')
+      ;(pubCat ?? []).forEach((c: Record<string, unknown>) => {
+        catMap.set(Number(c['CATEGORY_ID']), String(c['CATEGORY_NAME']))
+      })
+    }
+  } catch {
+    // ignore
+  }
+
+  let menuDataRows: Record<string, unknown>[] = []
+  try {
+    const { data: menuData } = await supabase
+      .schema('menu')
+      .from('Menu_Items')
+      .select('ITEM_ID, ITEM_NAME, CATEGORY_ID')
+      .in('ITEM_ID', itemIdSet)
+
+    if (menuData && menuData.length > 0) {
+      menuDataRows = menuData
+    } else {
+      const { data: pubMenu } = await supabase
+        .from('Menu_Items')
+        .select('ITEM_ID, ITEM_NAME, CATEGORY_ID')
+        .in('ITEM_ID', itemIdSet)
+      menuDataRows = pubMenu ?? []
+    }
+  } catch {
+    // ignore
+  }
+
+  const itemMetaMap = new Map<number, { name: string; categoryName: string }>()
+  menuDataRows.forEach((m: Record<string, unknown>) => {
+    const catId = Number(m['CATEGORY_ID'])
+    itemMetaMap.set(Number(m['ITEM_ID']), {
+      name: String(m['ITEM_NAME'] ?? `Item #${m['ITEM_ID']}`),
+      categoryName: catMap.get(catId) || 'Other',
+    })
+  })
 
   // Step 4: fetch tables for display labels
   const { data: tablesData } = await supabase.schema('tables').from('Restaurant_Tables').select('*')
   const allTables = (tablesData as TableData[]) ?? []
 
-  // Group items by order
-  const itemsByOrder = new Map<number, Map<string, number>>()
-  ;(itemsData ?? []).forEach((row: any) => {
-    const oid = row.ORDER_ID
-    const name = nameMap.get(row.ITEM_ID) || `Item #${row.ITEM_ID}`
+  // Group items by order and name
+  const itemsByOrder = new Map<number, Map<string, ViewerOrderItem>>()
+  ;(itemsData ?? []).forEach((row: Record<string, unknown>) => {
+    const oid = Number(row['ORDER_ID'])
+    const meta = itemMetaMap.get(Number(row['ITEM_ID']))
+    const name = meta?.name || `Item #${row['ITEM_ID']}`
+    const categoryName = meta?.categoryName || 'Other'
+
     if (!itemsByOrder.has(oid)) itemsByOrder.set(oid, new Map())
     const map = itemsByOrder.get(oid)!
-    map.set(name, (map.get(name) || 0) + 1)
+    if (!map.has(name)) {
+      map.set(name, { name, quantity: 0, categoryName })
+    }
+    map.get(name)!.quantity += 1
   })
 
-  return ordersData.flatMap((o: any) => {
-    const grp = resolveTableGroupByList(Number(o.TABLE_ID), allTables)
-    const itemMap = itemsByOrder.get(o.ORDER_ID) ?? new Map()
+  return ordersData.flatMap((o: Record<string, unknown>) => {
+    const grp = resolveTableGroupByList(Number(o['TABLE_ID']), allTables)
+    const itemMap = itemsByOrder.get(Number(o['ORDER_ID'])) ?? new Map()
     if (itemMap.size === 0) return []
-    return [{
-      orderId: Number(o.ORDER_ID),
-      tableDisplay: grp.displayLabel,
-      items: Array.from(itemMap.entries()).map(([name, quantity]) => ({ name, quantity }))
-    }]
+    return [
+      {
+        orderId: Number(o['ORDER_ID']),
+        tableDisplay: grp.displayLabel,
+        items: Array.from(itemMap.values()),
+      },
+    ]
   })
 }
 
@@ -369,6 +471,19 @@ export async function rejectOrderItems(
       actor: 'Dispatcher',
       reason: 'All items rejected',
     })
+
+    void logCashierAction({
+      action: 'ORDER_CANCELLED',
+      entityType: 'ORDER',
+      entityId: String(orderId),
+      description: `Order #${orderId} cancelled by Kitchen/Dispatcher (All items rejected)`,
+      metadata: {
+        order_id: orderId,
+        actor: 'Dispatcher',
+        reason: 'All items rejected',
+        rejections: itemRejections,
+      },
+    }).catch((err) => console.warn('[dispatcherService] Failed to log ORDER_CANCELLED action:', err))
   } else {
     logOrderEvent(orderId, {
       eventType: 'ITEMS_REJECTED',
@@ -431,6 +546,7 @@ export async function saveDispatcherNote(orderId: number, note: string): Promise
 // ─── Realtime Cross-Component Event Bus ───────────────────────────────────────
 
 const REALTIME_CHANNEL_NAME = 'monolith_order_events'
+const SUPABASE_ORDER_BROADCAST_CHANNEL = 'monolith-live-orders-broadcast'
 let broadcastChannelInstance: BroadcastChannel | null = null
 
 function getBroadcastChannel(): BroadcastChannel | null {
@@ -456,26 +572,48 @@ export function broadcastOrderUpdate(detail: { type?: 'tables' | 'tickets' | 'al
   } catch (err) {
     console.warn('[broadcastOrderUpdate] BroadcastChannel error:', err)
   }
+
+  // 3. Broadcast across devices via Supabase channel
+  try {
+    const liveChannel = supabase.channel(SUPABASE_ORDER_BROADCAST_CHANNEL)
+    void liveChannel.send({
+      type: 'broadcast',
+      event: 'order_update',
+      payload: detail,
+    })
+  } catch {
+    // Non-blocking if offline or channel not subscribed
+  }
 }
 
-export function subscribeToOrderUpdates(callback: (detail: any) => void): () => void {
+export function subscribeToOrderUpdates(callback: (detail: Record<string, unknown>) => void): () => void {
   if (typeof window === 'undefined') return () => {}
 
   const handleCustomEvent = (e: Event) => {
-    callback((e as CustomEvent).detail ?? {})
+    callback(((e as CustomEvent).detail as Record<string, unknown>) ?? {})
   }
 
   window.addEventListener('monolith-order-update', handleCustomEvent)
 
   const channel = getBroadcastChannel()
   const handleBroadcastMessage = (event: MessageEvent) => {
-    callback(event.data ?? {})
+    callback((event.data as Record<string, unknown>) ?? {})
   }
 
   channel?.addEventListener('message', handleBroadcastMessage)
 
+  // Supabase cross-device realtime broadcast listener
+  const liveChannel = supabase
+    .channel(SUPABASE_ORDER_BROADCAST_CHANNEL)
+    .on('broadcast', { event: 'order_update' }, (payload: { payload?: Record<string, unknown> }) => {
+      callback(payload?.payload ?? {})
+    })
+    .subscribe()
+
   return () => {
     window.removeEventListener('monolith-order-update', handleCustomEvent)
     channel?.removeEventListener('message', handleBroadcastMessage)
+    void supabase.removeChannel(liveChannel)
   }
 }
+

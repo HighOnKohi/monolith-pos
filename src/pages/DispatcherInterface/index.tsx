@@ -29,6 +29,7 @@ type TableStage = 'preparing' | 'cooking' | 'done'
 interface GroupedItem {
   itemId: string
   name: string
+  categoryName: string
   totalQuantity: number
   cookingCount: number
   doneCount: number
@@ -144,6 +145,7 @@ export default function DispatcherInterface() {
         grouped.set(item.itemId, {
           itemId: item.itemId,
           name: item.name || `Item #${item.itemId}`,
+          categoryName: item.categoryName || 'Other',
           totalQuantity: 0,
           cookingCount: 0,
           doneCount: 0,
@@ -190,7 +192,17 @@ export default function DispatcherInterface() {
         }
         return false
       })
-      .sort((a, b) => b.orderId - a.orderId)
+      .sort((a, b) => {
+        if (activeTableStage === 'cooking') {
+          // In cooking tab, marked orders (orders with 1+ items marked DONE) go to the bottom
+          const aHasMarked = a.items.some((i) => i.status === 'DONE')
+          const bHasMarked = b.items.some((i) => i.status === 'DONE')
+          if (aHasMarked !== bHasMarked) {
+            return aHasMarked ? 1 : -1
+          }
+        }
+        return b.orderId - a.orderId
+      })
   }, [orders, activeTableStage])
 
   // ── Toggle Individual Item Done Handler ──
@@ -487,107 +499,193 @@ export default function DispatcherInterface() {
                   {/* Items List */}
                   <div className="dispatcher-order-items">
                     {activeTableStage === 'cooking' ? (
-                      /* ── Cooking Stage: Individual Items with Mark Button ── */
-                      activeItems.map((item) => {
-                        const isDone = item.status === 'DONE'
+                      /* ── Cooking Stage: Categorized Containers with Marked Items at Bottom ── */
+                      (() => {
+                        const catGroups = new Map<string, typeof activeItems>()
+                        activeItems.forEach((item) => {
+                          const cat = item.categoryName || 'Other'
+                          if (!catGroups.has(cat)) catGroups.set(cat, [])
+                          catGroups.get(cat)!.push(item)
+                        })
 
-                        // If multiple items share the same name in this order, distinguish with (#1, #2...)
-                        const matchingItems = activeItems.filter((i) => i.name === item.name)
-                        let itemLabel = item.name
-                        if (matchingItems.length > 1) {
-                          const unitIndex = matchingItems.findIndex((i) => i.orderItemId === item.orderItemId) + 1
-                          itemLabel = `${item.name} (#${unitIndex})`
-                        }
+                        return Array.from(catGroups.entries()).map(([category, items]) => {
+                          // Inside each category, marked items (status === 'DONE') sink to the bottom
+                          const sortedItems = [...items].sort((a, b) => {
+                            const aDone = a.status === 'DONE' ? 1 : 0
+                            const bDone = b.status === 'DONE' ? 1 : 0
+                            if (aDone !== bDone) return aDone - bDone
+                            return a.orderItemId - b.orderItemId
+                          })
 
-                        return (
-                          <div
-                            key={item.orderItemId}
-                            className={`dispatcher-order-item transition-all duration-200 ${
-                              isDone ? 'bg-emerald-50/50 rounded-xl px-2 py-1.5 border border-emerald-100' : ''
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 min-w-0 flex-1">
-                                <span
-                                  className={`dispatcher-item-name truncate ${
-                                    isDone ? 'line-through text-slate-400 font-normal' : 'text-[#14274E] font-bold'
-                                  }`}
-                                >
-                                  {itemLabel}
+                          const doneCount = sortedItems.filter((i) => i.status === 'DONE').length
+
+                          return (
+                            <div key={category} className="dispatcher-category-container">
+                              <div className="dispatcher-category-header">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="dispatcher-category-badge">{category}</span>
+                                  {doneCount > 0 && (
+                                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-md border border-emerald-300">
+                                      {doneCount}/{sortedItems.length} cooked
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="dispatcher-category-count">
+                                  {sortedItems.length} item{sortedItems.length !== 1 ? 's' : ''}
                                 </span>
-                                {item.isFlagged && (
-                                  <span className="dispatcher-flag-badge shrink-0">
-                                    <Flag className="h-2.5 w-2.5" />
-                                    Flagged
-                                  </span>
-                                )}
                               </div>
 
-                              <button
-                                type="button"
-                                onClick={() => handleToggleItemDone(order.orderId, item.orderItemId)}
-                                className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95 shrink-0 ${
-                                  isDone
-                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                    : 'bg-white hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 text-slate-700 border border-slate-200'
-                                }`}
-                                title={isDone ? 'Item cooked (click to unmark)' : 'Click to mark as done'}
-                              >
-                                {isDone ? (
-                                  <>
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-white" />
-                                    <span>Done</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Check className="w-3.5 h-3.5 text-slate-400" />
-                                    <span>Mark Done</span>
-                                  </>
-                                )}
-                              </button>
+                              <div className="dispatcher-category-items">
+                                {sortedItems.map((item, idx) => {
+                                  const isDone = item.status === 'DONE'
+
+                                  // If multiple items share the same name in this order, distinguish with (#1, #2...)
+                                  const matchingItems = activeItems.filter((i) => i.name === item.name)
+                                  let itemLabel = item.name
+                                  if (matchingItems.length > 1) {
+                                    const unitIndex = matchingItems.findIndex((i) => i.orderItemId === item.orderItemId) + 1
+                                    itemLabel = `${item.name} (#${unitIndex})`
+                                  }
+
+                                  const zebraClass = isDone
+                                    ? 'item-row-done bg-emerald-50/60 border-emerald-200'
+                                    : idx % 2 === 0
+                                      ? 'item-row-even bg-white border-slate-200/90'
+                                      : 'item-row-odd bg-slate-100/75 border-slate-200'
+
+                                  return (
+                                    <div
+                                      key={item.orderItemId}
+                                      className={`dispatcher-order-item transition-all duration-200 ${zebraClass}`}
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                          <span
+                                            className={`dispatcher-item-name truncate ${
+                                              isDone ? 'line-through text-slate-400 font-normal' : 'text-[#14274E] font-bold'
+                                            }`}
+                                          >
+                                            {itemLabel}
+                                          </span>
+                                          {item.isFlagged && (
+                                            <span className="dispatcher-flag-badge shrink-0">
+                                              <Flag className="h-2.5 w-2.5" />
+                                              Flagged
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleItemDone(order.orderId, item.orderItemId)}
+                                          className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95 shrink-0 ${
+                                            isDone
+                                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                              : 'bg-white hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 text-slate-700 border border-slate-200'
+                                          }`}
+                                          title={isDone ? 'Item cooked (click to unmark)' : 'Click to mark as done'}
+                                        >
+                                          {isDone ? (
+                                            <>
+                                              <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                                              <span>Done</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Check className="w-3.5 h-3.5 text-slate-400" />
+                                              <span>Mark Done</span>
+                                            </>
+                                          )}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        )
-                      })
+                          )
+                        })
+                      })()
                     ) : (
-                      /* ── Requested & Done Stages: Grouped Items View ── */
-                      groupedItems.map((group) => (
-                        <div key={group.itemId} className="dispatcher-order-item">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="dispatcher-item-name flex-1">
-                              {group.name}
-                              {group.isFlagged && (
-                                <span className="dispatcher-flag-badge ml-1.5">
-                                  <Flag className="h-2.5 w-2.5" />
-                                  Flagged
-                                </span>
-                              )}
-                            </span>
+                      /* ── Requested & Done Stages: Categorized Containers with Grouped Items ── */
+                      (() => {
+                        const catGroups = new Map<string, GroupedItem[]>()
+                        groupedItems.forEach((group) => {
+                          const cat = group.categoryName || 'Other'
+                          if (!catGroups.has(cat)) catGroups.set(cat, [])
+                          catGroups.get(cat)!.push(group)
+                        })
 
-                            {activeTableStage === 'preparing' ? (
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleItemFlag(order.orderId, group.itemId, !group.isFlagged)}
-                                  className={[
-                                    'px-2 py-0.5 text-[10px] font-extrabold rounded-md flex items-center gap-1 transition-all cursor-pointer border',
-                                    group.isFlagged
-                                      ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 shadow-2xs'
-                                      : 'bg-white text-slate-400 border-slate-200 hover:border-amber-300 hover:text-amber-600',
-                                  ].join(' ')}
-                                  title={group.isFlagged ? 'Unflag item' : 'Flag item as unavailable / out of stock'}
-                                >
-                                  <Flag className="w-2.5 h-2.5" fill={group.isFlagged ? 'currentColor' : 'none'} />
-                                  <span>{group.isFlagged ? 'Flagged' : 'Flag'}</span>
-                                </button>
-                                <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
+                        return Array.from(catGroups.entries()).map(([category, items]) => {
+                          const totalQty = items.reduce((sum, g) => sum + g.totalQuantity, 0)
+                          return (
+                            <div key={category} className="dispatcher-category-container">
+                              <div className="dispatcher-category-header">
+                                <span className="dispatcher-category-badge">{category}</span>
+                                <span className="dispatcher-category-count">
+                                  {totalQty} item{totalQty !== 1 ? 's' : ''}
+                                </span>
                               </div>
-                            ) : (
-                              <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
-                            )}
-                          </div>
-                        </div>
-                      ))
+
+                              <div className="dispatcher-category-items">
+                                {items.map((group, idx) => {
+                                  const zebraClass =
+                                    idx % 2 === 0
+                                      ? 'item-row-even bg-white border-slate-200/90'
+                                      : 'item-row-odd bg-slate-100/75 border-slate-200'
+
+                                  return (
+                                    <div key={group.itemId} className={`dispatcher-order-item ${zebraClass}`}>
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="dispatcher-item-name flex-1">
+                                          {group.name}
+                                          {group.isFlagged && (
+                                            <span className="dispatcher-flag-badge ml-1.5">
+                                              <Flag className="h-2.5 w-2.5" />
+                                              Flagged
+                                            </span>
+                                          )}
+                                        </span>
+
+                                        {activeTableStage === 'preparing' ? (
+                                          <div className="flex items-center gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                handleToggleItemFlag(order.orderId, group.itemId, !group.isFlagged)
+                                              }
+                                              className={[
+                                                'px-2 py-0.5 text-[10px] font-extrabold rounded-md flex items-center gap-1 transition-all cursor-pointer border',
+                                                group.isFlagged
+                                                  ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 shadow-2xs'
+                                                  : 'bg-white text-slate-400 border-slate-200 hover:border-amber-300 hover:text-amber-600',
+                                              ].join(' ')}
+                                              title={
+                                                group.isFlagged
+                                                  ? 'Unflag item'
+                                                  : 'Flag item as unavailable / out of stock'
+                                              }
+                                            >
+                                              <Flag
+                                                className="w-2.5 h-2.5"
+                                                fill={group.isFlagged ? 'currentColor' : 'none'}
+                                              />
+                                              <span>{group.isFlagged ? 'Flagged' : 'Flag'}</span>
+                                            </button>
+                                            <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
+                                          </div>
+                                        ) : (
+                                          <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )
+                        })
+                      })()
                     )}
                   </div>
 

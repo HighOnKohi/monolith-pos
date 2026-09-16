@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import type { CashierShift, ShiftSummaryMetrics } from '@/types/cashierShift'
+import type { CashierShift, ShiftSummaryMetrics, CashierShiftSummary } from '@/types/cashierShift'
 import type { StaffCodeItem } from '@/types/account'
 import {
   getActiveCashierShift,
   startCashierShift as apiStartShift,
   endCashierShift as apiEndShift,
   calculateShiftMetrics,
+  calculateShiftSummary,
   validateCashierStaff,
 } from '@/services/cashierShiftService'
 
@@ -17,7 +18,10 @@ export interface CashierSessionContextValue {
   error: string | null
   startShift: (staffId: number) => Promise<CashierShift>
   endShift: (totals?: { totalEarning?: number; totalTablesHandled?: number }) => Promise<CashierShift | null>
+  finalizeShift: (totals?: { totalEarning?: number; totalTablesHandled?: number }) => Promise<CashierShift | null>
+  clearSession: () => void
   getShiftMetrics: () => Promise<ShiftSummaryMetrics | null>
+  getShiftSummary: () => Promise<CashierShiftSummary | null>
   refreshShift: () => Promise<void>
   clearError: () => void
 }
@@ -99,16 +103,15 @@ export function CashierSessionProvider({ children }: { children: React.ReactNode
     }
   }, [])
 
-  // End shift
-  const endShift = useCallback(
+  // Finalize shift in DB without immediately unmounting the cashier UI
+  const finalizeShift = useCallback(
     async (totals?: { totalEarning?: number; totalTablesHandled?: number }): Promise<CashierShift | null> => {
       if (!shift) return null
       setLoading(true)
       setError(null)
       try {
         const updated = await apiEndShift(shift.shiftId, totals)
-        setShift(null)
-        setStaff(null)
+        setShift(updated)
         return updated
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to end cashier shift.'
@@ -121,21 +124,46 @@ export function CashierSessionProvider({ children }: { children: React.ReactNode
     [shift],
   )
 
+  // Clear cashier session to transition back to CashierStaffGate
+  const clearSession = useCallback(() => {
+    setShift(null)
+    setStaff(null)
+  }, [])
+
+  // End shift (atomic finalize + clear session)
+  const endShift = useCallback(
+    async (totals?: { totalEarning?: number; totalTablesHandled?: number }): Promise<CashierShift | null> => {
+      const res = await finalizeShift(totals)
+      clearSession()
+      return res
+    },
+    [finalizeShift, clearSession],
+  )
+
   // Compute live metrics for the end shift modal
   const getShiftMetrics = useCallback(async (): Promise<ShiftSummaryMetrics | null> => {
     if (!shift?.startedAt) return null
     return calculateShiftMetrics(shift.startedAt)
   }, [shift?.startedAt])
 
+  // Compute rich End of Shift Summary
+  const getShiftSummary = useCallback(async (): Promise<CashierShiftSummary | null> => {
+    if (!shift) return null
+    return calculateShiftSummary(shift)
+  }, [shift])
+
   const value: CashierSessionContextValue = {
     shift,
     staff,
-    isAuthenticated: Boolean(shift && shift.status === 'ACTIVE'),
+    isAuthenticated: Boolean(shift),
     loading,
     error,
     startShift,
     endShift,
+    finalizeShift,
+    clearSession,
     getShiftMetrics,
+    getShiftSummary,
     refreshShift: restoreActiveShift,
     clearError,
   }

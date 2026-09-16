@@ -34,6 +34,7 @@ interface TableManagerSidebarProps {
   selectedTable: MergedTableNode | null
   allTables: MergedTableNode[]
   remainingVenueCapacity?: number
+  maxVenueCapacity?: number
   onSelectTableNum: (tableNum: number) => void
   selectedForPrintTableNums?: Set<number>
   onTogglePrintSelectTable?: (tableNum: number) => void
@@ -58,6 +59,7 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   selectedTable,
   allTables = [],
   remainingVenueCapacity = 50,
+  maxVenueCapacity = 50,
   onSelectTableNum,
   selectedForPrintTableNums = new Set(),
   onTogglePrintSelectTable,
@@ -641,7 +643,7 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
                         )
                       }
                       className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-40 flex items-center justify-center font-black text-slate-700 cursor-pointer text-base active:scale-95 transition-all shadow-2xs"
-                      title={remainingVenueCapacity <= 0 ? 'Venue maximum capacity (50 seats) reached' : 'Increase seats'}
+                      title={remainingVenueCapacity <= 0 ? `Maximum venue capacity (${maxVenueCapacity} seats) reached` : 'Increase seats'}
                     >
                       +
                     </button>

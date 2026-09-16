@@ -337,8 +337,21 @@ export async function endServiceShift(
 ): Promise<ServiceShift> {
   const activeShift = await getActiveServiceShift(shiftId)
   const now = new Date().toISOString()
-  const finalOrders = totals?.totalOrdersPunched ?? activeShift?.totalOrdersPunched ?? 0
-  const finalTables = totals?.totalTablesServed ?? activeShift?.totalTablesServed ?? 0
+  let finalOrders = totals?.totalOrdersPunched ?? activeShift?.totalOrdersPunched ?? 0
+  let finalTables = totals?.totalTablesServed ?? activeShift?.totalTablesServed ?? 0
+
+  // If passed totals are 0, dynamically calculate from orders/logs before concluding
+  if ((finalOrders === 0 || finalTables === 0) && activeShift?.startedAt) {
+    try {
+      const liveMetrics = await calculateServiceShiftMetrics(activeShift.startedAt, activeShift.staffId)
+      if (liveMetrics.ordersPunched > 0) {
+        finalOrders = liveMetrics.ordersPunched
+        finalTables = liveMetrics.tablesServed
+      }
+    } catch (err) {
+      console.warn('[serviceShiftService] Error resolving live shift metrics on end:', err)
+    }
+  }
 
   const updatedShift: ServiceShift = {
     shiftId,
@@ -407,49 +420,135 @@ export async function endServiceShift(
 
 // ─── Shift Summary Calculator ────────────────────────────────────────────────
 
-export async function calculateServiceShiftMetrics(startedAt: string): Promise<ServiceShiftSummaryMetrics> {
+export async function calculateServiceShiftMetrics(
+  startedAt: string,
+  staffId?: number,
+): Promise<ServiceShiftSummaryMetrics> {
   const startTime = new Date(startedAt).getTime()
   const nowTime = Date.now()
   const durationMinutes = Math.max(1, Math.round((nowTime - startTime) / 60000))
 
-  let ordersPunched = 0
-  let tablesServed = 0
+  const orderIds = new Set<number>()
+  const tableIds = new Set<number>()
 
+  // 1. Query active Restaurant_Orders created during this shift
   try {
-    const { data: orders } = await supabase
-      .schema('orders')
+    const { data: activeOrders, error: activeErr } = await supabase
       .from('Restaurant_Orders')
-      .select('ORDER_ID, TABLE_ID, CREATED_AT')
+      .select('ORDER_ID, TABLE_ID, TIME, STAFF_ID')
+      .gte('TIME', startedAt)
+
+    if (!activeErr && activeOrders) {
+      for (const o of activeOrders) {
+        if (staffId && o.STAFF_ID != null && Number(o.STAFF_ID) !== staffId) {
+          continue
+        }
+        if (o.ORDER_ID) {
+          orderIds.add(Number(o.ORDER_ID))
+          if (o.TABLE_ID) tableIds.add(Number(o.TABLE_ID))
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[serviceShiftService] Restaurant_Orders metrics lookup error:', err)
+  }
+
+  // 2. Query Completed_Orders (orders settled/completed during this shift)
+  try {
+    const { data: compOrders, error: compErr } = await supabase
+      .from('Completed_Orders')
+      .select('ORIGINAL_ORDER_ID, TABLE_ID, TIME, STAFF_ID, COMPLETED_AT')
+      .or(`TIME.gte.${startedAt},COMPLETED_AT.gte.${startedAt}`)
+
+    if (!compErr && compOrders) {
+      for (const c of compOrders) {
+        if (staffId && c.STAFF_ID != null && Number(c.STAFF_ID) !== staffId) {
+          continue
+        }
+        const oId = Number(c.ORIGINAL_ORDER_ID)
+        if (oId) {
+          orderIds.add(oId)
+          if (c.TABLE_ID) tableIds.add(Number(c.TABLE_ID))
+        }
+      }
+    } else {
+      // Fallback to system_history schema
+      const { data: sysOrders } = await supabase
+        .schema('system_history')
+        .from('Completed_Orders')
+        .select('ORIGINAL_ORDER_ID, TABLE_ID, TIME, STAFF_ID, COMPLETED_AT')
+        .or(`TIME.gte.${startedAt},COMPLETED_AT.gte.${startedAt}`)
+
+      if (sysOrders) {
+        for (const c of sysOrders) {
+          if (staffId && c.STAFF_ID != null && Number(c.STAFF_ID) !== staffId) {
+            continue
+          }
+          const oId = Number(c.ORIGINAL_ORDER_ID)
+          if (oId) {
+            orderIds.add(oId)
+            if (c.TABLE_ID) tableIds.add(Number(c.TABLE_ID))
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[serviceShiftService] Completed_Orders metrics lookup error:', err)
+  }
+
+  // 3. Query operational Audit_Logs for ORDER_CREATED actions
+  try {
+    const { data: auditRows } = await supabase
+      .schema('staff')
+      .from('Audit_Logs')
+      .select('*')
+      .eq('ACTION', 'ORDER_CREATED')
       .gte('CREATED_AT', startedAt)
 
-    if (orders && orders.length > 0) {
-      ordersPunched = orders.length
-      const uniqueTables = new Set<number>()
-      orders.forEach((o) => {
-        if (o.TABLE_ID) uniqueTables.add(Number(o.TABLE_ID))
-      })
-      tablesServed = uniqueTables.size
+    if (auditRows) {
+      for (const row of auditRows) {
+        if (staffId && row.STAFF_ID != null && Number(row.STAFF_ID) !== staffId) {
+          continue
+        }
+        const meta = typeof row.METADATA === 'string' ? JSON.parse(row.METADATA) : (row.METADATA ?? {})
+        const oId = Number(meta?.order_id ?? row.ENTITY_ID)
+        if (oId) orderIds.add(oId)
+        const tId = Number(meta?.table_id)
+        if (tId) tableIds.add(tId)
+      }
     }
   } catch {
+    // Non-blocking
+  }
+
+  // 4. Fallback localStorage audit logs for instant reflection / offline mode
+  try {
     const fallbackAudit = localStorage.getItem('monolith_cashier_audit_logs_fallback') || '[]'
-    try {
-      const logs = JSON.parse(fallbackAudit) as Array<{ action: string; createdAt: string; metadata?: Record<string, unknown> }>
-      const shiftLogs = logs.filter((l) => new Date(l.createdAt).getTime() >= startTime)
-      const orderLogs = shiftLogs.filter((l) => l.action === 'ORDER_CREATED')
-      ordersPunched = orderLogs.length
-      const uniqueTables = new Set<number>()
-      orderLogs.forEach((l) => {
-        if (l.metadata?.['table_id']) uniqueTables.add(Number(l.metadata['table_id']))
-      })
-      tablesServed = uniqueTables.size
-    } catch {
-      // ignore
+    const logs = JSON.parse(fallbackAudit) as Array<{
+      action: string
+      createdAt: string
+      staffId?: number
+      metadata?: Record<string, unknown>
+      entityId?: string
+    }>
+    for (const l of logs) {
+      if (l.action === 'ORDER_CREATED' && new Date(l.createdAt).getTime() >= startTime) {
+        if (staffId && l.staffId != null && Number(l.staffId) !== staffId) {
+          continue
+        }
+        const oId = Number(l.metadata?.['order_id'] ?? l.entityId)
+        if (oId) orderIds.add(oId)
+        const tId = Number(l.metadata?.['table_id'])
+        if (tId) tableIds.add(tId)
+      }
     }
+  } catch {
+    // Ignore
   }
 
   return {
-    ordersPunched,
-    tablesServed,
+    ordersPunched: orderIds.size,
+    tablesServed: tableIds.size,
     durationMinutes,
     startedAt,
   }

@@ -4,6 +4,9 @@ import type {
   CashierShift,
   CashierStaffValidationResult,
   ShiftSummaryMetrics,
+  CashierShiftSummary,
+  ShiftPaymentBreakdown,
+  ShiftTransactionRow,
 } from '@/types/cashierShift'
 import { fetchStaffCodes } from './staffCodeService'
 import { logCashierAction } from './cashierAuditService'
@@ -471,6 +474,237 @@ export async function calculateShiftMetrics(startedAt: string): Promise<ShiftSum
     ordersHandled,
     durationMinutes,
     startedAt,
+  }
+}
+
+/**
+ * Computes a rich End of Shift Summary for a specific Cashier Shift.
+ * Aggregates gross revenue, completed orders, customers served, payment method breakdown,
+ * discounts/voids, and drill-down transaction rows.
+ */
+export async function calculateShiftSummary(shift: CashierShift): Promise<CashierShiftSummary> {
+  const startTime = shift.startedAt
+  const endTime = shift.endedAt || new Date().toISOString()
+  const durationMinutes = Math.max(1, Math.round((new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000))
+
+  // 1. Fetch completed orders from Completed_Orders (system_history or public schema)
+  let completedRows: Array<Record<string, unknown>> = []
+  try {
+    let dbOrders: Array<Record<string, unknown>> | null = null
+    try {
+      const res = await supabase
+        .schema('system_history')
+        .from('Completed_Orders')
+        .select('*')
+        .or(`SHIFT_ID.eq.${shift.shiftId},COMPLETED_AT.gte.${startTime}`)
+        .order('COMPLETED_AT', { ascending: false })
+      if (!res.error && res.data) {
+        dbOrders = res.data
+      } else {
+        throw res.error
+      }
+    } catch {
+      const res = await supabase
+        .from('Completed_Orders')
+        .select('*')
+        .or(`SHIFT_ID.eq.${shift.shiftId},COMPLETED_AT.gte.${startTime}`)
+        .order('COMPLETED_AT', { ascending: false })
+      dbOrders = res.data
+    }
+
+    if (dbOrders && dbOrders.length > 0) {
+      completedRows = dbOrders.filter((o) => {
+        if (o.SHIFT_ID && Number(o.SHIFT_ID) === shift.shiftId) return true
+        if (o.STAFF_ID && Number(o.STAFF_ID) === shift.staffId) {
+          const cTime = String(o.COMPLETED_AT || o.TIME || '')
+          return cTime >= startTime && cTime <= endTime
+        }
+        return false
+      })
+    }
+  } catch (err) {
+    console.warn('[cashierShiftService] Failed to query Completed_Orders:', err)
+  }
+
+  // 2. Fetch audit logs for the shift (for voids, cancellations, discounts)
+  let auditRows: Array<Record<string, unknown>> = []
+  try {
+    let dbLogs: Array<Record<string, unknown>> | null = null
+    try {
+      const res = await supabase
+        .schema('staff')
+        .from('Audit_Logs')
+        .select('*')
+        .gte('CREATED_AT', startTime)
+        .lte('CREATED_AT', endTime)
+      if (!res.error && res.data) dbLogs = res.data
+    } catch {
+      try {
+        const res2 = await supabase
+          .from('Audit_Logs')
+          .select('*')
+          .gte('CREATED_AT', startTime)
+          .lte('CREATED_AT', endTime)
+        if (!res2.error && res2.data) dbLogs = res2.data
+      } catch {
+        // ignore
+      }
+    }
+    if (dbLogs) {
+      auditRows = dbLogs.filter((l) => {
+        const sId = Number(l['STAFF_ID'] || l['staffId'])
+        const shId = Number(l['SHIFT_ID'] || l['shiftId'])
+        return shId === shift.shiftId || sId === shift.staffId
+      })
+    }
+  } catch {
+    // ignore
+  }
+
+  // Fallback audit logs from localStorage
+  try {
+    const raw = localStorage.getItem('monolith_cashier_audit_logs_fallback')
+    if (raw) {
+      const localLogs = JSON.parse(raw) as Array<Record<string, unknown>>
+      const matchedLocal = localLogs.filter((l) => {
+        const t = String(l.createdAt || '')
+        const shId = Number(l.shiftId)
+        const sId = Number(l.staffId)
+        const inTime = t >= startTime && t <= endTime
+        return inTime && (shId === shift.shiftId || sId === shift.staffId)
+      })
+      auditRows = [...auditRows, ...matchedLocal]
+    }
+  } catch {
+    // ignore
+  }
+
+  let grossRevenue = 0
+  let subtotalRevenue = 0
+  let totalDiscounts = 0
+  let customersServed = 0
+  const uniqueTables = new Set<string>()
+  const paymentMethodMap: Record<string, { count: number; total: number }> = {}
+  const transactionsList: ShiftTransactionRow[] = []
+
+  for (const row of completedRows) {
+    const total = Number(row['TOTAL_BILL'] || row['TOTAL_AMOUNT'] || 0)
+    const subtotal = Number(row['SUBTOTAL_BILL'] || total)
+    const discount = Number(row['DISCOUNT_AMOUNT'] || Math.max(subtotal - total, 0))
+    const guests = Math.max(Number(row['GUEST_COUNT'] || 1), 1)
+    const method = String(row['PAYMENT_METHOD'] || 'CASH').toUpperCase()
+    const orderId = Number(row['ORIGINAL_ORDER_ID'] || row['ORDER_ID'] || 0)
+    const tableNum = String(row['TABLE_NUM'] || row['TABLE_ID'] || '0')
+    const time = String(row['COMPLETED_AT'] || row['TIME'] || startTime)
+
+    grossRevenue += total
+    subtotalRevenue += subtotal
+    totalDiscounts += discount
+    customersServed += guests
+    uniqueTables.add(tableNum)
+
+    if (!paymentMethodMap[method]) {
+      paymentMethodMap[method] = { count: 0, total: 0 }
+    }
+    paymentMethodMap[method].count += 1
+    paymentMethodMap[method].total += total
+
+    transactionsList.push({
+      orderId,
+      time,
+      tableLabel: `Table ${tableNum}`,
+      staffId: shift.staffId,
+      cashierName: shift.staffName || `Staff #${shift.staffId}`,
+      shiftId: shift.shiftId,
+      paymentMethod: method,
+      amount: total,
+      discount,
+      status: 'COMPLETED',
+    })
+  }
+
+  // If completedRows was empty but we have payment completed audit logs (offline / fallback mode):
+  if (transactionsList.length === 0) {
+    const paymentLogs = auditRows.filter((l) => String(l['ACTION'] || l['action']) === 'PAYMENT_COMPLETED')
+    for (const p of paymentLogs) {
+      const meta = (p['METADATA'] || p['metadata'] || {}) as Record<string, unknown>
+      const total = Number(meta['total'] || meta['amount'] || 0)
+      const subtotal = Number(meta['subtotal'] || total)
+      const discount = Number(meta['custom_discount'] || 0)
+      const method = String(meta['payment_method'] || 'CASH').toUpperCase()
+      const orderIds = (meta['order_ids'] as number[] | undefined) || []
+      const tableNums = (meta['table_nums'] as number[] | undefined) || []
+      const time = String(p['CREATED_AT'] || p['createdAt'] || startTime)
+
+      grossRevenue += total
+      subtotalRevenue += subtotal
+      totalDiscounts += discount
+      customersServed += Math.max(orderIds.length, 1)
+      tableNums.forEach((t) => uniqueTables.add(String(t)))
+
+      if (!paymentMethodMap[method]) {
+        paymentMethodMap[method] = { count: 0, total: 0 }
+      }
+      paymentMethodMap[method].count += Math.max(orderIds.length, 1)
+      paymentMethodMap[method].total += total
+
+      transactionsList.push({
+        orderId: orderIds[0] || Number(p['ENTITY_ID'] || p['entityId'] || 0),
+        time,
+        tableLabel: `Table ${tableNums.join(' + ') || '1'}`,
+        staffId: shift.staffId,
+        cashierName: shift.staffName || `Staff #${shift.staffId}`,
+        shiftId: shift.shiftId,
+        paymentMethod: method,
+        amount: total,
+        discount,
+        status: 'COMPLETED',
+      })
+    }
+  }
+
+  // Count voids and cancellations from audit rows
+  let voidsCount = 0
+  for (const log of auditRows) {
+    const act = String(log['ACTION'] || log['action'] || '')
+    if (act === 'ORDER_CANCELLED' || act === 'ORDER_DELETED' || act === 'PAYMENT_VOIDED') {
+      voidsCount += 1
+    }
+  }
+
+  const paymentBreakdown: ShiftPaymentBreakdown[] = Object.entries(paymentMethodMap).map(([method, data]) => ({
+    method,
+    count: data.count,
+    total: data.total,
+    percentage: grossRevenue > 0 ? (data.total / grossRevenue) * 100 : 0,
+  }))
+  paymentBreakdown.sort((a, b) => b.total - a.total)
+
+  transactionsList.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+
+  const completedOrdersCount = transactionsList.length
+  const averageOrderValue = completedOrdersCount > 0 ? grossRevenue / completedOrdersCount : 0
+  const averageSpendPerCustomer = customersServed > 0 ? grossRevenue / customersServed : 0
+
+  return {
+    shift,
+    grossRevenue,
+    subtotalRevenue,
+    totalDiscounts,
+    completedOrdersCount,
+    cancelledOrdersCount: voidsCount,
+    customersServed,
+    tablesHandled: uniqueTables.size,
+    averageOrderValue,
+    averageSpendPerCustomer,
+    durationMinutes,
+    paymentBreakdown,
+    adjustments: {
+      discounts: totalDiscounts,
+      refunds: 0,
+      voids: voidsCount,
+    },
+    transactionsList,
   }
 }
 

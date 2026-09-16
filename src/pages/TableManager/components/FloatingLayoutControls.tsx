@@ -57,7 +57,7 @@ export const FloatingLayoutControls: React.FC<FloatingLayoutControlsProps> = mem
             <TableShapeIcon tableType={selectedType} size={15} />
           </div>
           <span className="whitespace-nowrap font-black">
-            {isVenueFull ? 'Venue Full (50/50)' : 'Add Table'}
+            {isVenueFull ? `Venue Full (${totalCapacity}/${maxVenueCapacity})` : 'Add Table'}
           </span>
         </button>
 

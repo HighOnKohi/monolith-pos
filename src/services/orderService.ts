@@ -3,6 +3,7 @@ import type { CartItem, DiningType } from '@/types/cart'
 import type { Order, OrderItem, OrderStatus } from '@/types/order'
 import { logOrderEvent } from '@/services/orderLogsService'
 import { broadcastOrderUpdate } from '@/services/dispatcherService'
+import { logCashierAction } from '@/services/cashierAuditService'
 
 const DINING_TYPE_MAP: Record<DiningType, string> = {
   'dine-in': 'DINE-IN',
@@ -199,6 +200,36 @@ export async function createOrder(
     reason: serverNote || 'Order placed into system',
   })
 
+  // Log staff operational audit action (ORDER_CREATED)
+  const totalItemQty = items.reduce((sum, ci) => sum + ci.quantity, 0)
+  void logCashierAction({
+    action: 'ORDER_CREATED',
+    businessDayId: activeDayId,
+    shiftId: activeShiftId,
+    staffId: activeStaffId,
+    shiftType: activeShiftId ? 'CASHIER' : (localStorage.getItem('monolith_service_shift_id') ? 'SERVICE' : undefined),
+    entityType: 'ORDER',
+    entityId: String(orderId),
+    description: `Created Order #${orderId} for Table ${tableId} (${totalItemQty} item${totalItemQty !== 1 ? 's' : ''}, ₱${total.toFixed(2)})`,
+    metadata: {
+      order_id: orderId,
+      table_id: tableId,
+      dining_type: diningType,
+      total_bill: total,
+      items_count: totalItemQty,
+      requested_from: validRequestedFrom,
+      server_note: serverNote || null,
+      items: items.map((ci) => ({
+        id: ci.item.id,
+        name: ci.item.name,
+        qty: ci.quantity,
+        price: ci.item.price,
+      })),
+    },
+  }).catch((err) => console.warn('[orderService] Failed to log ORDER_CREATED action:', err))
+
+  broadcastOrderUpdate({ type: 'all' })
+
   return mapOrder(orderData as Record<string, unknown>)
 }
 
@@ -291,13 +322,13 @@ export async function fetchRecentCompletedOrders(
       return now - completedTime <= 30 * 1000
     })
     .map((row) => {
-    const rawItems = Array.isArray(row['ORDER_ITEMS']) ? (row['ORDER_ITEMS'] as any[]) : []
-    const items: OrderItem[] = rawItems.map((it: any, idx: number) => ({
+    const rawItems = Array.isArray(row['ORDER_ITEMS']) ? (row['ORDER_ITEMS'] as Record<string, unknown>[]) : []
+    const items: OrderItem[] = rawItems.map((it: Record<string, unknown>, idx: number) => ({
       orderItemId: idx + 1,
       orderId: Number(row['ORIGINAL_ORDER_ID'] || row['ORDER_ID']),
-      itemId: String(it.item_id || idx + 1),
-      name: it.item_name || `Item #${it.item_id}`,
-      price: Number(it.price || 0),
+      itemId: String(it['item_id'] || idx + 1),
+      name: (it['item_name'] as string | undefined) || `Item #${it['item_id']}`,
+      price: Number(it['price'] || 0),
       status: 'DONE',
     }))
 
@@ -481,9 +512,49 @@ export async function createOrderFromExisting(order: Order): Promise<void> {
     actor: 'Cashier Station',
     reason: 'Re-ordered items from previous order',
   })
+
+  const totalItemQty = order.items?.length ?? 0
+  void logCashierAction({
+    action: 'ORDER_CREATED',
+    entityType: 'ORDER',
+    entityId: String(orderId),
+    description: `Re-ordered Order #${orderId} from previous order #${order.orderId} for Table ${order.tableId} (₱${order.totalBill.toFixed(2)})`,
+    metadata: {
+      order_id: orderId,
+      previous_order_id: order.orderId,
+      table_id: order.tableId,
+      total_bill: order.totalBill,
+      items_count: totalItemQty,
+    },
+  }).catch((err) => console.warn('[orderService] Failed to log ORDER_CREATED action:', err))
+
+  broadcastOrderUpdate({ type: 'all' })
 }
 
-export async function deleteOrder(orderId: number): Promise<void> {
+export async function deleteOrder(
+  orderId: number,
+  attribution?: { staffId?: number | null; shiftId?: number | null; reason?: string },
+): Promise<void> {
+  // 1. Snapshot order details before deletion for meaningful audit trail
+  let orderSnapshot: { tableId?: number; totalBill?: number; orderStatus?: string } | null = null
+  try {
+    const { data: ordRow } = await supabase
+      .from('Restaurant_Orders')
+      .select('TABLE_ID, TOTAL_BILL, ORDER_STATUS')
+      .eq('ORDER_ID', orderId)
+      .maybeSingle()
+    if (ordRow) {
+      orderSnapshot = {
+        tableId: Number(ordRow.TABLE_ID),
+        totalBill: Number(ordRow.TOTAL_BILL ?? 0),
+        orderStatus: String(ordRow.ORDER_STATUS ?? ''),
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  // 2. Delete child Order_Items first
   const { error: itemsError } = await supabase
     .from('Order_Items')
     .delete()
@@ -491,12 +562,133 @@ export async function deleteOrder(orderId: number): Promise<void> {
 
   if (itemsError) throw itemsError
 
+  // 3. Delete Restaurant_Orders record
   const { error: orderError } = await supabase
     .from('Restaurant_Orders')
     .delete()
     .eq('ORDER_ID', orderId)
 
   if (orderError) throw orderError
+
+  const reasonText = attribution?.reason || 'Order deleted from system'
+  const tablePart = orderSnapshot?.tableId ? ` for Table ${orderSnapshot.tableId}` : ''
+  const billPart = orderSnapshot?.totalBill ? ` (₱${orderSnapshot.totalBill.toFixed(2)})` : ''
+
+  // 4. Log lifecycle event to Order_Events
+  void logOrderEvent(orderId, {
+    eventType: 'ORDER_DELETED',
+    newStatus: 'CANCELLED',
+    actor: 'Staff',
+    reason: reasonText,
+  }).catch(() => {})
+
+  // 5. Log staff operational audit action (ORDER_DELETED)
+  void logCashierAction({
+    action: 'ORDER_DELETED',
+    staffId: attribution?.staffId,
+    shiftId: attribution?.shiftId,
+    entityType: 'ORDER',
+    entityId: String(orderId),
+    description: `Deleted order #${orderId}${tablePart}${billPart}: ${reasonText}`,
+    metadata: {
+      order_id: orderId,
+      table_id: orderSnapshot?.tableId,
+      total_bill: orderSnapshot?.totalBill,
+      order_status: orderSnapshot?.orderStatus,
+      reason: reasonText,
+    },
+  }).catch((err) => console.warn('[orderService] Failed to log ORDER_DELETED action:', err))
+
+  broadcastOrderUpdate({ type: 'all' })
+}
+
+/**
+ * Explicitly cancels an order and updates its status and child items to CANCELLED.
+ * Logs ORDER_CANCELLED to Order_Events and the Staff Operational Audit.
+ */
+export async function cancelOrder(
+  orderId: number,
+  reason = 'Order was cancelled by restaurant staff',
+  attribution?: {
+    staffId?: number | null
+    shiftId?: number | null
+    businessDayId?: number | null
+    shiftType?: 'CASHIER' | 'SERVICE'
+  },
+): Promise<void> {
+  // Snapshot order before cancellation
+  let tableId: number | null = null
+  let totalBill: number | null = null
+  try {
+    const { data: ordRow } = await supabase
+      .from('Restaurant_Orders')
+      .select('TABLE_ID, TOTAL_BILL')
+      .eq('ORDER_ID', orderId)
+      .maybeSingle()
+    if (ordRow) {
+      tableId = Number(ordRow.TABLE_ID)
+      totalBill = Number(ordRow.TOTAL_BILL ?? 0)
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  // 1. Update order status to CANCELLED in database
+  const { error: orderError } = await supabase
+    .from('Restaurant_Orders')
+    .update({
+      ORDER_STATUS: 'CANCELLED',
+      SERVER_NOTE: reason,
+    })
+    .eq('ORDER_ID', orderId)
+
+  if (orderError) throw orderError
+
+  // 2. Mark non-completed child items as CANCELLED
+  try {
+    await supabase
+      .from('Order_Items')
+      .update({
+        ORDER_ITEM_STATUS: 'CANCELLED',
+        REJECTION_REASON: [reason],
+      })
+      .eq('ORDER_ID', orderId)
+      .neq('ORDER_ITEM_STATUS', 'DONE')
+      .neq('ORDER_ITEM_STATUS', 'COMPLETED')
+  } catch (itemsErr) {
+    console.warn('[orderService] Warning updating child items to CANCELLED:', itemsErr)
+  }
+
+  // 3. Log lifecycle event to Order_Events
+  void logOrderEvent(orderId, {
+    eventType: 'ORDER_CANCELLED',
+    previousStatus: 'REQUESTED',
+    newStatus: 'CANCELLED',
+    actor: attribution?.shiftType === 'SERVICE' ? 'Service Staff' : 'Cashier / Staff',
+    reason,
+  }).catch(() => {})
+
+  // 4. Log staff operational audit action (ORDER_CANCELLED)
+  const tablePart = tableId ? ` for Table ${tableId}` : ''
+  const billPart = totalBill != null ? ` (₱${totalBill.toFixed(2)})` : ''
+  void logCashierAction({
+    action: 'ORDER_CANCELLED',
+    businessDayId: attribution?.businessDayId,
+    shiftId: attribution?.shiftId,
+    staffId: attribution?.staffId,
+    shiftType: attribution?.shiftType,
+    entityType: 'ORDER',
+    entityId: String(orderId),
+    description: `Cancelled Order #${orderId}${tablePart}${billPart}: ${reason}`,
+    metadata: {
+      order_id: orderId,
+      table_id: tableId,
+      total_bill: totalBill,
+      reason,
+    },
+  }).catch((err) => console.warn('[orderService] Failed to log ORDER_CANCELLED action:', err))
+
+  broadcastOrderUpdate({ type: 'all' })
 }
 
 export interface VoidOrderResult {
@@ -515,6 +707,7 @@ export async function voidOrderItems(
   orderItemIds: number[],
   tableId: number,
   memberTableIds?: number[],
+  attribution?: { staffId?: number | null; shiftId?: number | null; reason?: string },
 ): Promise<VoidOrderResult> {
   if (orderItemIds.length === 0) {
     return { orderDeleted: false, tableReset: false, voidedCount: 0 }
@@ -539,8 +732,8 @@ export async function voidOrderItems(
   let tableReset = false
 
   if (remainingItems.length === 0) {
-    // Voiding all active items -> delete the order
-    await deleteOrder(orderId)
+    // Voiding all active items -> delete the order (deleteOrder logs ORDER_DELETED)
+    await deleteOrder(orderId, attribution)
     orderDeleted = true
   } else {
     // Delete only the specified items
@@ -605,6 +798,26 @@ export async function voidOrderItems(
     reason: `Admin voided ${orderItemIds.length} item(s)`,
   }).catch(() => {})
 
+  // Log staff operational audit action (ORDER_CANCELLED)
+  void logCashierAction({
+    action: 'ORDER_CANCELLED',
+    staffId: attribution?.staffId,
+    shiftId: attribution?.shiftId,
+    entityType: 'ORDER',
+    entityId: String(orderId),
+    description: orderDeleted
+      ? `Order #${orderId} voided and cancelled for Table ${tableId} (All ${orderItemIds.length} item(s) voided)`
+      : `Voided ${orderItemIds.length} item(s) from Order #${orderId} for Table ${tableId}`,
+    metadata: {
+      order_id: orderId,
+      table_id: tableId,
+      voided_count: orderItemIds.length,
+      order_deleted: orderDeleted,
+      table_reset: tableReset,
+      reason: attribution?.reason || 'Voided by staff',
+    },
+  }).catch((err) => console.warn('[orderService] Failed to log ORDER_CANCELLED action:', err))
+
   return { orderDeleted, tableReset, voidedCount: orderItemIds.length }
 }
 
@@ -613,6 +826,7 @@ export interface SettleOrderAttribution {
   shiftId?: number | null
   staffId?: number | null
   cashierName?: string | null
+  paymentMethod?: string | null
 }
 
 export async function settleTableOrders(
@@ -790,7 +1004,7 @@ export async function settleTableOrders(
       SUBTOTAL_BILL: subtotal,
       TOTAL_BILL: total,
       DISCOUNT_AMOUNT: discount,
-      PAYMENT_METHOD: String(o['PAYMENT_METHOD'] || 'CASH'),
+      PAYMENT_METHOD: String(attribution?.paymentMethod || o['PAYMENT_METHOD'] || 'CASH'),
       TIME: String(o['TIME'] || new Date().toISOString()),
       READY_AT: o['READY_AT'] ? String(o['READY_AT']) : null,
       SERVED_AT: o['SERVED_AT'] ? String(o['SERVED_AT']) : null,
@@ -872,4 +1086,6 @@ export async function settleTableOrders(
   } catch (tableErr) {
     console.warn('[orderService] Table reset warning:', tableErr)
   }
+
+  broadcastOrderUpdate({ type: 'all' })
 }

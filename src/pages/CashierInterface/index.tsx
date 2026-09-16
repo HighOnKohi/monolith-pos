@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CreditCard,
   Receipt,
@@ -21,6 +21,7 @@ import { ReceiptPreviewModal } from '@/components/receipt/ReceiptPreviewModal'
 import type { ReceiptSnapshot } from '@/components/receipt/types'
 import { TableAlertsBanner } from '@/components/alerts/TableAlertsBanner'
 import { CashierShiftHeaderBar } from '@/components/cashier/CashierShiftHeaderBar'
+import { useCashierSession } from '@/hooks/useCashierSession'
 import { logCashierAction } from '@/services/cashierAuditService'
 import {
   resolveTableAssistance,
@@ -70,6 +71,7 @@ interface ItemDiscount {
 }
 
 export default function CashierInterface() {
+  const { shift, staff } = useCashierSession()
   // Tables state
   const [tables, setTables] = useState<TableData[]>([])
   const [summaries, setSummaries] = useState<Map<number, { totalBill: number; activeOrderCount: number }>>(new Map())
@@ -88,6 +90,19 @@ export default function CashierInterface() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
+  // Refs for tracking active state without triggering unnecessary recreations
+  const selectedIdRef = useRef<number | null>(null)
+  const busyRef = useRef<boolean>(false)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId
+  }, [selectedId])
+
+  useEffect(() => {
+    busyRef.current = busy
+  }, [busy])
+
   // Toast feedback state for alerts and assistance
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
   const showToast = useCallback((text: string, type: 'success' | 'info' | 'error' = 'info') => {
@@ -95,7 +110,10 @@ export default function CashierInterface() {
     setTimeout(() => setToastMessage(null), 4000)
   }, [])
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
+    // Avoid background overwrites during active bill-out settlement unless explicitly forced
+    if (!force && busyRef.current) return
+
     try {
       const [nextTables, nextRequests] = await Promise.all([
         fetchAllTables(),
@@ -109,49 +127,83 @@ export default function CashierInterface() {
       setSummaries(nextSummaries)
       setBillRequests(nextRequests)
 
-      setSelectedId((current) => {
-        const valid = current && nextTables.some((table) => table.TABLE_ID === current) ? current : null
+      const currentSelectedId = selectedIdRef.current
+      if (currentSelectedId) {
+        const valid = nextTables.some((table) => table.TABLE_ID === currentSelectedId) ? currentSelectedId : null
         if (valid) {
           const group = resolveTableGroupByList(valid, nextTables)
-          void fetchOrdersByTable(group.anchorTableId, ALL_ACTIVE_ORDER_STATUSES, group.memberTableIds)
-            .then((updated) => setOrders(updated))
-            .catch(() => { })
+          try {
+            const updatedOrders = await fetchOrdersByTable(
+              group.anchorTableId,
+              ALL_ACTIVE_ORDER_STATUSES,
+              group.memberTableIds,
+            )
+            setOrders(updatedOrders)
+          } catch {
+            // Keep existing orders if transient fetch error
+          }
         } else {
+          setSelectedId(null)
+          selectedIdRef.current = null
           setOrders([])
         }
-        return valid
-      })
+      }
     } catch (err) {
       console.error('[CashierInterface] Failed to load data:', err)
       setError('Unable to load cashier data. Please try again.')
     }
   }, [])
 
+  const scheduleLoad = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      void load()
+    }, 150)
+  }, [load])
+
   useEffect(() => {
     void load()
 
     const unsubscribeBus = subscribeToOrderUpdates(() => {
-      void load()
+      scheduleLoad()
     })
 
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') void load()
+      if (document.visibilityState === 'visible') scheduleLoad()
     }
-    const handlePresetChange = () => void load()
+    const handlePresetChange = () => scheduleLoad()
 
     document.addEventListener('visibilitychange', handleVisibility)
     window.addEventListener('focus', handleVisibility)
     window.addEventListener('table-layout-preset-changed', handlePresetChange)
     window.addEventListener('monolith-order-update', handlePresetChange)
 
+    // Supabase Realtime channel for Cashier
+    // Subscribes to orders and tables schemas (with public as secondary fallback)
     const channel = supabase
       .channel('cashier-interface-sync')
-      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Presets' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Info' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Orders' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Order_Items' }, () => void load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Bill_Requests' }, () => void load())
+      // Schema 'orders' (Primary DB location for orders, order items, discounts, and bill requests)
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Restaurant_Orders' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Order_Items' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Bill_Requests' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'orders', table: 'Discounts' }, () => scheduleLoad())
+      // Schema 'public' (Secondary fallback for local/test migrations)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Orders' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Order_Items' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Bill_Requests' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Discounts' }, () => scheduleLoad())
+      // Tables schema for restaurant tables and layout presets
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Presets' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Info' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Tables' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Table_Layout_Presets' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Table_Layout_Info' }, () => scheduleLoad())
+      // Supabase realtime broadcast events
+      .on('broadcast', { event: 'order_update' }, () => scheduleLoad())
+      .on('broadcast', { event: 'order_updated' }, () => scheduleLoad())
       .subscribe()
 
     // Realtime subscription for Assistance broadcasts
@@ -164,17 +216,28 @@ export default function CashierInterface() {
           playNotificationChime()
           showToast(`🔔 Table ${assistReq.tableNum ?? assistReq.tableId} is calling: ${assistReq.title}`, 'info')
         }
-        void load()
+        scheduleLoad()
       })
       .on('broadcast', { event: 'assistance_resolved' }, (payload) => {
         const tId = payload?.payload?.tableId
         const tIds = payload?.payload?.tableIds
         removeAssistanceRequest(tId, tIds)
-        void load()
+        scheduleLoad()
       })
       .subscribe()
 
+    // Background polling fallback (every 10s when tab is active) to guarantee resilience
+    const pollingInterval = setInterval(() => {
+      if (document.visibilityState === 'visible' && !busyRef.current) {
+        void load()
+      }
+    }, 10000)
+
     return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+      clearInterval(pollingInterval)
       unsubscribeBus()
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('focus', handleVisibility)
@@ -183,7 +246,7 @@ export default function CashierInterface() {
       void supabase.removeChannel(channel)
       void supabase.removeChannel(assistanceChannel)
     }
-  }, [load, showToast])
+  }, [load, scheduleLoad, showToast])
 
   // Tables group calculations & hierarchy: Merge Groups first, then Standalone Tables
   const { mergedGroups, standaloneTables, enabledTablesCount } = useMemo(() => {
@@ -403,6 +466,7 @@ export default function CashierInterface() {
   async function selectTable(tableId: number) {
     setError('')
     setSelectedId(tableId)
+    selectedIdRef.current = tableId
     setItemDiscounts(new Map())
     const group = resolveTableGroupByList(tableId, tables)
     try {
@@ -577,13 +641,20 @@ export default function CashierInterface() {
       return next
     })
     setSelectedId(null)
+    selectedIdRef.current = null
 
     try {
-      await settleTableOrders(selectedTableGroup.group.anchorTableId, memberIds)
+      const cashierName = staff?.staffName || shift?.staffName || 'Cashier'
+      await settleTableOrders(selectedTableGroup.group.anchorTableId, memberIds, {
+        shiftId: shift?.shiftId ?? null,
+        staffId: shift?.staffId ?? null,
+        cashierName,
+        paymentMethod: payMethod,
+      })
       if (activeBillRequest) await updateBillRequestStatus(activeBillRequest.requestId, 'PAID')
       await resolveBillOutRequest(selectedTableGroup.group.anchorTableId)
       setReceipt(snapshot)
-      await load()
+      await load(true)
 
       void logCashierAction({
         action: 'PAYMENT_COMPLETED',
@@ -612,6 +683,7 @@ export default function CashierInterface() {
       setOrders(previousOrders)
       setItemDiscounts(new Map())
       setSelectedId(previousSelectedId)
+      selectedIdRef.current = previousSelectedId
       setError(err instanceof Error ? err.message : 'Unable to complete bill-out. Please try again.')
     } finally {
       setBusy(false)

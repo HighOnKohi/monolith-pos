@@ -102,7 +102,7 @@ export async function fetchAllTables(): Promise<TableData[]> {
       .select('*')
       .order('LAYOUT_PRESET_ID', { ascending: true })
 
-    const defaultPreset = (presets ?? []).find((p: any) => p.IS_DEFAULT) ?? (presets ?? [])[0]
+    const defaultPreset = (presets ?? []).find((p: { IS_DEFAULT?: boolean }) => p.IS_DEFAULT) ?? (presets ?? [])[0]
 
     // 2. Fetch live Restaurant_Tables
     const { data: liveData, error: liveError } = await supabase
@@ -137,7 +137,14 @@ export async function fetchAllTables(): Promise<TableData[]> {
       liveByNum.set(t.TABLE_NUM, t)
     }
 
-    const result: TableData[] = layoutTables.map((lt: any) => {
+    const result: TableData[] = layoutTables.map((lt: {
+      TABLE_NUM: number
+      TABLE_TYPE?: number
+      TABLE_CAPACITY?: number
+      MERGE_GROUP_ID?: number | null
+      X_POS?: number
+      Y_POS?: number
+    }) => {
       const tableNum = Number(lt.TABLE_NUM)
       const live = liveByNum.get(tableNum)
       const typeNum = Number(lt.TABLE_TYPE) || 1
@@ -926,12 +933,15 @@ export async function mergeTables(tableIds: number[]): Promise<TableData[]> {
     }
   }
 
-  // 2. Update primary
+  // 2. Update primary (preserve individual table capacity, do not overwrite with total group capacity)
   const hasBillOut = preview.allMembers.some((t) => Boolean(t.BILL_OUT_REQUESTED))
+  const primaryMember = preview.allMembers.find((t) => t.TABLE_ID === primaryId)
+  const primaryCapacity = primaryMember?.GUEST_CAPACITY || 4
+
   const { error: primaryErr } = await supabase
     .schema('tables').from('Restaurant_Tables')
     .update({
-      GUEST_CAPACITY: preview.totalCapacity,
+      GUEST_CAPACITY: primaryCapacity,
       CURRENT_GUEST_COUNT: preview.totalSeatedPax,
       STATUS: preview.totalSeatedPax > 0 || preview.occupiedTables.length > 0 ? 'OCCUPIED' : 'AVAILABLE',
       BILL_OUT_REQUESTED: hasBillOut,
@@ -940,7 +950,7 @@ export async function mergeTables(tableIds: number[]): Promise<TableData[]> {
     .eq('TABLE_ID', primaryId)
   if (primaryErr) throw primaryErr
 
-  // 3. Update secondaries
+  // 3. Update secondaries (preserve individual table capacity)
   if (secondaryIds.length > 0) {
     const { error: secErr } = await supabase
       .schema('tables').from('Restaurant_Tables')
@@ -979,20 +989,7 @@ export async function unmergeTables(primaryTableId: number): Promise<TableData[]
     .in('TABLE_ID', secondaryIds)
   if (releaseErr) throw releaseErr
 
-  // Restore primary capacity if it was combined
-  const secTotalCap = secondaryList.reduce((sum, s) => sum + (s.GUEST_CAPACITY || 0), 0)
-  const { data: primary } = await supabase
-    .schema('tables').from('Restaurant_Tables')
-    .select('GUEST_CAPACITY')
-    .eq('TABLE_ID', primaryTableId)
-    .single()
-  if (primary && secTotalCap > 0) {
-    const restoredCap = Math.max(1, (primary.GUEST_CAPACITY || 0) - secTotalCap)
-    await supabase
-      .schema('tables').from('Restaurant_Tables')
-      .update({ GUEST_CAPACITY: restoredCap })
-      .eq('TABLE_ID', primaryTableId)
-  }
+  // Individual capacities are preserved on both primary and secondaries
 
   // Return fresh data for all affected rows
   return fetchTablesByIds([primaryTableId, ...secondaryIds])

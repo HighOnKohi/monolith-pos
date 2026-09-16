@@ -43,119 +43,19 @@ interface DragState {
   currentY: number
 }
 
-export interface ChairSuppressionInfo {
-  top?: boolean | boolean[]
-  bottom?: boolean | boolean[]
-  left?: boolean
-  right?: boolean
-  radial?: boolean[]
-  suppressedCount: number
-}
+import {
+  calculateLayoutSuppression,
+  calculateTableEffectiveCapacity,
+  calculateLayoutCapacity,
+  resolveLayoutCapacityOverflow,
+  distributePresetTables,
+  calculateTableBaseCapacity,
+  deductMovedTableOnOverflow,
+  type ChairSuppression as ChairSuppressionInfo,
+} from '@/utils/floorPlan/capacity'
 
-export function calculateSuppressionForLayout(tables: TableLayoutInfo[]): Map<number, ChairSuppressionInfo> {
-  const map = new Map<number, ChairSuppressionInfo>()
-  const cellMap = new Map<string, number>()
-
-  for (const t of tables) {
-    const cfg = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
-    for (let dx = 0; dx < cfg.width; dx++) {
-      for (let dy = 0; dy < cfg.height; dy++) {
-        cellMap.set(`${t.X_POS + dx},${t.Y_POS + dy}`, t.TABLE_NUM)
-      }
-    }
-  }
-
-  for (const t of tables) {
-    let suppressedCount = 0
-
-    if (t.TABLE_TYPE === 1 || t.TABLE_TYPE === 3) {
-      const topCell = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
-      const bottomCell = cellMap.get(`${t.X_POS},${t.Y_POS + 1}`)
-      const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
-      const rightCell = cellMap.get(`${t.X_POS + 1},${t.Y_POS}`)
-
-      // A chair disappears if its position overlaps with any other table
-      const top = Boolean(topCell && topCell !== t.TABLE_NUM)
-      const bottom = Boolean(bottomCell && bottomCell !== t.TABLE_NUM)
-      const left = Boolean(leftCell && leftCell !== t.TABLE_NUM)
-      const right = Boolean(rightCell && rightCell !== t.TABLE_NUM)
-
-      if (top) suppressedCount++
-      if (bottom) suppressedCount++
-      if (left) suppressedCount++
-      if (right) suppressedCount++
-
-      map.set(t.TABLE_NUM, { top, bottom, left, right, suppressedCount })
-    } else if (t.TABLE_TYPE === 2) {
-      const topMask = [0, 1, 2].map((dx) => {
-        const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS - 1}`)
-        return Boolean(c && c !== t.TABLE_NUM)
-      })
-      const bottomMask = [0, 1, 2].map((dx) => {
-        const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS + 1}`)
-        return Boolean(c && c !== t.TABLE_NUM)
-      })
-      const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
-      const rightCell = cellMap.get(`${t.X_POS + 3},${t.Y_POS}`)
-      const left = Boolean(leftCell && leftCell !== t.TABLE_NUM)
-      const right = Boolean(rightCell && rightCell !== t.TABLE_NUM)
-
-      suppressedCount += topMask.filter(Boolean).length
-      suppressedCount += bottomMask.filter(Boolean).length
-      if (left) suppressedCount++
-      if (right) suppressedCount++
-
-      map.set(t.TABLE_NUM, { top: topMask, bottom: bottomMask, left, right, suppressedCount })
-    } else if (t.TABLE_TYPE === 4) {
-      const top1 = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
-      const top2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS - 1}`)
-      const topOcc = Boolean((top1 && top1 !== t.TABLE_NUM) || (top2 && top2 !== t.TABLE_NUM))
-
-      const tr = cellMap.get(`${t.X_POS + 2},${t.Y_POS}`)
-      const trOcc = Boolean(tr && tr !== t.TABLE_NUM)
-
-      const br = cellMap.get(`${t.X_POS + 2},${t.Y_POS + 1}`)
-      const brOcc = Boolean(br && br !== t.TABLE_NUM)
-
-      const bot1 = cellMap.get(`${t.X_POS},${t.Y_POS + 2}`)
-      const bot2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS + 2}`)
-      const botOcc = Boolean((bot1 && bot1 !== t.TABLE_NUM) || (bot2 && bot2 !== t.TABLE_NUM))
-
-      const bl = cellMap.get(`${t.X_POS - 1},${t.Y_POS + 1}`)
-      const blOcc = Boolean(bl && bl !== t.TABLE_NUM)
-
-      const tl = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
-      const tlOcc = Boolean(tl && tl !== t.TABLE_NUM)
-
-      const radial = [topOcc, trOcc, brOcc, botOcc, blOcc, tlOcc]
-      suppressedCount = radial.filter(Boolean).length
-      map.set(t.TABLE_NUM, { radial, suppressedCount })
-    } else if (t.TABLE_TYPE === 5) {
-      const topCell = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
-      const bottomCell = cellMap.get(`${t.X_POS},${t.Y_POS + 3}`)
-      const top = Boolean(topCell && topCell !== t.TABLE_NUM)
-      const bottom = Boolean(bottomCell && bottomCell !== t.TABLE_NUM)
-
-      const leftMask = [0, 1, 2].map((dy) => {
-        const c = cellMap.get(`${t.X_POS - 1},${t.Y_POS + dy}`)
-        return Boolean(c && c !== t.TABLE_NUM)
-      })
-      const rightMask = [0, 1, 2].map((dy) => {
-        const c = cellMap.get(`${t.X_POS + 1},${t.Y_POS + dy}`)
-        return Boolean(c && c !== t.TABLE_NUM)
-      })
-
-      if (top) suppressedCount++
-      if (bottom) suppressedCount++
-      suppressedCount += leftMask.filter(Boolean).length
-      suppressedCount += rightMask.filter(Boolean).length
-
-      map.set(t.TABLE_NUM, { top, bottom, left: leftMask as unknown as boolean, right: rightMask as unknown as boolean, suppressedCount })
-    }
-  }
-
-  return map
-}
+export const calculateSuppressionForLayout = calculateLayoutSuppression
+export type { ChairSuppressionInfo }
 
 export function resolveConnectedMergeGroups(
   tables: TableLayoutInfo[],
@@ -222,48 +122,8 @@ export function applyTableMove(
     Y_POS: newY,
   }
 
-  // Find other tables adjacent to movedTable in its new position
-  const otherTables = tables.filter((t) => t.TABLE_NUM !== movedTableNum)
-  const adjacentNeighbors = otherTables.filter((t) => areAdjacent(movedTable, t))
-
-  let newMergeGroupId = movedTable.MERGE_GROUP_ID
-
-  if (adjacentNeighbors.length > 0) {
-    // Check if any neighbor is already in a merge group
-    const neighborWithGroup = adjacentNeighbors.find((n) => n.MERGE_GROUP_ID != null)
-    if (neighborWithGroup && neighborWithGroup.MERGE_GROUP_ID != null) {
-      newMergeGroupId = neighborWithGroup.MERGE_GROUP_ID
-    } else {
-      // Create new merge group with min table number among movedTable and neighbors
-      newMergeGroupId = Math.min(movedTableNum, ...adjacentNeighbors.map((n) => n.TABLE_NUM))
-    }
-  }
-
-  // Update tables: moved table gets newMergeGroupId, and adjacent neighbors also join newMergeGroupId
-  const updated = tables.map((t) => {
-    if (t.TABLE_NUM === movedTableNum) {
-      return { ...movedTable, MERGE_GROUP_ID: newMergeGroupId }
-    }
-    if (adjacentNeighbors.some((n) => n.TABLE_NUM === t.TABLE_NUM)) {
-      return { ...t, MERGE_GROUP_ID: newMergeGroupId }
-    }
-    return t
-  })
-
-  // Clean up any old merge group that now has fewer than 2 members
-  const groupCounts = new Map<number, number>()
-  for (const t of updated) {
-    if (t.MERGE_GROUP_ID != null) {
-      groupCounts.set(t.MERGE_GROUP_ID, (groupCounts.get(t.MERGE_GROUP_ID) || 0) + 1)
-    }
-  }
-
-  return updated.map((t) => {
-    if (t.MERGE_GROUP_ID != null && (groupCounts.get(t.MERGE_GROUP_ID) || 0) < 2) {
-      return { ...t, MERGE_GROUP_ID: null }
-    }
-    return t
-  })
+  const updated = tables.map((t) => (t.TABLE_NUM === movedTableNum ? movedTable : t))
+  return resolveConnectedMergeGroups(updated, areAdjacent)
 }
 
 export interface MergeGroupVisualBox {
@@ -318,7 +178,7 @@ export default function TableManager() {
   const { activeEvent, isEventActive } = useActiveEvent()
 
   // ── Navigation Guard: block route changes when there are unsaved edits ──
-  const shouldBlock = isEditMode && isDirty
+  const shouldBlock = isDirty
   const blocker = useBlocker(shouldBlock)
 
   // Guard browser close / refresh
@@ -391,65 +251,75 @@ export default function TableManager() {
     return Math.max(6, Math.floor(containerDimensions.height / cellSize))
   }, [containerDimensions.height, cellSize])
 
+  // Dynamic Active Preset & Maximum Pax
+  const activePreset = useMemo(
+    () => presets.find((p) => p.LAYOUT_PRESET_ID === activePresetId) ?? null,
+    [presets, activePresetId],
+  )
+  const activePresetMaxPax = activePreset?.MAX_PAX ? Number(activePreset.MAX_PAX) : 50
+  const activePresetMaxPaxRef = useRef(activePresetMaxPax)
+  activePresetMaxPaxRef.current = activePresetMaxPax
+
   // Chair suppression map computed reactively
   const chairSuppressionMap = useMemo(() => {
-    return calculateSuppressionForLayout(layoutTables)
+    return calculateLayoutSuppression(layoutTables)
   }, [layoutTables])
 
-  // Total allocated capacity across current tables (Venue Max = 50)
-  const VENUE_MAX_CAPACITY = 50
-  const totalAllocatedCapacity = useMemo(() => {
-    return layoutTables.reduce((sum, t) => {
+  // Base capacities map (preserves individual configured capacities even when merged)
+  const baseCapacitiesMap = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const t of layoutTables) {
       const live = restaurantTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
-      const supp = chairSuppressionMap.get(t.TABLE_NUM)
-      const suppCount = supp?.suppressedCount ?? 0
-      const defaultCap = TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4
-      return sum + (live?.GUEST_CAPACITY ?? Math.max(1, defaultCap - suppCount))
-    }, 0)
-  }, [layoutTables, restaurantTables, chairSuppressionMap])
+      const defaultCap = calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE)
+      const base = t.TABLE_CAPACITY ?? (t.MERGE_GROUP_ID != null ? defaultCap : (live?.GUEST_CAPACITY ?? defaultCap))
+      map.set(t.TABLE_NUM, base)
+    }
+    return map
+  }, [layoutTables, restaurantTables])
 
-  // Helper to synchronize Restaurant_Tables capacity with layout and strictly clamp to VENUE_MAX_CAPACITY (50)
+  // Total allocated capacity across current tables (governed dynamically by active preset)
+  const totalAllocatedCapacity = useMemo(() => {
+    return calculateLayoutCapacity(layoutTables, chairSuppressionMap, baseCapacitiesMap)
+  }, [layoutTables, chairSuppressionMap, baseCapacitiesMap])
+
+  // Helper to synchronize Restaurant_Tables capacity with layout and clamp to preset maxPax
   const syncRestaurantTablesWithLayout = useCallback((
     newLayout: TableLayoutInfo[],
     suppMap: Map<number, ChairSuppressionInfo>,
     prevLiveTables: RestaurantTableData[],
+    overrideMaxPax?: number,
+    baseCaps?: Map<number, number>,
   ): RestaurantTableData[] => {
-    // 1. For each table in newLayout, calculate its target capacity
+    const maxPax = overrideMaxPax ?? activePresetMaxPaxRef.current ?? 50
+
+    // 1. Build base capacities map for new layout
+    const baseMap = new Map<number, number>()
+    for (const t of newLayout) {
+      const existing = prevLiveTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
+      const defaultCap = calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE)
+      const base = baseCaps?.get(t.TABLE_NUM) ?? t.TABLE_CAPACITY ?? (t.MERGE_GROUP_ID != null ? defaultCap : (existing?.GUEST_CAPACITY ?? defaultCap))
+      baseMap.set(t.TABLE_NUM, base)
+    }
+
+    // 2. Resolve overflow to ensure layout fits within maxPax
+    const resolvedBases = resolveLayoutCapacityOverflow(newLayout, suppMap, baseMap, maxPax)
+
+    // 3. For each table in newLayout, calculate its effective capacity
     const mapped: RestaurantTableData[] = newLayout.map((t) => {
       const existing = prevLiveTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
-      const supp = suppMap.get(t.TABLE_NUM)
-      const suppCount = supp?.suppressedCount ?? 0
-      const defaultCap = TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4
-      const maxTableCap = Math.max(1, defaultCap - suppCount)
-
-      // When unsuppressed (e.g. table moved away), restore capacity up to maxTableCap
-      const initialCap = Math.max(1, maxTableCap)
+      const effectiveCap = calculateTableEffectiveCapacity(t, suppMap, resolvedBases)
 
       return {
         TABLE_ID: existing?.TABLE_ID ?? t.TABLE_NUM,
         TABLE_NUM: t.TABLE_NUM,
         STATUS: (existing?.STATUS ?? 'AVAILABLE') as RestaurantTableData['STATUS'],
-        GUEST_CAPACITY: initialCap,
+        GUEST_CAPACITY: effectiveCap,
         CURRENT_GUEST_COUNT: existing?.CURRENT_GUEST_COUNT ?? 0,
         RESERVED_SINCE: existing?.RESERVED_SINCE ?? null,
         BILL_OUT_REQUESTED: existing?.BILL_OUT_REQUESTED ?? false,
         MERGE_GROUP_ID: t.MERGE_GROUP_ID,
       }
     })
-
-    // 2. Strictly enforce VENUE_MAX_CAPACITY (50) across all tables
-    let currentTotal = mapped.reduce((sum, r) => sum + r.GUEST_CAPACITY, 0)
-    if (currentTotal > VENUE_MAX_CAPACITY) {
-      for (let i = mapped.length - 1; i >= 0 && currentTotal > VENUE_MAX_CAPACITY; i--) {
-        const canReduce = mapped[i].GUEST_CAPACITY - 1
-        const excess = currentTotal - VENUE_MAX_CAPACITY
-        const reduction = Math.min(excess, canReduce)
-        if (reduction > 0) {
-          mapped[i].GUEST_CAPACITY -= reduction
-          currentTotal -= reduction
-        }
-      }
-    }
 
     return mapped
   }, [])
@@ -486,10 +356,12 @@ export default function TableManager() {
         const layoutData = await fetchPresetLayout(defaultPreset.LAYOUT_PRESET_ID)
         setLayoutTables(layoutData)
       } else {
-        const created = await createLayoutPreset('Main Dining Hall', gridWidth, gridHeight, true)
+        const created = await createLayoutPreset('Main Dining Hall', 50, gridWidth, gridHeight, true)
         setPresets([created])
         setActivePresetId(created.LAYOUT_PRESET_ID)
-        setLayoutTables([])
+        const { layoutTables: distributedTables, baseCapacities: distributedCaps } = distributePresetTables(50, gridWidth, gridHeight)
+        await savePresetLayout(created.LAYOUT_PRESET_ID, distributedTables, distributedCaps, 50)
+        setLayoutTables(distributedTables)
       }
       setIsDirty(false)
     } catch (err) {
@@ -699,7 +571,7 @@ export default function TableManager() {
             void performSelectPreset(remaining[0].LAYOUT_PRESET_ID)
           }
           showToast('Layout preset deleted', 'success')
-        } catch (err) {
+        } catch {
           showToast('Failed to delete preset', 'error')
         }
       },
@@ -723,7 +595,7 @@ export default function TableManager() {
           setLayoutTables(layoutData)
           setIsDirty(false)
           showToast('Layout changes discarded', 'info')
-        } catch (err) {
+        } catch {
           showToast('Failed to revert layout', 'error')
         } finally {
           setIsLoading(false)
@@ -733,7 +605,7 @@ export default function TableManager() {
   }
 
   // ── 6. Create New Preset ──
-  const handleCreatePreset = async (name: string, isDef: boolean) => {
+  const handleCreatePreset = async (name: string, maxPax: number, isDef: boolean) => {
     if (isEventActive) {
       showToast(
         `Cannot create or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
@@ -741,7 +613,30 @@ export default function TableManager() {
       )
       return
     }
-    const created = await createLayoutPreset(name, gridWidth, gridHeight, isDef)
+    const validMaxPax = Math.max(1, Math.round(maxPax))
+    const created = await createLayoutPreset(name, validMaxPax, gridWidth, gridHeight, isDef)
+
+    // Automatically distribute tables to match maxPax
+    const { layoutTables: distributedTables, baseCapacities: distributedCaps } = distributePresetTables(
+      validMaxPax,
+      gridWidth,
+      gridHeight,
+    )
+
+    const initialLayout = distributedTables.map((t) => ({
+      ...t,
+      LAYOUT_PRESET_ID: created.LAYOUT_PRESET_ID,
+    }))
+
+    // Persist layout for preset and synchronize Restaurant_Tables
+    try {
+      await savePresetLayout(created.LAYOUT_PRESET_ID, initialLayout, distributedCaps, validMaxPax)
+    } catch (err) {
+      console.warn('Notice when saving initial distributed layout:', err)
+    }
+
+    const liveTables = await fetchLiveRestaurantTables()
+
     setPresets((prev) => {
       if (isDef) {
         return [...prev.map((p) => ({ ...p, IS_DEFAULT: false })), created]
@@ -749,9 +644,10 @@ export default function TableManager() {
       return [...prev, created]
     })
     setActivePresetId(created.LAYOUT_PRESET_ID)
-    setLayoutTables([])
+    setLayoutTables(initialLayout)
+    setRestaurantTables(liveTables)
     setIsDirty(false)
-    showToast(`Preset "${name}" created`, 'success')
+    showToast(`Preset "${name}" created with ${validMaxPax} pax capacity`, 'success')
   }
 
   // ── 7. Add Table from Floating Controls ──
@@ -760,9 +656,9 @@ export default function TableManager() {
     const typeConfig = TABLE_TYPES[type]
 
     // Check venue capacity
-    const remainingVenueCap = VENUE_MAX_CAPACITY - totalAllocatedCapacity
+    const remainingVenueCap = activePresetMaxPax - totalAllocatedCapacity
     if (remainingVenueCap <= 0) {
-      showToast('Cannot add table: Maximum venue capacity (50 seats) reached', 'error')
+      showToast(`Cannot add table: Maximum venue capacity (${activePresetMaxPax} seats) reached`, 'error')
       return
     }
 
@@ -817,6 +713,7 @@ export default function TableManager() {
       MERGE_GROUP_ID: null,
       X_POS: placedX,
       Y_POS: placedY,
+      TABLE_CAPACITY: assignedCapacity,
     }
 
     setLayoutTables((prev) => [...prev, newTable])
@@ -1005,8 +902,12 @@ export default function TableManager() {
         return sum + (live?.GUEST_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
       }, 0)
 
-    const venueMaxForThisTable = Math.max(1, VENUE_MAX_CAPACITY - otherTablesCap)
+    const venueMaxForThisTable = Math.max(1, activePresetMaxPax - otherTablesCap)
     const clampedSeats = Math.max(1, Math.min(maxCapacity, venueMaxForThisTable, seats))
+
+    setLayoutTables((prev) =>
+      prev.map((t) => (t.TABLE_NUM === tableNum ? { ...t, TABLE_CAPACITY: clampedSeats } : t)),
+    )
 
     setRestaurantTables((prev) => {
       const exists = prev.some((r) => r.TABLE_NUM === tableNum)
@@ -1160,9 +1061,16 @@ export default function TableManager() {
     }
 
     const suppMap = calculateSuppressionForLayout(updatedLayout)
-    const updatedRest = syncRestaurantTablesWithLayout(updatedLayout, suppMap, restaurantTables)
+    const { updatedBaseCapacities, updatedLayout: finalLayout } = deductMovedTableOnOverflow(
+      tableNum,
+      updatedLayout,
+      suppMap,
+      baseCapacitiesMap,
+      activePresetMaxPax,
+    )
+    const updatedRest = syncRestaurantTablesWithLayout(finalLayout, suppMap, restaurantTables, activePresetMaxPax, updatedBaseCapacities)
 
-    setLayoutTables(updatedLayout)
+    setLayoutTables(finalLayout)
     setRestaurantTables(updatedRest)
 
     if (!isEditMode && activePresetId) {
@@ -1171,7 +1079,7 @@ export default function TableManager() {
         for (const r of updatedRest) {
           capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
         }
-        await savePresetLayout(activePresetId, updatedLayout, capacityMap)
+        await savePresetLayout(activePresetId, finalLayout, capacityMap, activePresetMaxPax)
         showToast(`Table ${tableNum} unmerged`, 'info')
       } catch (err) {
         console.error('Failed to save unmerge in view mode:', err)
@@ -1199,7 +1107,7 @@ export default function TableManager() {
     })
 
     const suppMap = calculateSuppressionForLayout(updatedLayout)
-    const updatedRest = syncRestaurantTablesWithLayout(updatedLayout, suppMap, restaurantTables)
+    const updatedRest = syncRestaurantTablesWithLayout(updatedLayout, suppMap, restaurantTables, activePresetMaxPax, baseCapacitiesMap)
 
     setLayoutTables(updatedLayout)
     setRestaurantTables(updatedRest)
@@ -1211,7 +1119,7 @@ export default function TableManager() {
         for (const r of updatedRest) {
           capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
         }
-        await savePresetLayout(activePresetId, updatedLayout, capacityMap)
+        await savePresetLayout(activePresetId, updatedLayout, capacityMap, activePresetMaxPax)
         showToast(`Merged ${selectedList.length} tables into Group #${targetMergeGroupId}`, 'success')
       } catch (err) {
         console.error('Failed to save merged tables:', err)
@@ -1232,7 +1140,7 @@ export default function TableManager() {
       for (const r of restaurantTables) {
         capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
       }
-      await savePresetLayout(activePresetId, layoutTables, capacityMap)
+      await savePresetLayout(activePresetId, layoutTables, capacityMap, activePresetMaxPax)
       setIsDirty(false)
       setIsEditMode(false)
       setSelectedTableNum(null)
@@ -1276,9 +1184,12 @@ export default function TableManager() {
     return false
   }, [])
 
-  // ── 16. Drag Handling (Works in both View & Edit modes) ──
+  // ── 16. Drag Handling (Only active in Edit Mode) ──
   const handleMouseDown = (tableNum: number, e: React.MouseEvent) => {
     if (isQrPrintMode) return
+
+    // Tables can only be moved when Edit Mode is active
+    if (!isEditMode) return
 
     // Ctrl/Cmd click is reserved for multi-selection toggle
     if (e.ctrlKey || e.metaKey) {
@@ -1439,29 +1350,26 @@ export default function TableManager() {
           lastMutationTimeRef.current = Date.now()
           const currentTable = layoutTables.find((t) => t.TABLE_NUM === tableNum)
           if (currentTable) {
-            const result = applyTableMove(layoutTables, tableNum, currentX, currentY, areTablesAdjacent)
-            const suppMap = calculateSuppressionForLayout(result)
-            const updatedRest = syncRestaurantTablesWithLayout(result, suppMap, restaurantTables)
+            const rawResult = applyTableMove(layoutTables, tableNum, currentX, currentY, areTablesAdjacent)
+            const suppMap = calculateSuppressionForLayout(rawResult)
+            const { updatedBaseCapacities, updatedLayout } = deductMovedTableOnOverflow(
+              tableNum,
+              rawResult,
+              suppMap,
+              baseCapacitiesMap,
+              activePresetMaxPax,
+            )
+            const updatedRest = syncRestaurantTablesWithLayout(
+              updatedLayout,
+              suppMap,
+              restaurantTables,
+              activePresetMaxPax,
+              updatedBaseCapacities,
+            )
 
-            setLayoutTables(result)
+            setLayoutTables(updatedLayout)
             setRestaurantTables(updatedRest)
-
-            if (!isEditMode && activePresetId) {
-              lastMutationTimeRef.current = Date.now()
-              try {
-                const capacityMap = new Map<number, number>()
-                for (const r of updatedRest) {
-                  capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
-                }
-                void savePresetLayout(activePresetId, result, capacityMap).catch((err) => {
-                  console.error('Failed to persist table movement in View mode:', err)
-                })
-              } catch (err) {
-                console.error('Failed to persist table movement in View mode:', err)
-              }
-            } else {
-              setIsDirty(true)
-            }
+            setIsDirty(true)
           }
         }
         setDragState(null)
@@ -1481,27 +1389,25 @@ export default function TableManager() {
       window.removeEventListener('mousemove', handleGlobalMouseMove)
       window.removeEventListener('mouseup', handleGlobalMouseUp)
     }
-  }, [dragState, gridWidth, gridHeight, layoutTables, areTablesAdjacent, cellSize, isEditMode, activePresetId, restaurantTables, syncRestaurantTablesWithLayout, selectedTableNums])
+  }, [dragState, gridWidth, gridHeight, layoutTables, areTablesAdjacent, cellSize, isEditMode, activePresetId, restaurantTables, syncRestaurantTablesWithLayout, selectedTableNums, activePresetMaxPax, baseCapacitiesMap])
 
   // ── 17. Merged Live Nodes ──
   const mergedNodes: MergedTableNode[] = useMemo(() => {
     return layoutTables.map((lt) => {
       const live = restaurantTables.find((rt) => rt.TABLE_NUM === lt.TABLE_NUM)
-      const supp = chairSuppressionMap.get(lt.TABLE_NUM)
-      const suppCount = supp?.suppressedCount ?? 0
-      const defaultCap = TABLE_TYPES[lt.TABLE_TYPE]?.defaultCapacity ?? 4
+      const effCap = calculateTableEffectiveCapacity(lt, chairSuppressionMap, baseCapacitiesMap)
 
       return {
         ...lt,
         MERGE_GROUP_ID: lt.MERGE_GROUP_ID ?? null,
         STATUS: live?.STATUS ?? 'AVAILABLE',
         CURRENT_GUEST_COUNT: live?.CURRENT_GUEST_COUNT ?? 0,
-        GUEST_CAPACITY: live?.GUEST_CAPACITY ?? Math.max(1, defaultCap - suppCount),
+        GUEST_CAPACITY: live?.GUEST_CAPACITY ?? effCap,
         BILL_OUT_REQUESTED: live?.BILL_OUT_REQUESTED ?? false,
         TABLE_ID: live?.TABLE_ID ?? lt.TABLE_NUM,
       }
     })
-  }, [layoutTables, restaurantTables, chairSuppressionMap])
+  }, [layoutTables, restaurantTables, chairSuppressionMap, baseCapacitiesMap])
 
   // ── 18. Dynamic Visuals for Merged Groups (Box or Smart Nearest-Neighbor Chain) ──
   const mergeGroupVisuals: MergeGroupVisual[] = useMemo(() => {
@@ -1804,7 +1710,7 @@ export default function TableManager() {
           isEventActive={isEventActive}
           activeEventTitle={activeEvent?.title}
           totalCapacity={totalAllocatedCapacity}
-          maxVenueCapacity={VENUE_MAX_CAPACITY}
+          maxVenueCapacity={activePresetMaxPax}
           isDirty={isDirty}
           onSelectPreset={handleSelectPreset}
           onRenamePreset={handleRenamePreset}
@@ -1815,6 +1721,21 @@ export default function TableManager() {
                 `Cannot create or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
                 'error',
               )
+              return
+            }
+            if (isDirty) {
+              setConfirmModal({
+                isOpen: true,
+                title: 'Unsaved Changes',
+                message: 'You have unsaved changes on the current layout. Discard changes and create a new preset?',
+                confirmLabel: 'Discard & Create',
+                variant: 'warning',
+                onConfirm: () => {
+                  setConfirmModal((prev) => ({ ...prev, isOpen: false }))
+                  setIsDirty(false)
+                  setNewPresetModalOpen(true)
+                },
+              })
               return
             }
             setNewPresetModalOpen(true)
@@ -1841,7 +1762,7 @@ export default function TableManager() {
               <FloatingLayoutControls
                 onAddTable={handleAddTable}
                 totalCapacity={totalAllocatedCapacity}
-                maxVenueCapacity={VENUE_MAX_CAPACITY}
+                maxVenueCapacity={activePresetMaxPax}
               />
             </div>
           )}
@@ -1998,7 +1919,7 @@ export default function TableManager() {
                       handleTableClick(node.TABLE_NUM, e)
                     }}
                     className={`table-node-item absolute transition-transform select-none ${
-                      isEditMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-grab active:cursor-grabbing'
+                      isEditMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                     } ${isDraggingThis ? 'z-40 scale-105 opacity-90' : 'z-20'}`}
                     style={{
                       left: `${posX * cellSize}px`,
@@ -2063,7 +1984,8 @@ export default function TableManager() {
         isQrPrintMode={isQrPrintMode}
         selectedTable={selectedNode}
         allTables={mergedNodes}
-        remainingVenueCapacity={VENUE_MAX_CAPACITY - totalAllocatedCapacity}
+        remainingVenueCapacity={activePresetMaxPax - totalAllocatedCapacity}
+        maxVenueCapacity={activePresetMaxPax}
         onSelectTableNum={(num) => setSelectedTableNum(num)}
         selectedForPrintTableNums={selectedForPrintTableNums}
         onTogglePrintSelectTable={handleTogglePrintSelectTable}
@@ -2109,7 +2031,10 @@ export default function TableManager() {
         confirmLabel="Discard & Leave"
         cancelLabel="Stay on Page"
         variant="warning"
-        onConfirm={() => blocker.proceed?.()}
+        onConfirm={() => {
+          setIsDirty(false)
+          blocker.proceed?.()
+        }}
         onCancel={() => blocker.reset?.()}
       />
 

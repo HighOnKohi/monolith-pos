@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import type { BillRequest, PaymentMethod, BillStatus } from '@/types/bill'
 import { getMergeGroupMemberIds } from '@/services/assistanceService'
+import { broadcastOrderUpdate } from '@/services/dispatcherService'
 
 function mapBillRequest(row: Record<string, unknown>): BillRequest {
   return {
@@ -30,6 +31,7 @@ export async function createBillRequest(
     .single()
 
   if (error || !data) throw error ?? new Error('Failed to create bill request')
+  broadcastOrderUpdate({ type: 'tables' })
   return mapBillRequest(data as Record<string, unknown>)
 }
 
@@ -87,6 +89,8 @@ export async function updateBillRequestStatus(
       console.warn('Failed to clear table bill out status:', err)
     }
   }
+
+  broadcastOrderUpdate({ type: 'tables' })
 }
 
 /**
@@ -115,6 +119,7 @@ export async function resolveBillOutRequest(tableId: number): Promise<number[]> 
     console.error('[billService] Failed to resolve bill out request:', err)
   }
 
+  broadcastOrderUpdate({ type: 'tables' })
   return targetIds
 }
 
