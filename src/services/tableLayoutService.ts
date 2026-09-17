@@ -161,9 +161,9 @@ export async function fetchAllLayoutPresets(): Promise<TableLayoutPreset[]> {
       PRESET_GRID_HEIGHT: Number(row.PRESET_GRID_HEIGHT || 16),
       IS_DEFAULT: Boolean(row.IS_DEFAULT),
       MAX_PAX: maxPax,
-      CREATED_AT: row.CREATED_AT,
-      UPDATED_AT: row.UPDATED_AT,
-      CREATED_BY: row.CREATED_BY,
+      CREATED_AT: row.CREATED_AT != null ? String(row.CREATED_AT) : undefined,
+      UPDATED_AT: row.UPDATED_AT != null ? String(row.UPDATED_AT) : undefined,
+      CREATED_BY: row.CREATED_BY != null ? String(row.CREATED_BY) : null,
     }
   })
 }
