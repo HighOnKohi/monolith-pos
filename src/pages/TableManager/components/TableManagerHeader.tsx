@@ -147,7 +147,12 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
                         : 'text-slate-700 hover:bg-slate-100'
                     }`}
                   >
-                    <span className="truncate flex-1 text-left">{preset.PRESET_NAME}</span>
+                    <span className="truncate flex-1 text-left">
+                      {preset.PRESET_NAME}{' '}
+                      <span className={isSelected ? 'text-slate-200 font-normal text-[11px]' : 'text-slate-400 font-normal text-[11px]'}>
+                        ({preset.MAX_PAX || 50} Pax)
+                      </span>
+                    </span>
 
                     {/* Hover Action Buttons (Rename & Delete) */}
                     {!isEventActive && !isQrPrintMode && (

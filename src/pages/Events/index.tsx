@@ -12,6 +12,7 @@ import {
   cancelEvent,
   activateEvent,
   deactivateEvent,
+  syncLayoutPresetsWithEvents,
   isEventServiceUsingFallback,
 } from '@/services/eventService'
 import { filterEvents } from './utils/eventUtils'
@@ -112,6 +113,7 @@ export default function EventsPage() {
       const data = await fetchEvents()
       setEvents(data)
       setIsFallback(isEventServiceUsingFallback())
+      void syncLayoutPresetsWithEvents()
     } catch (err: unknown) {
       console.error('[EventsPage] Failed to load events:', err)
       setError(err instanceof Error ? err.message : 'Failed to load events.')

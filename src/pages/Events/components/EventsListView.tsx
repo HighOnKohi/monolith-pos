@@ -88,7 +88,7 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                           )}
                           {event.presetId && (
                             <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
-                              <Layout className="w-2.5 h-2.5" /> Linked Layout
+                              <Layout className="w-2.5 h-2.5" /> Layout ({event.maxPax ?? event.expectedAttendees ?? 50} Pax)
                             </span>
                           )}
                           {event.menuPresetId && (
@@ -246,7 +246,7 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                     {event.presetId && (
                       <div className="flex items-center gap-1 text-indigo-700 font-bold">
                         <Layout className="w-3 h-3 shrink-0" />
-                        <span>Linked Table Layout</span>
+                        <span>Layout ({event.maxPax ?? event.expectedAttendees ?? 50} Pax)</span>
                       </div>
                     )}
                     {event.menuPresetId && (

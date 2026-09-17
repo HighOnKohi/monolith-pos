@@ -82,8 +82,8 @@ export const EventActivateModal: React.FC<EventActivateModalProps> = ({
             </span>
             <span className="font-bold text-[#14274E]">
               {event.presetId
-                ? layoutPresets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`
-                : 'None (Keep Current)'}
+                ? `${layoutPresets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`} (${event.maxPax ?? event.expectedAttendees ?? 50} Pax max)`
+                : 'None (Default 50 Pax)'}
             </span>
           </div>
           <div className="flex items-center justify-between text-slate-600">

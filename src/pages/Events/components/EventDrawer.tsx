@@ -385,7 +385,7 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                   <DetailRow
                     icon={<Layout className="w-3.5 h-3.5" />}
                     label="Linked Table Layout"
-                    value={presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`}
+                    value={`${presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`} (${event.maxPax ?? event.expectedAttendees ?? 50} Pax capacity)`}
                   />
                 )}
                 {event.menuPresetId && (
@@ -657,13 +657,27 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                     onChange={(e) => setField('presetId', e.target.value ? Number(e.target.value) : null)}
                     className={formInputClass(false)}
                   >
-                    <option value="">None (Standard)</option>
-                    {presets.map((p) => (
-                      <option key={p.LAYOUT_PRESET_ID} value={p.LAYOUT_PRESET_ID}>
-                        {p.PRESET_NAME} {p.IS_DEFAULT ? '(Default)' : ''}
-                      </option>
-                    ))}
+                    <option value="">None (Standard · 50 Pax)</option>
+                    {presets.map((p) => {
+                      const isLinkedToThis = form.presetId === p.LAYOUT_PRESET_ID
+                      const capacity = isLinkedToThis ? (form.maxPax || 50) : (p.MAX_PAX ?? 50)
+                      return (
+                        <option key={p.LAYOUT_PRESET_ID} value={p.LAYOUT_PRESET_ID}>
+                          {p.PRESET_NAME} ({capacity} Pax){p.IS_DEFAULT ? ' · Default' : ''}
+                        </option>
+                      )
+                    })}
                   </select>
+                  {form.presetId ? (
+                    <p className="text-[10px] font-bold text-indigo-700 mt-1 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block animate-pulse" />
+                      Layout max capacity: {form.maxPax || 50} Pax (based on event)
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Standard layout · Unlinked layouts default to 50 Pax
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <label htmlFor="event-menu-preset" className={FORM_LABEL_CLASS}>

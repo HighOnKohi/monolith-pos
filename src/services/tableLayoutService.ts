@@ -108,9 +108,33 @@ export interface MergedTableNode extends TableLayoutInfo {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
 // Preset Operations
 // ─────────────────────────────────────────────────────────────────────────────
+
+const PRESET_MAX_PAX_STORAGE_PREFIX = 'monolith_preset_max_pax_'
+
+function getCachedPresetMaxPax(presetId: number): number | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const val = localStorage.getItem(`${PRESET_MAX_PAX_STORAGE_PREFIX}${presetId}`)
+    if (val) {
+      const parsed = parseInt(val, 10)
+      if (!isNaN(parsed) && parsed > 0) return parsed
+    }
+  } catch {
+    // Ignore
+  }
+  return null
+}
+
+function setCachedPresetMaxPax(presetId: number, maxPax: number): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(`${PRESET_MAX_PAX_STORAGE_PREFIX}${presetId}`, String(maxPax))
+  } catch {
+    // Ignore
+  }
+}
 
 export async function fetchAllLayoutPresets(): Promise<TableLayoutPreset[]> {
   const { data, error } = await supabase
@@ -123,17 +147,25 @@ export async function fetchAllLayoutPresets(): Promise<TableLayoutPreset[]> {
     console.error('[tableLayoutService] Error fetching presets:', error)
     return []
   }
-  return (data ?? []).map((row: any) => ({
-    LAYOUT_PRESET_ID: Number(row.LAYOUT_PRESET_ID),
-    PRESET_NAME: String(row.PRESET_NAME || ''),
-    PRESET_GRID_WIDTH: Number(row.PRESET_GRID_WIDTH || 20),
-    PRESET_GRID_HEIGHT: Number(row.PRESET_GRID_HEIGHT || 16),
-    IS_DEFAULT: Boolean(row.IS_DEFAULT),
-    MAX_PAX: row.MAX_PAX != null ? Number(row.MAX_PAX) : 50,
-    CREATED_AT: row.CREATED_AT,
-    UPDATED_AT: row.UPDATED_AT,
-    CREATED_BY: row.CREATED_BY,
-  }))
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const id = Number(row.LAYOUT_PRESET_ID)
+    const cachedPax = getCachedPresetMaxPax(id)
+    const maxPax = row.MAX_PAX != null ? Number(row.MAX_PAX) : (cachedPax ?? 50)
+    if (row.MAX_PAX != null) {
+      setCachedPresetMaxPax(id, maxPax)
+    }
+    return {
+      LAYOUT_PRESET_ID: id,
+      PRESET_NAME: String(row.PRESET_NAME || ''),
+      PRESET_GRID_WIDTH: Number(row.PRESET_GRID_WIDTH || 20),
+      PRESET_GRID_HEIGHT: Number(row.PRESET_GRID_HEIGHT || 16),
+      IS_DEFAULT: Boolean(row.IS_DEFAULT),
+      MAX_PAX: maxPax,
+      CREATED_AT: row.CREATED_AT,
+      UPDATED_AT: row.UPDATED_AT,
+      CREATED_BY: row.CREATED_BY,
+    }
+  })
 }
 
 export async function fetchDefaultOrFirstPreset(): Promise<TableLayoutPreset | null> {
@@ -183,10 +215,12 @@ export async function createLayoutPreset(
       .single()
 
     if (!error && data) {
-      return {
+      const preset = {
         ...data,
         MAX_PAX: data.MAX_PAX != null ? Number(data.MAX_PAX) : validMaxPax,
       }
+      setCachedPresetMaxPax(Number(preset.LAYOUT_PRESET_ID), preset.MAX_PAX)
+      return preset
     }
   } catch (err) {
     console.warn('[tableLayoutService] Notice when inserting preset with MAX_PAX, trying fallback:', err)
@@ -211,6 +245,9 @@ export async function createLayoutPreset(
     console.error('[tableLayoutService] Error creating preset:', error)
     throw error
   }
+
+  const presetId = Number(data.LAYOUT_PRESET_ID)
+  setCachedPresetMaxPax(presetId, validMaxPax)
   return {
     ...data,
     MAX_PAX: validMaxPax,
@@ -219,6 +256,8 @@ export async function createLayoutPreset(
 
 export async function updateLayoutPresetMaxPax(presetId: number, maxPax: number): Promise<void> {
   const validMaxPax = Math.max(1, Math.round(maxPax))
+  setCachedPresetMaxPax(presetId, validMaxPax)
+
   const { error } = await supabase
     .schema('tables')
     .from('Table_Layout_Presets')
@@ -227,6 +266,45 @@ export async function updateLayoutPresetMaxPax(presetId: number, maxPax: number)
 
   if (error) {
     console.warn('[tableLayoutService] Error updating preset max pax:', error)
+  }
+
+  // If layout tables exist for this preset and exceed the new max pax, resolve overflow
+  try {
+    const layoutTables = await fetchPresetLayout(presetId)
+    if (layoutTables.length > 0) {
+      const { calculateLayoutSuppression, calculateLayoutCapacity, resolveLayoutCapacityOverflow } = await import('@/utils/floorPlan/capacity')
+      const suppMap = calculateLayoutSuppression(layoutTables)
+      const baseCaps = new Map<number, number>()
+      for (const t of layoutTables) {
+        baseCaps.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
+      }
+      const totalCurrent = calculateLayoutCapacity(layoutTables, suppMap, baseCaps)
+      if (totalCurrent > validMaxPax) {
+        const resolvedCaps = resolveLayoutCapacityOverflow(layoutTables, suppMap, baseCaps, validMaxPax)
+        const updatedTables = layoutTables.map((t) => ({
+          ...t,
+          TABLE_CAPACITY: resolvedCaps.get(t.TABLE_NUM) ?? t.TABLE_CAPACITY,
+        }))
+        await savePresetLayout(presetId, updatedTables, resolvedCaps, validMaxPax)
+      }
+    }
+  } catch (err) {
+    console.warn('[tableLayoutService] Notice when resolving layout overflow on updateLayoutPresetMaxPax:', err)
+  }
+
+  // Realtime notification & broadcast across tabs and interfaces
+  if (typeof window !== 'undefined') {
+    const detail = { type: 'table_layout_preset_changed', presetId, maxPax: validMaxPax }
+    window.dispatchEvent(new CustomEvent('table-layout-preset-changed', { detail: presetId }))
+    window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
+
+    try {
+      const bc = new BroadcastChannel('monolith_order_events')
+      bc.postMessage(detail)
+      bc.close()
+    } catch {
+      // Ignore
+    }
   }
 }
 
@@ -418,7 +496,7 @@ export async function fetchPresetLayout(presetId: number): Promise<TableLayoutIn
     return []
   }
 
-  return (data ?? []).map((row: any) => ({
+  return (data ?? []).map((row: Record<string, unknown>) => ({
     INFO_ID: String(row.INFO_ID),
     LAYOUT_PRESET_ID: Number(row.LAYOUT_PRESET_ID),
     TABLE_NUM: Number(row.TABLE_NUM),
@@ -442,7 +520,7 @@ export async function fetchLiveRestaurantTables(): Promise<RestaurantTableData[]
     return []
   }
 
-  return (data ?? []).map((row: any) => ({
+  return (data ?? []).map((row: Record<string, unknown>) => ({
     TABLE_ID: Number(row.TABLE_ID),
     TABLE_NUM: Number(row.TABLE_NUM),
     STATUS: (row.STATUS || 'AVAILABLE') as RestaurantTableData['STATUS'],
@@ -655,7 +733,7 @@ export async function savePresetLayout(
         .from('Table_Reservations')
         .select('TABLE_ID')
         .in('STATUS', ['CONFIRMED', 'PENDING'])
-      reservedTableIds = new Set((reservations ?? []).map((r: any) => Number(r.TABLE_ID)))
+      reservedTableIds = new Set((reservations ?? []).map((r: Record<string, unknown>) => Number(r.TABLE_ID)))
     } catch {
       // Ignore
     }
