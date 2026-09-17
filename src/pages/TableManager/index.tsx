@@ -222,10 +222,12 @@ export default function TableManager() {
     isOpen: boolean
     presetId: number | null
     currentName: string
+    currentMaxPax: number
   }>({
     isOpen: false,
     presetId: null,
     currentName: '',
+    currentMaxPax: 50,
   })
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
 
@@ -271,16 +273,34 @@ export default function TableManager() {
     for (const t of layoutTables) {
       const live = restaurantTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
       const defaultCap = calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE)
-      const base = t.TABLE_CAPACITY ?? (t.MERGE_GROUP_ID != null ? defaultCap : (live?.GUEST_CAPACITY ?? defaultCap))
+      const base = live?.GUEST_CAPACITY ?? t.TABLE_CAPACITY ?? (t.MERGE_GROUP_ID != null ? defaultCap : defaultCap)
       map.set(t.TABLE_NUM, base)
     }
     return map
   }, [layoutTables, restaurantTables])
 
-  // Total allocated capacity across current tables (governed dynamically by active preset)
+  // Live nodes representing all tables on floor plan
+  const mergedNodes: MergedTableNode[] = useMemo(() => {
+    return layoutTables.map((lt) => {
+      const live = restaurantTables.find((rt) => rt.TABLE_NUM === lt.TABLE_NUM)
+      const effCap = calculateTableEffectiveCapacity(lt, chairSuppressionMap, baseCapacitiesMap)
+
+      return {
+        ...lt,
+        MERGE_GROUP_ID: lt.MERGE_GROUP_ID ?? null,
+        STATUS: live?.STATUS ?? 'AVAILABLE',
+        CURRENT_GUEST_COUNT: live?.CURRENT_GUEST_COUNT ?? 0,
+        GUEST_CAPACITY: live?.GUEST_CAPACITY ?? effCap,
+        BILL_OUT_REQUESTED: live?.BILL_OUT_REQUESTED ?? false,
+        TABLE_ID: live?.TABLE_ID ?? lt.TABLE_NUM,
+      }
+    })
+  }, [layoutTables, restaurantTables, chairSuppressionMap, baseCapacitiesMap])
+
+  // Total allocated capacity across current tables (direct sum of all active tables on canvas)
   const totalAllocatedCapacity = useMemo(() => {
-    return calculateLayoutCapacity(layoutTables, chairSuppressionMap, baseCapacitiesMap)
-  }, [layoutTables, chairSuppressionMap, baseCapacitiesMap])
+    return mergedNodes.reduce((sum, node) => sum + (node.GUEST_CAPACITY ?? 0), 0)
+  }, [mergedNodes])
 
   // Helper to synchronize Restaurant_Tables capacity with layout and clamp to preset maxPax
   const syncRestaurantTablesWithLayout = useCallback((
@@ -355,6 +375,17 @@ export default function TableManager() {
         setActivePresetId(defaultPreset.LAYOUT_PRESET_ID)
         const layoutData = await fetchPresetLayout(defaultPreset.LAYOUT_PRESET_ID)
         setLayoutTables(layoutData)
+        // If liveTables are missing tables from layoutData, sync them
+        const missingTables = layoutData.some((lt) => !liveTables.some((rt) => rt.TABLE_NUM === lt.TABLE_NUM))
+        if (missingTables) {
+          try {
+            await savePresetLayout(defaultPreset.LAYOUT_PRESET_ID, layoutData, undefined, defaultPreset.MAX_PAX)
+            const refreshedLive = await fetchLiveRestaurantTables()
+            setRestaurantTables(refreshedLive)
+          } catch {
+            // Ignore
+          }
+        }
       } else {
         const created = await createLayoutPreset('Main Dining Hall', 50, gridWidth, gridHeight, true)
         setPresets([created])
@@ -482,8 +513,12 @@ export default function TableManager() {
       setActivePresetId(presetId)
       setSelectedTableNum(null)
       await setDefaultLayoutPreset(presetId)
-      const layoutData = await fetchPresetLayout(presetId)
+      const [layoutData, liveTables] = await Promise.all([
+        fetchPresetLayout(presetId),
+        fetchLiveRestaurantTables(),
+      ])
       setLayoutTables(layoutData)
+      setRestaurantTables(liveTables)
       setIsDirty(false)
       setPresets((prev) =>
         prev.map((p) => ({
@@ -525,25 +560,37 @@ export default function TableManager() {
     void performSelectPreset(presetId)
   }
 
-  // ── 4. Rename Preset ──
+  // ── 4. Rename / Edit Preset ──
   const handleRenamePreset = (presetId: number, currentName: string) => {
+    const targetPreset = presets.find((p) => p.LAYOUT_PRESET_ID === presetId)
     setRenameModal({
       isOpen: true,
       presetId,
       currentName,
+      currentMaxPax: targetPreset?.MAX_PAX != null ? Number(targetPreset.MAX_PAX) : 50,
     })
   }
 
-  const handleConfirmRename = async (newName: string) => {
+  const handleConfirmRename = async (newName: string, newMaxPax: number) => {
     if (!renameModal.presetId) return
     const id = renameModal.presetId
+    const { updateLayoutPresetMaxPax } = await import('@/services/tableLayoutService')
     await updateLayoutPresetName(id, newName)
+    if (newMaxPax != null && newMaxPax > 0) {
+      await updateLayoutPresetMaxPax(id, newMaxPax)
+    }
     setPresets((prev) =>
       prev.map((p) =>
-        p.LAYOUT_PRESET_ID === id ? { ...p, PRESET_NAME: newName } : p,
+        p.LAYOUT_PRESET_ID === id
+          ? {
+              ...p,
+              PRESET_NAME: newName,
+              MAX_PAX: newMaxPax != null && newMaxPax > 0 ? newMaxPax : p.MAX_PAX,
+            }
+          : p,
       ),
     )
-    showToast(`Preset renamed to "${newName}"`, 'success')
+    showToast(`Preset updated successfully`, 'success')
   }
 
   // ── 5. Delete Preset ──
@@ -1391,23 +1438,6 @@ export default function TableManager() {
     }
   }, [dragState, gridWidth, gridHeight, layoutTables, areTablesAdjacent, cellSize, isEditMode, activePresetId, restaurantTables, syncRestaurantTablesWithLayout, selectedTableNums, activePresetMaxPax, baseCapacitiesMap])
 
-  // ── 17. Merged Live Nodes ──
-  const mergedNodes: MergedTableNode[] = useMemo(() => {
-    return layoutTables.map((lt) => {
-      const live = restaurantTables.find((rt) => rt.TABLE_NUM === lt.TABLE_NUM)
-      const effCap = calculateTableEffectiveCapacity(lt, chairSuppressionMap, baseCapacitiesMap)
-
-      return {
-        ...lt,
-        MERGE_GROUP_ID: lt.MERGE_GROUP_ID ?? null,
-        STATUS: live?.STATUS ?? 'AVAILABLE',
-        CURRENT_GUEST_COUNT: live?.CURRENT_GUEST_COUNT ?? 0,
-        GUEST_CAPACITY: live?.GUEST_CAPACITY ?? effCap,
-        BILL_OUT_REQUESTED: live?.BILL_OUT_REQUESTED ?? false,
-        TABLE_ID: live?.TABLE_ID ?? lt.TABLE_NUM,
-      }
-    })
-  }, [layoutTables, restaurantTables, chairSuppressionMap, baseCapacitiesMap])
 
   // ── 18. Dynamic Visuals for Merged Groups (Box or Smart Nearest-Neighbor Chain) ──
   const mergeGroupVisuals: MergeGroupVisual[] = useMemo(() => {
@@ -2038,10 +2068,11 @@ export default function TableManager() {
         onCancel={() => blocker.reset?.()}
       />
 
-      {/* In-App Rename Preset Modal */}
+      {/* In-App Rename / Edit Preset Modal */}
       <RenamePresetModal
         isOpen={renameModal.isOpen}
         currentName={renameModal.currentName}
+        currentMaxPax={renameModal.currentMaxPax}
         onClose={() => setRenameModal((prev) => ({ ...prev, isOpen: false }))}
         onRename={handleConfirmRename}
       />

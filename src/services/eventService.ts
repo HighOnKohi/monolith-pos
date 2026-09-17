@@ -430,15 +430,6 @@ export async function createEvent(
     isUsingFallbackStorage = false
     const mapped = mapRow(res.data)
 
-    if (data.presetId) {
-      try {
-        const { updateLayoutPresetMaxPax } = await import('@/services/tableLayoutService')
-        await updateLayoutPresetMaxPax(data.presetId, maxPaxVal)
-      } catch (err) {
-        console.warn('[eventService] Failed to update layout preset max pax on createEvent:', err)
-      }
-    }
-    void syncLayoutPresetsWithEvents()
     return mapped
   } catch (err) {
     console.warn('[eventService] Supabase createEvent fallback:', err)
@@ -474,15 +465,6 @@ export async function createEvent(
     fallbackAll.push(newEvent)
     saveFallbackEvents(fallbackAll)
 
-    if (data.presetId) {
-      try {
-        const { updateLayoutPresetMaxPax } = await import('@/services/tableLayoutService')
-        await updateLayoutPresetMaxPax(data.presetId, maxPaxVal)
-      } catch (err) {
-        console.warn('[eventService] Failed to update layout preset max pax on fallback createEvent:', err)
-      }
-    }
-    void syncLayoutPresetsWithEvents()
     return newEvent
   }
 }
@@ -573,15 +555,6 @@ export async function updateEvent(
     isUsingFallbackStorage = false
     const mapped = mapRow(res.data)
 
-    if (data.presetId) {
-      try {
-        const { updateLayoutPresetMaxPax } = await import('@/services/tableLayoutService')
-        await updateLayoutPresetMaxPax(data.presetId, maxPaxVal)
-      } catch (err) {
-        console.warn('[eventService] Failed to update layout preset max pax on updateEvent:', err)
-      }
-    }
-    void syncLayoutPresetsWithEvents()
     return mapped
   } catch (err) {
     console.warn('[eventService] Supabase updateEvent fallback:', err)
@@ -616,15 +589,6 @@ export async function updateEvent(
     fallbackAll[index] = updated
     saveFallbackEvents(fallbackAll)
 
-    if (data.presetId) {
-      try {
-        const { updateLayoutPresetMaxPax } = await import('@/services/tableLayoutService')
-        await updateLayoutPresetMaxPax(data.presetId, maxPaxVal)
-      } catch (err) {
-        console.warn('[eventService] Failed to update layout preset max pax on fallback updateEvent:', err)
-      }
-    }
-    void syncLayoutPresetsWithEvents()
     return updated
   }
 }
@@ -675,9 +639,7 @@ export async function activateEvent(event: RestaurantEvent): Promise<void> {
   // 2. If event has linked Table Layout Preset, apply & toggle IS_DEFAULT in Table_Layout_Presets
   if (event.presetId) {
     try {
-      const { setDefaultLayoutPreset, updateLayoutPresetMaxPax } = await import('@/services/tableLayoutService')
-      const targetPax = event.maxPax ?? event.expectedAttendees ?? 50
-      await updateLayoutPresetMaxPax(event.presetId, targetPax)
+      const { setDefaultLayoutPreset } = await import('@/services/tableLayoutService')
       await setDefaultLayoutPreset(event.presetId)
     } catch (err) {
       console.warn('[eventService] Failed to set default layout preset on event activate:', err)
@@ -805,8 +767,6 @@ export async function deactivateEvent(eventId: number): Promise<void> {
       // Ignore
     }
   }
-
-  void syncLayoutPresetsWithEvents()
 }
 
 // ─── Cancel Event ──────────────────────────────────────────────────────────────
@@ -847,8 +807,6 @@ export async function cancelEvent(eventId: number, userEmail?: string | null): P
       saveFallbackEvents(fallbackAll)
     }
   }
-
-  void syncLayoutPresetsWithEvents()
 }
 
 // ─── Soft Delete Event ─────────────────────────────────────────────────────────
@@ -889,52 +847,13 @@ export async function deleteEvent(eventId: number, userEmail?: string | null): P
       saveFallbackEvents(fallbackAll)
     }
   }
-
-  void syncLayoutPresetsWithEvents()
 }
 
-// ─── Synchronize Layout Presets with Linked Events ───────────────────────────
-
 /**
- * Ensures that if a layout preset is linked to an event, its max capacity is set to that event's max pax.
- * If a layout is NOT linked to any active or scheduled event, its max capacity strictly defaults to 50 pax.
+ * Deprecated: Layout presets maintain their own configured max pax in Table Manager.
  */
 export async function syncLayoutPresetsWithEvents(): Promise<void> {
-  try {
-    const [events, { fetchAllLayoutPresets, updateLayoutPresetMaxPax }] = await Promise.all([
-      fetchEvents(),
-      import('@/services/tableLayoutService'),
-    ])
-
-    const presets = await fetchAllLayoutPresets()
-    if (!presets || presets.length === 0) return
-
-    // Find non-deleted, non-cancelled events
-    const validEvents = events.filter((e) => !e.deletedAt && !e.isCancelled)
-
-    for (const preset of presets) {
-      const linkedEvents = validEvents.filter((e) => e.presetId === preset.LAYOUT_PRESET_ID)
-      let targetMaxPax = 50 // default when not linked to an event
-
-      if (linkedEvents.length > 0) {
-        // If an active event is linked to this layout, use its max pax
-        const activeLinked = linkedEvents.find((e) => e.isActive)
-        if (activeLinked) {
-          targetMaxPax = activeLinked.maxPax ?? activeLinked.expectedAttendees ?? 50
-        } else {
-          // Otherwise use the first/upcoming scheduled event's max pax
-          const scheduled = linkedEvents[0]
-          targetMaxPax = scheduled.maxPax ?? scheduled.expectedAttendees ?? 50
-        }
-      }
-
-      if (preset.MAX_PAX !== targetMaxPax) {
-        await updateLayoutPresetMaxPax(preset.LAYOUT_PRESET_ID, targetMaxPax)
-      }
-    }
-  } catch (err) {
-    console.warn('[eventService] syncLayoutPresetsWithEvents notice:', err)
-  }
+  // No-op
 }
 
 // ─── Check Conflicts ───────────────────────────────────────────────────────────

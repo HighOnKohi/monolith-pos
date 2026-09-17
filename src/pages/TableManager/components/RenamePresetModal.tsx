@@ -1,27 +1,31 @@
 import React, { useState, useEffect } from 'react'
-import { X, Pencil } from 'lucide-react'
+import { X, Pencil, Users } from 'lucide-react'
 
 interface RenamePresetModalProps {
   isOpen: boolean
   currentName: string
+  currentMaxPax?: number
   onClose: () => void
-  onRename: (newName: string) => Promise<void>
+  onRename: (newName: string, newMaxPax: number) => Promise<void>
 }
 
 export const RenamePresetModal: React.FC<RenamePresetModalProps> = ({
   isOpen,
   currentName,
+  currentMaxPax = 50,
   onClose,
   onRename,
 }) => {
   const [name, setName] = useState(currentName)
+  const [maxPax, setMaxPax] = useState(String(currentMaxPax || 50))
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     setName(currentName)
+    setMaxPax(String(currentMaxPax || 50))
     setError(null)
-  }, [currentName, isOpen])
+  }, [currentName, currentMaxPax, isOpen])
 
   if (!isOpen) return null
 
@@ -32,13 +36,24 @@ export const RenamePresetModal: React.FC<RenamePresetModalProps> = ({
       return
     }
 
+    const parsedPax = parseInt(maxPax, 10)
+    if (isNaN(parsedPax) || parsedPax <= 0) {
+      setError('Maximum Pax must be a positive number greater than 0')
+      return
+    }
+
+    if (parsedPax > 200) {
+      setError('Maximum Pax cannot exceed 200 seats')
+      return
+    }
+
     try {
       setIsSubmitting(true)
       setError(null)
-      await onRename(name.trim())
+      await onRename(name.trim(), parsedPax)
       onClose()
     } catch (err) {
-      setError((err as Error).message || 'Failed to rename preset')
+      setError((err as Error).message || 'Failed to update preset')
     } finally {
       setIsSubmitting(false)
     }
@@ -54,7 +69,7 @@ export const RenamePresetModal: React.FC<RenamePresetModalProps> = ({
               <Pencil className="w-4 h-4" />
             </div>
             <h3 className="text-sm font-black text-[#14274E]">
-              Rename Layout Preset
+              Edit Layout Preset
             </h3>
           </div>
 
@@ -89,6 +104,27 @@ export const RenamePresetModal: React.FC<RenamePresetModalProps> = ({
             />
           </div>
 
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">
+              <span className="flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-slate-500" />
+                Maximum Pax Capacity
+              </span>
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="200"
+              value={maxPax}
+              onChange={(e) => setMaxPax(e.target.value)}
+              placeholder="e.g. 50"
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#14274E]/20 focus:bg-white transition-all"
+            />
+            <p className="text-[11px] text-slate-400 mt-1">
+              The total guest capacity configured for this floor plan.
+            </p>
+          </div>
+
           <div className="flex items-center justify-end gap-2.5 pt-2">
             <button
               type="button"
@@ -102,7 +138,7 @@ export const RenamePresetModal: React.FC<RenamePresetModalProps> = ({
               disabled={isSubmitting || !name.trim()}
               className="px-4 py-2 bg-[#14274E] hover:bg-[#0f1f40] disabled:opacity-50 text-[#E9C46A] rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs"
             >
-              {isSubmitting ? 'Saving...' : 'Rename Preset'}
+              {isSubmitting ? 'Saving...' : 'Save Preset'}
             </button>
           </div>
         </form>

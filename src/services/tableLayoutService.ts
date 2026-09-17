@@ -339,8 +339,15 @@ export async function setDefaultLayoutPreset(presetId: number): Promise<void> {
     ])
     if (layoutTables.length > 0) {
       const capacityMap = new Map<number, number>()
-      for (const r of liveTables) {
-        capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
+      for (const t of layoutTables) {
+        if (t.TABLE_CAPACITY != null) {
+          capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY)
+        } else {
+          const r = liveTables.find((lt) => lt.TABLE_NUM === t.TABLE_NUM)
+          if (r) {
+            capacityMap.set(t.TABLE_NUM, r.GUEST_CAPACITY)
+          }
+        }
       }
       await savePresetLayout(presetId, layoutTables, capacityMap)
     }
@@ -663,13 +670,11 @@ export async function savePresetLayout(
           .from('Restaurant_Tables')
           .update({
             GUEST_CAPACITY: capacity,
-            LAYOUT_X: t.X_POS,
-            LAYOUT_Y: t.Y_POS,
           })
           .eq('TABLE_ID', existing.TABLE_ID)
 
         if (updErr) {
-          console.warn('[tableLayoutService] Error updating table capacity/pos:', existing.TABLE_ID, updErr)
+          console.warn('[tableLayoutService] Error updating table capacity:', existing.TABLE_ID, updErr)
         }
       } else {
         const { error: insErr } = await supabase
@@ -682,8 +687,6 @@ export async function savePresetLayout(
             CURRENT_GUEST_COUNT: 0,
             BILL_OUT_REQUESTED: false,
             MERGE_GROUP_ID: null,
-            LAYOUT_X: t.X_POS,
-            LAYOUT_Y: t.Y_POS,
           })
 
         if (insErr) {

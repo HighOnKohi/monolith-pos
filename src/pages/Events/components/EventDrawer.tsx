@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   X, Save, CalendarDays, MapPin, User2, Users, Phone, Mail,
   Clock, FileText, Pencil, Trash2, Tag, Palette, BanIcon, Layout, UtensilsCrossed,
+  AlertTriangle, CheckCircle2,
 } from 'lucide-react'
 import type { RestaurantEvent, EventFormData, EventConflict } from '@/types/event'
 import { EVENT_CATEGORIES, EVENT_FORM_DEFAULTS } from '@/types/event'
@@ -57,6 +58,7 @@ interface FormErrors {
   endTime?: string
   maxPax?: string
   expectedAttendees?: string
+  presetId?: string
   contactEmail?: string
 }
 
@@ -95,6 +97,12 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
       .then(setMenuPresets)
       .catch(() => setMenuPresets([]))
   }, [isOpen])
+
+  // Compute event capacity vs layout preset capacity
+  const eventGuestCapacity = form.maxPax && /^\d+$/.test(form.maxPax) ? parseInt(form.maxPax, 10) : 0
+  const selectedPreset = presets.find((p) => p.LAYOUT_PRESET_ID === form.presetId)
+  const selectedPresetCapacity = selectedPreset?.MAX_PAX != null ? Number(selectedPreset.MAX_PAX) : 50
+  const isPresetOverCapacity = Boolean(form.presetId && eventGuestCapacity > 0 && selectedPresetCapacity > eventGuestCapacity)
 
   // ESC key
   useEffect(() => {
@@ -224,6 +232,13 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
 
     if (form.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contactEmail)) {
       errs.contactEmail = 'Invalid email format'
+    }
+
+    // 4. Check preset capacity limit against event guest capacity
+    if (form.presetId && eventGuestCapacity > 0) {
+      if (selectedPresetCapacity > eventGuestCapacity) {
+        errs.presetId = `Layout preset capacity (${selectedPresetCapacity} seats) exceeds event guest capacity (${eventGuestCapacity} seats).`
+      }
     }
 
     setErrors(errs)
@@ -385,7 +400,7 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                   <DetailRow
                     icon={<Layout className="w-3.5 h-3.5" />}
                     label="Linked Table Layout"
-                    value={`${presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`} (${event.maxPax ?? event.expectedAttendees ?? 50} Pax capacity)`}
+                    value={`${presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`} (${presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.MAX_PAX ?? 50} Pax capacity)`}
                   />
                 )}
                 {event.menuPresetId && (
@@ -655,29 +670,50 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                     id="event-preset"
                     value={form.presetId ? String(form.presetId) : ''}
                     onChange={(e) => setField('presetId', e.target.value ? Number(e.target.value) : null)}
-                    className={formInputClass(false)}
+                    className={formInputClass(!!errors.presetId || isPresetOverCapacity)}
                   >
                     <option value="">None (Standard · 50 Pax)</option>
                     {presets.map((p) => {
-                      const isLinkedToThis = form.presetId === p.LAYOUT_PRESET_ID
-                      const capacity = isLinkedToThis ? (form.maxPax || 50) : (p.MAX_PAX ?? 50)
+                      const presetCap = p.MAX_PAX != null ? Number(p.MAX_PAX) : 50
+                      const isOverCapacity = eventGuestCapacity > 0 && presetCap > eventGuestCapacity
+                      const isCurrentlySelected = form.presetId === p.LAYOUT_PRESET_ID
                       return (
-                        <option key={p.LAYOUT_PRESET_ID} value={p.LAYOUT_PRESET_ID}>
-                          {p.PRESET_NAME} ({capacity} Pax){p.IS_DEFAULT ? ' · Default' : ''}
+                        <option
+                          key={p.LAYOUT_PRESET_ID}
+                          value={p.LAYOUT_PRESET_ID}
+                          disabled={isOverCapacity && !isCurrentlySelected}
+                        >
+                          {p.PRESET_NAME} ({presetCap} Pax){isOverCapacity ? ' — Exceeds Event Capacity' : ''}{p.IS_DEFAULT ? ' · Default' : ''}
                         </option>
                       )
                     })}
                   </select>
-                  {form.presetId ? (
-                    <p className="text-[10px] font-bold text-indigo-700 mt-1 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block animate-pulse" />
-                      Layout max capacity: {form.maxPax || 50} Pax (based on event)
-                    </p>
-                  ) : (
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      Standard layout · Unlinked layouts default to 50 Pax
+
+                  {/* Warning banner when selected preset exceeds event guest capacity */}
+                  {isPresetOverCapacity && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-2 text-[11px] text-amber-900 mt-1.5 animate-in fade-in duration-150">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold">Capacity Mismatch: </span>
+                        Layout preset <span className="font-black">"{selectedPreset?.PRESET_NAME}"</span> has a capacity of <span className="font-black">{selectedPresetCapacity} seats</span>, which exceeds the event guest capacity of <span className="font-black">{eventGuestCapacity} seats</span>. Please adjust event capacity or choose a layout with &le; {eventGuestCapacity} seats.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Valid selected preset indicator */}
+                  {form.presetId && !isPresetOverCapacity && (
+                    <p className="text-[10px] font-bold text-emerald-700 mt-1 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-500 inline-block" />
+                      Layout preset: {selectedPresetCapacity} Pax (Event capacity: {eventGuestCapacity || 'Not set'})
                     </p>
                   )}
+
+                  {!form.presetId && (
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Standard layout · Unlinked layouts maintain their configured capacity
+                    </p>
+                  )}
+                  {errors.presetId && <p className={FORM_ERROR_CLASS}>{errors.presetId}</p>}
                 </div>
                 <div className="space-y-1.5">
                   <label htmlFor="event-menu-preset" className={FORM_LABEL_CLASS}>
@@ -800,8 +836,9 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
               </button>
               <button
                 type="button"
-                disabled={submitting || conflicts.length > 0}
+                disabled={submitting || conflicts.length > 0 || isPresetOverCapacity}
                 onClick={handleSubmit}
+                title={isPresetOverCapacity ? 'Cannot save: Selected layout preset exceeds event guest capacity' : undefined}
                 className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? (

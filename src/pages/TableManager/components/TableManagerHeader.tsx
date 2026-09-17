@@ -234,23 +234,23 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
       {!isEditMode && !isQrPrintMode && (
         <div className="hidden md:flex items-center gap-3.5 px-3.5 py-2 bg-white border border-slate-300 rounded-xl shadow-xs">
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-            <span className="w-3 h-3 rounded-[3px] bg-white border-2 border-[#10B981] shadow-2xs" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#10B981] shrink-0" />
             <span>Available</span>
           </div>
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-            <span className="w-3 h-3 rounded-[3px] bg-white border-2 border-[#3B82F6] shadow-2xs" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#3B82F6] shrink-0" />
             <span>Occupied</span>
           </div>
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-            <span className="w-3 h-3 rounded-[3px] bg-white border-2 border-[#F59E0B] shadow-2xs" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B] shrink-0" />
             <span>Reserved</span>
           </div>
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-            <span className="w-3 h-3 rounded-[3px] bg-white border-2 border-[#EF4444] shadow-2xs" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#EF4444] shrink-0" />
             <span>Bill Out</span>
           </div>
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-            <span className="w-3 h-3 rounded-[3px] bg-white border-2 border-[#64748B] shadow-2xs" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[#64748B] shrink-0" />
             <span>Unavailable</span>
           </div>
         </div>
