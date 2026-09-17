@@ -46,7 +46,6 @@ interface DragState {
 import {
   calculateLayoutSuppression,
   calculateTableEffectiveCapacity,
-  calculateLayoutCapacity,
   resolveLayoutCapacityOverflow,
   distributePresetTables,
   calculateTableBaseCapacity,
@@ -379,7 +378,7 @@ export default function TableManager() {
         const missingTables = layoutData.some((lt) => !liveTables.some((rt) => rt.TABLE_NUM === lt.TABLE_NUM))
         if (missingTables) {
           try {
-            await savePresetLayout(defaultPreset.LAYOUT_PRESET_ID, layoutData, undefined, defaultPreset.MAX_PAX)
+            await savePresetLayout(defaultPreset.LAYOUT_PRESET_ID, layoutData, undefined, defaultPreset.MAX_PAX ?? 50)
             const refreshedLive = await fetchLiveRestaurantTables()
             setRestaurantTables(refreshedLive)
           } catch {
