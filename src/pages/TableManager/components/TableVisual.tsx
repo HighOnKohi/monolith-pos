@@ -1,6 +1,7 @@
 import React, { memo } from 'react'
 import { Users, GitMerge, Check, RotateCw } from 'lucide-react'
 import type { TableType } from '@/services/tableLayoutService'
+import { getMergeGroupColor } from '@/utils/floorPlan/mergeGroupColors'
 
 interface ChairProps {
   rotation?: number // in degrees: 0 = facing down (placed on top), 180 = facing up (placed on bottom), 90 = facing left, 270 = facing right
@@ -310,7 +311,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   guestCount = 0,
   capacity = 4,
   isMerged = false,
-  mergeGroupId: _mergeGroupId = null,
+  mergeGroupId = null,
   isSelected = false,
   isEditMode = false,
   isQrPrintMode = false,
@@ -336,6 +337,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   }
 
   const statusInfo = getStatusDetails()
+  const mergeTheme = getMergeGroupColor(mergeGroupId)
   const chairSize = Math.max(10, Math.round(cellSize * 0.22))
   const chairOffset = -Math.round(chairSize * 1.15)
 
@@ -448,10 +450,16 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
             </div>
           )}
 
-          {/* Merged Indicator Badge */}
+          {/* Merged Indicator Badge with Solid Theme Background */}
           {!isQrPrintMode && isMerged && (
-            <div className="absolute top-1 left-1 p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
+            <div
+              className="absolute top-1.5 left-1.5 p-0.5 rounded-md flex items-center justify-center pointer-events-none shadow-xs z-20"
+              style={{
+                backgroundColor: mergeTheme.primary,
+              }}
+              title={`Merge Group #${mergeGroupId}`}
+            >
+              <GitMerge className="w-2.5 h-2.5 text-white" style={{ color: '#FFFFFF' }} />
             </div>
           )}
 
@@ -562,10 +570,16 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
             </div>
           )}
 
-          {/* Merged Indicator Badge */}
+          {/* Merged Indicator Badge with Solid Theme Background */}
           {!isQrPrintMode && isMerged && (
-            <div className="absolute top-1.5 left-2 p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
+            <div
+              className="absolute top-1.5 left-2 p-0.5 rounded-md flex items-center justify-center pointer-events-none shadow-xs z-20"
+              style={{
+                backgroundColor: mergeTheme.primary,
+              }}
+              title={`Merge Group #${mergeGroupId}`}
+            >
+              <GitMerge className="w-2.5 h-2.5 text-white" style={{ color: '#FFFFFF' }} />
             </div>
           )}
 
@@ -706,10 +720,16 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
             </div>
           )}
 
-          {/* Merged Indicator Badge */}
+          {/* Merged Indicator Badge with Solid Theme Background */}
           {!isQrPrintMode && isMerged && (
-            <div className="absolute top-1.5 left-2 p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
+            <div
+              className="absolute top-2 left-1.5 p-0.5 rounded-md flex items-center justify-center pointer-events-none shadow-xs z-20"
+              style={{
+                backgroundColor: mergeTheme.primary,
+              }}
+              title={`Merge Group #${mergeGroupId}`}
+            >
+              <GitMerge className="w-2.5 h-2.5 text-white" style={{ color: '#FFFFFF' }} />
             </div>
           )}
 
@@ -804,10 +824,18 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
             </div>
           )}
 
-          {/* Merged Indicator Badge (Tucked in Top-Left Quadrant so it never covers table number) */}
+          {/* Merged Indicator Badge with Solid Theme Background */}
           {!isQrPrintMode && isMerged && (
-            <div className="absolute top-1.5 left-2 p-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
+            <div
+              className="absolute p-0.5 rounded-full flex items-center justify-center pointer-events-none shadow-xs z-20"
+              style={{
+                top: `${Math.max(4, Math.round(cellSize * 0.12))}px`,
+                left: `${Math.max(4, Math.round(cellSize * 0.12))}px`,
+                backgroundColor: mergeTheme.primary,
+              }}
+              title={`Merge Group #${mergeGroupId}`}
+            >
+              <GitMerge className="w-2.5 h-2.5 text-white" style={{ color: '#FFFFFF' }} />
             </div>
           )}
 
@@ -887,10 +915,18 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
             </div>
           )}
 
-          {/* Merged Indicator Badge (Tucked in Top-Left Quadrant so it never covers table number) */}
+          {/* Merged Indicator Badge with Solid Theme Background & Inset Padding */}
           {!isQrPrintMode && isMerged && (
-            <div className="absolute top-3 left-4 p-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-3 h-3 text-indigo-600" />
+            <div
+              className="absolute p-1 rounded-full flex items-center justify-center pointer-events-none shadow-xs z-20"
+              style={{
+                top: `${Math.max(14, Math.round(totalSize * 0.18))}px`,
+                left: `${Math.max(14, Math.round(totalSize * 0.18))}px`,
+                backgroundColor: mergeTheme.primary,
+              }}
+              title={`Merge Group #${mergeGroupId}`}
+            >
+              <GitMerge className="w-3 h-3 text-white" style={{ color: '#FFFFFF' }} />
             </div>
           )}
 

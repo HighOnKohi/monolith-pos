@@ -37,8 +37,10 @@ export function calculateLayoutSuppression(
 ): Map<number, ChairSuppression> {
   const map = new Map<number, ChairSuppression>()
   const cellMap = new Map<string, number>()
+  const tableByNum = new Map<number, TableLayoutInfo>()
 
   for (const t of tables) {
+    tableByNum.set(t.TABLE_NUM, t)
     const cfg = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
     for (let dx = 0; dx < cfg.width; dx++) {
       for (let dy = 0; dy < cfg.height; dy++) {
@@ -50,16 +52,24 @@ export function calculateLayoutSuppression(
   for (const t of tables) {
     let suppressedCount = 0
 
+    // Only suppress chairs against adjacent tables that share the SAME active merge group!
+    const isTouchingMergePartner = (neighborTableNum: number | undefined) => {
+      if (!neighborTableNum || neighborTableNum === t.TABLE_NUM) return false
+      if (t.MERGE_GROUP_ID == null) return false
+      const neighbor = tableByNum.get(neighborTableNum)
+      return neighbor?.MERGE_GROUP_ID != null && neighbor.MERGE_GROUP_ID === t.MERGE_GROUP_ID
+    }
+
     if (t.TABLE_TYPE === 1 || t.TABLE_TYPE === 3) {
       const topCell = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
       const bottomCell = cellMap.get(`${t.X_POS},${t.Y_POS + 1}`)
       const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
       const rightCell = cellMap.get(`${t.X_POS + 1},${t.Y_POS}`)
 
-      const top = Boolean(topCell && topCell !== t.TABLE_NUM)
-      const bottom = Boolean(bottomCell && bottomCell !== t.TABLE_NUM)
-      const left = Boolean(leftCell && leftCell !== t.TABLE_NUM)
-      const right = Boolean(rightCell && rightCell !== t.TABLE_NUM)
+      const top = isTouchingMergePartner(topCell)
+      const bottom = isTouchingMergePartner(bottomCell)
+      const left = isTouchingMergePartner(leftCell)
+      const right = isTouchingMergePartner(rightCell)
 
       if (top) suppressedCount++
       if (bottom) suppressedCount++
@@ -70,16 +80,16 @@ export function calculateLayoutSuppression(
     } else if (t.TABLE_TYPE === 2) {
       const topMask = [0, 1, 2].map((dx) => {
         const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS - 1}`)
-        return Boolean(c && c !== t.TABLE_NUM)
+        return isTouchingMergePartner(c)
       })
       const bottomMask = [0, 1, 2].map((dx) => {
         const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS + 1}`)
-        return Boolean(c && c !== t.TABLE_NUM)
+        return isTouchingMergePartner(c)
       })
       const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
       const rightCell = cellMap.get(`${t.X_POS + 3},${t.Y_POS}`)
-      const left = Boolean(leftCell && leftCell !== t.TABLE_NUM)
-      const right = Boolean(rightCell && rightCell !== t.TABLE_NUM)
+      const left = isTouchingMergePartner(leftCell)
+      const right = isTouchingMergePartner(rightCell)
 
       suppressedCount += topMask.filter(Boolean).length
       suppressedCount += bottomMask.filter(Boolean).length
@@ -90,23 +100,23 @@ export function calculateLayoutSuppression(
     } else if (t.TABLE_TYPE === 4) {
       const top1 = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
       const top2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS - 1}`)
-      const topOcc = Boolean((top1 && top1 !== t.TABLE_NUM) || (top2 && top2 !== t.TABLE_NUM))
+      const topOcc = isTouchingMergePartner(top1) || isTouchingMergePartner(top2)
 
       const tr = cellMap.get(`${t.X_POS + 2},${t.Y_POS}`)
-      const trOcc = Boolean(tr && tr !== t.TABLE_NUM)
+      const trOcc = isTouchingMergePartner(tr)
 
       const br = cellMap.get(`${t.X_POS + 2},${t.Y_POS + 1}`)
-      const brOcc = Boolean(br && br !== t.TABLE_NUM)
+      const brOcc = isTouchingMergePartner(br)
 
       const bot1 = cellMap.get(`${t.X_POS},${t.Y_POS + 2}`)
       const bot2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS + 2}`)
-      const botOcc = Boolean((bot1 && bot1 !== t.TABLE_NUM) || (bot2 && bot2 !== t.TABLE_NUM))
+      const botOcc = isTouchingMergePartner(bot1) || isTouchingMergePartner(bot2)
 
       const bl = cellMap.get(`${t.X_POS - 1},${t.Y_POS + 1}`)
-      const blOcc = Boolean(bl && bl !== t.TABLE_NUM)
+      const blOcc = isTouchingMergePartner(bl)
 
       const tl = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
-      const tlOcc = Boolean(tl && tl !== t.TABLE_NUM)
+      const tlOcc = isTouchingMergePartner(tl)
 
       const radial = [topOcc, trOcc, brOcc, botOcc, blOcc, tlOcc]
       suppressedCount = radial.filter(Boolean).length
@@ -114,16 +124,16 @@ export function calculateLayoutSuppression(
     } else if (t.TABLE_TYPE === 5) {
       const topCell = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
       const bottomCell = cellMap.get(`${t.X_POS},${t.Y_POS + 3}`)
-      const top = Boolean(topCell && topCell !== t.TABLE_NUM)
-      const bottom = Boolean(bottomCell && bottomCell !== t.TABLE_NUM)
+      const top = isTouchingMergePartner(topCell)
+      const bottom = isTouchingMergePartner(bottomCell)
 
       const leftMask = [0, 1, 2].map((dy) => {
         const c = cellMap.get(`${t.X_POS - 1},${t.Y_POS + dy}`)
-        return Boolean(c && c !== t.TABLE_NUM)
+        return isTouchingMergePartner(c)
       })
       const rightMask = [0, 1, 2].map((dy) => {
         const c = cellMap.get(`${t.X_POS + 1},${t.Y_POS + dy}`)
-        return Boolean(c && c !== t.TABLE_NUM)
+        return isTouchingMergePartner(c)
       })
 
       if (top) suppressedCount++

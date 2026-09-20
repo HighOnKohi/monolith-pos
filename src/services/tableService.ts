@@ -982,6 +982,18 @@ export async function unmergeTables(primaryTableId: number): Promise<TableData[]
   if (secondaryList.length === 0) throw new Error('This table has no merged members to unmerge.')
 
   const secondaryIds = secondaryList.map((t) => t.TABLE_ID)
+  const allGroupTableIds = [primaryTableId, ...secondaryIds]
+
+  // Check if any member table has active orders before unmerging
+  const { data: activeOrders } = await supabase
+    .from('Restaurant_Orders')
+    .select('ORDER_ID')
+    .in('TABLE_ID', allGroupTableIds)
+    .in('ORDER_STATUS', ACTIVE_ORDER_STATUSES)
+
+  if (activeOrders && activeOrders.length > 0) {
+    throw new Error('Cannot unmerge: This table group currently has active order(s). Please settle or cancel all orders before unmerging.')
+  }
 
   const { error: releaseErr } = await supabase
     .schema('tables').from('Restaurant_Tables')

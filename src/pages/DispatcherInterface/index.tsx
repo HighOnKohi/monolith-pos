@@ -1,14 +1,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Loader2 } from 'lucide-react'
 import {
-  Clock,
-  ChefHat,
-  RefreshCw,
-  Check,
-  CheckCircle,
-  CheckCircle2,
-  Flag,
-  XCircle,
-} from 'lucide-react'
+  ClockFilledIcon,
+  ChefHatFilledIcon,
+  CheckCircleFilledIcon,
+  CheckmarkFilledIcon,
+  FlagFilledIcon,
+  XCircleFilledIcon,
+} from '@/components/icons/FilledIcons'
 import { supabase } from '@/lib/supabase'
 import {
   fetchDispatcherOrders,
@@ -416,64 +415,81 @@ export default function DispatcherInterface() {
         </div>
       )}
 
-      {/* Top Header */}
-      <header className="dispatcher-header">
-        <h1 className="dispatcher-title">Dispatcher Interface</h1>
+      {/* ── Dispatcher Stage Tabs (Segmented Style with Sliding Indicator) ── */}
+      <div className="dispatcher-tabs-bar">
+        <nav className="dispatcher-tabs-nav" aria-label="Dispatcher stages">
+          {/* Animated sliding background pill */}
+          <div
+            className={`dispatcher-tab-slider ${
+              activeTableStage === 'preparing'
+                ? 'pos-0'
+                : activeTableStage === 'cooking'
+                  ? 'pos-1'
+                  : 'pos-2'
+            }`}
+            aria-hidden="true"
+          />
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-2.5">
           <button
-            onClick={() => {
-              loadOrders(false)
-            }}
-            disabled={isLoading}
-            className="dispatcher-refresh-btn"
+            type="button"
+            onClick={() => setActiveTableStage('preparing')}
+            className={`dispatcher-tab-btn ${activeTableStage === 'preparing' ? 'is-active' : ''}`}
           >
-            <RefreshCw className={['dispatcher-icon', isLoading ? 'animate-spin' : ''].join(' ')} />
-            <span>Refresh</span>
+            <span className="dispatcher-tab-content">
+              <ClockFilledIcon className="dispatcher-tab-icon" />
+              <span>Requested</span>
+            </span>
+            {activeTableStage !== 'preparing' && tablePreparingCount > 0 && (
+              <span className="dispatcher-tab-badge">{tablePreparingCount}</span>
+            )}
           </button>
-        </div>
-      </header>
-
-      {/* Tabs Row */}
-      <div className="dispatcher-tabs">
-        <button
-          className={['dispatcher-tab', activeTableStage === 'preparing' ? 'active' : ''].join(' ')}
-          onClick={() => setActiveTableStage('preparing')}
-        >
-          <Clock className="dispatcher-tab-icon" />
-          <span className="dispatcher-tab-label">Requested</span>
-          <span className="dispatcher-tab-badge">{tablePreparingCount}</span>
-        </button>
-        <button
-          className={['dispatcher-tab', activeTableStage === 'cooking' ? 'active' : ''].join(' ')}
-          onClick={() => setActiveTableStage('cooking')}
-        >
-          <ChefHat className="dispatcher-tab-icon" />
-          <span className="dispatcher-tab-label">Cooking</span>
-          <span className="dispatcher-tab-badge">{tableCookingCount}</span>
-        </button>
-        <button
-          className={['dispatcher-tab', activeTableStage === 'done' ? 'active' : ''].join(' ')}
-          onClick={() => setActiveTableStage('done')}
-        >
-          <CheckCircle2 className="dispatcher-tab-icon" />
-          <span className="dispatcher-tab-label">Done</span>
-          <span className="dispatcher-tab-badge">{tableDoneCount}</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTableStage('cooking')}
+            className={`dispatcher-tab-btn ${activeTableStage === 'cooking' ? 'is-active' : ''}`}
+          >
+            <span className="dispatcher-tab-content">
+              <ChefHatFilledIcon className="dispatcher-tab-icon" />
+              <span>Cooking</span>
+            </span>
+            {activeTableStage !== 'cooking' && tableCookingCount > 0 && (
+              <span className="dispatcher-tab-badge">{tableCookingCount}</span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTableStage('done')}
+            className={`dispatcher-tab-btn ${activeTableStage === 'done' ? 'is-active' : ''}`}
+          >
+            <span className="dispatcher-tab-content">
+              <CheckCircleFilledIcon className="dispatcher-tab-icon" />
+              <span>Done</span>
+            </span>
+            {activeTableStage !== 'done' && tableDoneCount > 0 && (
+              <span className="dispatcher-tab-badge">{tableDoneCount}</span>
+            )}
+          </button>
+        </nav>
       </div>
 
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6">
-        <div className="dispatcher-orders-grid">
-          {filteredOrders.length === 0 ? (
-            <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400 text-xs">
-              <ChefHat className="w-10 h-10 text-slate-300 mb-2" />
+      {/* Main Content Area with Dedicated Background Container */}
+      <main className="dispatcher-main-content">
+        <div className="dispatcher-orders-container">
+          {isLoading && orders.length === 0 ? (
+            <div className="dispatcher-loading-state">
+              <Loader2 className="w-9 h-9 text-[#14274E] animate-spin mb-3" />
+              <span className="font-extrabold text-[#14274E] text-sm">Loading orders...</span>
+              <span className="text-slate-400 text-xs mt-0.5">Querying kitchen orders from database</span>
+            </div>
+          ) : filteredOrders.length === 0 ? (
+            <div className="dispatcher-empty-state">
+              <ChefHatFilledIcon className="w-11 h-11 text-slate-300 mb-2" />
               <span className="font-bold text-slate-600 text-sm">No orders in this stage</span>
-              <span>Orders will appear here as they are punched by service.</span>
+              <span className="text-slate-400 text-xs mt-0.5">Orders will appear here as they are punched by service.</span>
             </div>
           ) : (
-            filteredOrders.map((order) => {
+            <div className="dispatcher-orders-grid">
+              {filteredOrders.map((order) => {
               const groupedItems = groupOrderItems(order)
               const activeItems = order.items.filter((i) => i.status !== 'CANCELLED')
               const doneCount = activeItems.filter((i) => i.status === 'DONE').length
@@ -569,7 +585,7 @@ export default function DispatcherInterface() {
                                           </span>
                                           {item.isFlagged && (
                                             <span className="dispatcher-flag-badge shrink-0">
-                                              <Flag className="h-2.5 w-2.5" />
+                                              <FlagFilledIcon className="h-2.5 w-2.5" />
                                               Flagged
                                             </span>
                                           )}
@@ -587,12 +603,12 @@ export default function DispatcherInterface() {
                                         >
                                           {isDone ? (
                                             <>
-                                              <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                                              <CheckCircleFilledIcon className="w-3.5 h-3.5 text-white" />
                                               <span>Done</span>
                                             </>
                                           ) : (
                                             <>
-                                              <Check className="w-3.5 h-3.5 text-slate-400" />
+                                              <CheckmarkFilledIcon className="w-3.5 h-3.5 text-slate-400" />
                                               <span>Mark Done</span>
                                             </>
                                           )}
@@ -641,7 +657,7 @@ export default function DispatcherInterface() {
                                           {group.name}
                                           {group.isFlagged && (
                                             <span className="dispatcher-flag-badge ml-1.5">
-                                              <Flag className="h-2.5 w-2.5" />
+                                              <FlagFilledIcon className="h-2.5 w-2.5" />
                                               Flagged
                                             </span>
                                           )}
@@ -666,10 +682,7 @@ export default function DispatcherInterface() {
                                                   : 'Flag item as unavailable / out of stock'
                                               }
                                             >
-                                              <Flag
-                                                className="w-2.5 h-2.5"
-                                                fill={group.isFlagged ? 'currentColor' : 'none'}
-                                              />
+                                              <FlagFilledIcon className="w-2.5 h-2.5" />
                                               <span>{group.isFlagged ? 'Flagged' : 'Flag'}</span>
                                             </button>
                                             <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
@@ -697,14 +710,14 @@ export default function DispatcherInterface() {
                           onClick={() => setRejectingOrder(order)}
                           className="dispatcher-reject-action-btn"
                         >
-                          <XCircle className="w-4 h-4" />
+                          <XCircleFilledIcon className="w-4 h-4" />
                           <span>Flag / Reject</span>
                         </button>
                         <button
                           onClick={() => handleMoveToCooking(order.orderId)}
                           className="w-full py-2.5 rounded-xl bg-[#14274E] hover:bg-[#203c73] text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
                         >
-                          <ChefHat className="w-4 h-4 text-[#E9C46A]" />
+                          <ChefHatFilledIcon className="w-4 h-4 text-[#E9C46A]" />
                           <span>Start Cooking →</span>
                         </button>
                       </>
@@ -732,7 +745,7 @@ export default function DispatcherInterface() {
                           className="w-full py-2 rounded-xl text-xs font-bold border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                           title="Mark all remaining items as done and move order to Done"
                         >
-                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                          <CheckCircleFilledIcon className="w-3.5 h-3.5 text-emerald-600" />
                           <span>Mark All Done →</span>
                         </button>
                       </div>
@@ -743,14 +756,15 @@ export default function DispatcherInterface() {
                         onClick={() => handleMoveToCompleted(order.orderId)}
                         className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
                       >
-                        <CheckCircle2 className="w-4 h-4" />
+                        <CheckCircleFilledIcon className="w-4 h-4" />
                         <span>Mark as Complete →</span>
                       </button>
                     )}
                   </div>
                 </div>
               )
-            })
+            })}
+            </div>
           )}
         </div>
       </main>
