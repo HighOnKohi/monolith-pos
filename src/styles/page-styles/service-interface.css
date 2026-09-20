@@ -114,39 +114,8 @@
 }
 
 .service-interface-page-container .service-interface-categories {
-  --service-interface-category-padding: 0.8rem 1.1rem;
-  --service-interface-category-icon-color: #14274e;
-  --service-interface-category-icon-stroke: 2;
-  --service-interface-category-font-size: 0.75rem;
-  --service-interface-category-font-weight: 700;
-  --service-interface-category-border-width: 1px;
-  --service-interface-category-background: #0285c700;
   flex-shrink: 0;
-  background-color: var(--service-interface-category-background) !important;
-}
-
-.service-interface-page-container .service-interface-categories > div {
-  background-color: var(--service-interface-category-background) !important;
-}
-
-.service-interface-page-container .service-interface-categories .service-interface-category-card {
-  padding: var(--service-interface-category-padding);
-  border-width: 2.4px;
-  border-color:#8b9eb8;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
-}
-
-.service-interface-page-container .service-interface-categories .service-interface-category-icon {
-  color: var(--service-interface-category-icon-color);
-  stroke-width: var(--service-interface-category-icon-stroke);
-  fill: currentColor;
-  width: 1.15rem;
-  height: 1.15rem;
-}
-
-.service-interface-page-container .service-interface-categories .service-interface-category-card > div:nth-child(2) span {
-  font-size: var(--service-interface-category-font-size);
-  font-weight: var(--service-interface-category-font-weight);
+  background-color: transparent;
 }
 
 .service-interface-page-container .service-interface-menu-items {

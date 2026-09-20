@@ -52,12 +52,10 @@ export function calculateLayoutSuppression(
   for (const t of tables) {
     let suppressedCount = 0
 
-    // Only suppress chairs against adjacent tables that share the SAME active merge group!
-    const isTouchingMergePartner = (neighborTableNum: number | undefined) => {
+    // Suppress chairs whenever adjacent to ANY other table (clears up touching chairs dynamically)
+    const isTouchingAdjacentTable = (neighborTableNum: number | undefined) => {
       if (!neighborTableNum || neighborTableNum === t.TABLE_NUM) return false
-      if (t.MERGE_GROUP_ID == null) return false
-      const neighbor = tableByNum.get(neighborTableNum)
-      return neighbor?.MERGE_GROUP_ID != null && neighbor.MERGE_GROUP_ID === t.MERGE_GROUP_ID
+      return true
     }
 
     if (t.TABLE_TYPE === 1 || t.TABLE_TYPE === 3) {
@@ -66,10 +64,10 @@ export function calculateLayoutSuppression(
       const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
       const rightCell = cellMap.get(`${t.X_POS + 1},${t.Y_POS}`)
 
-      const top = isTouchingMergePartner(topCell)
-      const bottom = isTouchingMergePartner(bottomCell)
-      const left = isTouchingMergePartner(leftCell)
-      const right = isTouchingMergePartner(rightCell)
+      const top = isTouchingAdjacentTable(topCell)
+      const bottom = isTouchingAdjacentTable(bottomCell)
+      const left = isTouchingAdjacentTable(leftCell)
+      const right = isTouchingAdjacentTable(rightCell)
 
       if (top) suppressedCount++
       if (bottom) suppressedCount++
@@ -80,16 +78,16 @@ export function calculateLayoutSuppression(
     } else if (t.TABLE_TYPE === 2) {
       const topMask = [0, 1, 2].map((dx) => {
         const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS - 1}`)
-        return isTouchingMergePartner(c)
+        return isTouchingAdjacentTable(c)
       })
       const bottomMask = [0, 1, 2].map((dx) => {
         const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS + 1}`)
-        return isTouchingMergePartner(c)
+        return isTouchingAdjacentTable(c)
       })
       const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
       const rightCell = cellMap.get(`${t.X_POS + 3},${t.Y_POS}`)
-      const left = isTouchingMergePartner(leftCell)
-      const right = isTouchingMergePartner(rightCell)
+      const left = isTouchingAdjacentTable(leftCell)
+      const right = isTouchingAdjacentTable(rightCell)
 
       suppressedCount += topMask.filter(Boolean).length
       suppressedCount += bottomMask.filter(Boolean).length
@@ -100,23 +98,23 @@ export function calculateLayoutSuppression(
     } else if (t.TABLE_TYPE === 4) {
       const top1 = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
       const top2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS - 1}`)
-      const topOcc = isTouchingMergePartner(top1) || isTouchingMergePartner(top2)
+      const topOcc = isTouchingAdjacentTable(top1) || isTouchingAdjacentTable(top2)
 
       const tr = cellMap.get(`${t.X_POS + 2},${t.Y_POS}`)
-      const trOcc = isTouchingMergePartner(tr)
+      const trOcc = isTouchingAdjacentTable(tr)
 
       const br = cellMap.get(`${t.X_POS + 2},${t.Y_POS + 1}`)
-      const brOcc = isTouchingMergePartner(br)
+      const brOcc = isTouchingAdjacentTable(br)
 
       const bot1 = cellMap.get(`${t.X_POS},${t.Y_POS + 2}`)
       const bot2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS + 2}`)
-      const botOcc = isTouchingMergePartner(bot1) || isTouchingMergePartner(bot2)
+      const botOcc = isTouchingAdjacentTable(bot1) || isTouchingAdjacentTable(bot2)
 
       const bl = cellMap.get(`${t.X_POS - 1},${t.Y_POS + 1}`)
-      const blOcc = isTouchingMergePartner(bl)
+      const blOcc = isTouchingAdjacentTable(bl)
 
       const tl = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
-      const tlOcc = isTouchingMergePartner(tl)
+      const tlOcc = isTouchingAdjacentTable(tl)
 
       const radial = [topOcc, trOcc, brOcc, botOcc, blOcc, tlOcc]
       suppressedCount = radial.filter(Boolean).length
@@ -124,16 +122,16 @@ export function calculateLayoutSuppression(
     } else if (t.TABLE_TYPE === 5) {
       const topCell = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
       const bottomCell = cellMap.get(`${t.X_POS},${t.Y_POS + 3}`)
-      const top = isTouchingMergePartner(topCell)
-      const bottom = isTouchingMergePartner(bottomCell)
+      const top = isTouchingAdjacentTable(topCell)
+      const bottom = isTouchingAdjacentTable(bottomCell)
 
       const leftMask = [0, 1, 2].map((dy) => {
         const c = cellMap.get(`${t.X_POS - 1},${t.Y_POS + dy}`)
-        return isTouchingMergePartner(c)
+        return isTouchingAdjacentTable(c)
       })
       const rightMask = [0, 1, 2].map((dy) => {
         const c = cellMap.get(`${t.X_POS + 1},${t.Y_POS + dy}`)
-        return isTouchingMergePartner(c)
+        return isTouchingAdjacentTable(c)
       })
 
       if (top) suppressedCount++
@@ -150,7 +148,7 @@ export function calculateLayoutSuppression(
 
 /**
  * Calculates the effective capacity for an individual table.
- * Preserves the table's base capacity, deducting only edge seats if merged and touching.
+ * Preserves the table's base capacity, deducting touching edge seats dynamically.
  */
 export function calculateTableEffectiveCapacity(
   table: TableLayoutInfo,
@@ -158,14 +156,9 @@ export function calculateTableEffectiveCapacity(
   baseCapacities?: Map<number, number>,
 ): number {
   const baseCap = baseCapacities?.get(table.TABLE_NUM) ?? calculateTableBaseCapacity(table.TABLE_NUM, table.TABLE_TYPE)
-
-  if (table.MERGE_GROUP_ID != null) {
-    const supp = suppressionMap.get(table.TABLE_NUM)
-    const suppCount = supp?.suppressedCount ?? 0
-    return Math.max(1, baseCap - suppCount)
-  }
-
-  return Math.max(1, baseCap)
+  const supp = suppressionMap.get(table.TABLE_NUM)
+  const suppCount = supp?.suppressedCount ?? 0
+  return Math.max(1, baseCap - suppCount)
 }
 
 /**
@@ -210,7 +203,7 @@ export function resolveLayoutCapacityOverflow(
 
   let totalEffective = layout.reduce((sum, t) => {
     const supp = suppressionMap.get(t.TABLE_NUM)?.suppressedCount ?? 0
-    const eff = Math.max(1, (resolved.get(t.TABLE_NUM) ?? 4) - (t.MERGE_GROUP_ID != null ? supp : 0))
+    const eff = Math.max(1, (resolved.get(t.TABLE_NUM) ?? 4) - supp)
     return sum + eff
   }, 0)
 
