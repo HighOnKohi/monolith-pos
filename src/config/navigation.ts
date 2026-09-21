@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Users,
   ClipboardList,
+  ConciergeBell,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -57,6 +58,13 @@ export const navigation: NavSection[] = [
         children: [
           { title: 'Service Interface', description: 'Manage service orders and bills.', path: '/service', icon: LayoutGrid },
           { title: 'Cashier Interface', description: 'Cashier tools.', path: '/cashier', icon: Receipt },
+        ],
+      },
+      {
+        title: 'Floor Interfaces',
+        icon: ConciergeBell,
+        children: [
+          { title: 'Receptionist Interface', description: 'Floor view, seating, and table status.', path: '/reception', icon: ConciergeBell },
         ],
       },
     ],

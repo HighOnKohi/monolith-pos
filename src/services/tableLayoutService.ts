@@ -66,6 +66,7 @@ export interface TableLayoutPreset {
   PRESET_GRID_WIDTH: number
   PRESET_GRID_HEIGHT: number
   IS_DEFAULT: boolean
+  IS_PROTECTED?: boolean
   MAX_PAX?: number | null
   CREATED_AT?: string
   UPDATED_AT?: string
@@ -81,6 +82,7 @@ export interface TableLayoutInfo {
   X_POS: number
   Y_POS: number
   TABLE_CAPACITY?: number | null
+  LABEL_ID?: number | null
 }
 
 export interface RestaurantTableData {
@@ -92,6 +94,7 @@ export interface RestaurantTableData {
   RESERVED_SINCE: string | null
   BILL_OUT_REQUESTED: boolean
   MERGE_GROUP_ID: number | null
+  LABEL_ID?: number | null
 }
 
 export interface MergedTableNode extends TableLayoutInfo {
@@ -101,6 +104,7 @@ export interface MergedTableNode extends TableLayoutInfo {
   GUEST_CAPACITY?: number
   BILL_OUT_REQUESTED?: boolean
   TABLE_ID?: number
+  LABEL_ID?: number | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,6 +164,7 @@ export async function fetchAllLayoutPresets(): Promise<TableLayoutPreset[]> {
       PRESET_GRID_WIDTH: Number(row.PRESET_GRID_WIDTH || 20),
       PRESET_GRID_HEIGHT: Number(row.PRESET_GRID_HEIGHT || 16),
       IS_DEFAULT: Boolean(row.IS_DEFAULT),
+      IS_PROTECTED: Boolean(row.IS_PROTECTED),
       MAX_PAX: maxPax,
       CREATED_AT: row.CREATED_AT != null ? String(row.CREATED_AT) : undefined,
       UPDATED_AT: row.UPDATED_AT != null ? String(row.UPDATED_AT) : undefined,
@@ -396,6 +401,23 @@ export async function updateLayoutPresetName(presetId: number, name: string): Pr
 }
 
 export async function deleteLayoutPreset(presetId: number): Promise<void> {
+  // Block deletion of protected presets (Default Layout)
+  try {
+    const { data: preset } = await supabase
+      .schema('tables')
+      .from('Table_Layout_Presets')
+      .select('IS_PROTECTED')
+      .eq('LAYOUT_PRESET_ID', presetId)
+      .maybeSingle()
+
+    if (preset && Boolean(preset.IS_PROTECTED)) {
+      throw new Error('Cannot delete the protected Default Layout. Use admin authorization to modify it instead.')
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Cannot delete')) throw err
+    // If IS_PROTECTED column doesn't exist yet, continue with deletion
+  }
+
   // First delete associated layout info
   try {
     await supabase
@@ -512,6 +534,7 @@ export async function fetchPresetLayout(presetId: number): Promise<TableLayoutIn
     X_POS: Number(row.X_POS),
     Y_POS: Number(row.Y_POS),
     TABLE_CAPACITY: row.TABLE_CAPACITY != null ? Number(row.TABLE_CAPACITY) : null,
+    LABEL_ID: row.LABEL_ID != null ? Number(row.LABEL_ID) : null,
   }))
 }
 
@@ -536,6 +559,7 @@ export async function fetchLiveRestaurantTables(): Promise<RestaurantTableData[]
     RESERVED_SINCE: row.RESERVED_SINCE ? String(row.RESERVED_SINCE) : null,
     BILL_OUT_REQUESTED: Boolean(row.BILL_OUT_REQUESTED),
     MERGE_GROUP_ID: row.MERGE_GROUP_ID != null ? Number(row.MERGE_GROUP_ID) : null,
+    LABEL_ID: row.LABEL_ID != null ? Number(row.LABEL_ID) : null,
   }))
 }
 
@@ -571,6 +595,7 @@ export async function savePresetLayout(
       X_POS: t.X_POS,
       Y_POS: t.Y_POS,
       TABLE_CAPACITY: t.TABLE_CAPACITY ?? tableCapacities?.get(t.TABLE_NUM) ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4,
+      LABEL_ID: t.LABEL_ID != null ? Number(t.LABEL_ID) : null,
     }))
 
     const { error: insError } = await supabase
@@ -741,21 +766,58 @@ export async function savePresetLayout(
       // Ignore
     }
 
+    let activeOrderTableNums = new Set<number>()
+    try {
+      const { data: activeOrders } = await supabase
+        .from('Orders')
+        .select('TABLE_NUM, ORDER_STATUS')
+        .in('ORDER_STATUS', ['PENDING', 'PREPARING', 'READY', 'SERVED'])
+      if (activeOrders) {
+        activeOrderTableNums = new Set(
+          activeOrders
+            .map((o: Record<string, unknown>) => (o.TABLE_NUM != null ? Number(o.TABLE_NUM) : null))
+            .filter((n: number | null): n is number => n !== null && !isNaN(n)),
+        )
+      }
+    } catch {
+      // Ignore
+    }
+
     for (const existing of updatedLiveTables) {
       const isReferencedInLayout = newTableNums.has(existing.TABLE_NUM)
       const isReserved = reservedTableIds.has(existing.TABLE_ID)
       const hasActiveGuests = existing.CURRENT_GUEST_COUNT > 0
+      const hasActiveOrders = activeOrderTableNums.has(existing.TABLE_NUM)
       const isAvailable = existing.STATUS === 'AVAILABLE'
 
-      if (!isReferencedInLayout && isAvailable && !hasActiveGuests && !isReserved) {
-        try {
-          await supabase
-            .schema('tables')
-            .from('Restaurant_Tables')
-            .delete()
-            .eq('TABLE_ID', existing.TABLE_ID)
-        } catch {
-          // Ignore
+      if (!isReferencedInLayout) {
+        if (isAvailable && !hasActiveGuests && !isReserved && !hasActiveOrders) {
+          try {
+            await supabase
+              .schema('tables')
+              .from('Restaurant_Tables')
+              .delete()
+              .eq('TABLE_ID', existing.TABLE_ID)
+          } catch {
+            // Ignore
+          }
+        } else {
+          console.warn(
+            `[tableLayoutService] Table #${existing.TABLE_NUM} has active operational state (guests=${hasActiveGuests}, reserved=${isReserved}, orders=${hasActiveOrders}) but is not in target layout. Retained for manual resolution.`,
+          )
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('monolith-table-conflict', {
+                detail: {
+                  tableNum: existing.TABLE_NUM,
+                  tableId: existing.TABLE_ID,
+                  hasActiveOrders,
+                  hasActiveGuests,
+                  isReserved,
+                },
+              }),
+            )
+          }
         }
       }
     }

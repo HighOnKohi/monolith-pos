@@ -10,8 +10,16 @@ import {
   Printer,
   Lock,
   X,
+  LayoutGrid,
+  List,
+  Layers,
+  Sliders,
+  Tag,
+  Sparkles,
 } from 'lucide-react'
 import type { TableLayoutPreset } from '@/services/tableLayoutService'
+
+export type TableManagerAdminTab = 'layout' | 'tables' | 'presets' | 'types' | 'labels'
 
 interface TableManagerHeaderProps {
   presets: TableLayoutPreset[]
@@ -37,6 +45,10 @@ interface TableManagerHeaderProps {
   onPrintSelectedQrs?: () => void
   isPrintingBulk?: boolean
   hasTables?: boolean
+  activeTab?: TableManagerAdminTab
+  onTabChange?: (tab: TableManagerAdminTab) => void
+  onOpenAutoAlloc?: () => void
+  onOpenRemoveAll?: () => void
 }
 
 export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
@@ -63,6 +75,10 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   onPrintSelectedQrs,
   isPrintingBulk = false,
   hasTables = true,
+  activeTab = 'layout',
+  onTabChange,
+  onOpenAutoAlloc,
+  onOpenRemoveAll,
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -85,9 +101,11 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   }, [isDropdownOpen])
 
   return (
-    <div className="table-manager-header flex items-center justify-between shrink-0 px-5 pt-4 pb-3 select-none">
-      {/* Left side: Preset dropdown & Venue Capacity Counter */}
-      <div className="flex items-center gap-3">
+    <div className="table-manager-header flex flex-col shrink-0 px-5 pt-3.5 pb-2.5 bg-white border-b border-slate-200 select-none">
+      {/* Top Row: Presets & Controls */}
+      <div className="flex items-center justify-between w-full">
+        {/* Left side: Preset dropdown & Venue Capacity Counter */}
+        <div className="flex items-center gap-3">
         {/* (a) Preset dropdown */}
         <div className="relative min-w-[220px] z-30" ref={dropdownRef}>
           <button
@@ -296,6 +314,19 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
               <span>Print All QRs</span>
             </button>
 
+            {isDirty && onSaveLayout && (
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={onSaveLayout}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs transition-transform active:scale-95 cursor-pointer disabled:opacity-40"
+                title="Save unsaved changes to database"
+              >
+                <Save className="w-3.5 h-3.5 text-white" />
+                <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={onToggleEditMode}
@@ -342,6 +373,99 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
             </button>
           </div>
         )}
+      </div>
+    </div>
+
+      {/* Bottom Row: Tab Navigation & Quick Actions */}
+      <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
+        <div className="flex items-center gap-1 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => onTabChange?.('layout')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'layout'
+                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span>Floor Layout</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange?.('tables')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'tables'
+                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <List className="w-3.5 h-3.5" />
+            <span>Tables</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange?.('presets')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'presets'
+                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Presets</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange?.('types')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'types'
+                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Table Types</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange?.('labels')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              activeTab === 'labels'
+                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Tag className="w-3.5 h-3.5" />
+            <span>Labels & Priority</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {onOpenAutoAlloc && (
+            <button
+              type="button"
+              onClick={onOpenAutoAlloc}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-900 text-xs font-bold transition-all shadow-2xs cursor-pointer"
+              title="Automatically distribute tables to match capacity"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Auto Allocate</span>
+            </button>
+          )}
+
+          {onOpenRemoveAll && (
+            <button
+              type="button"
+              onClick={onOpenRemoveAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100/70 text-rose-700 text-xs font-bold transition-all shadow-2xs cursor-pointer"
+              title="Remove all tables from current layout"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>Remove All</span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )

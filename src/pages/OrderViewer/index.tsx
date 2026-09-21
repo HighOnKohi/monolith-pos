@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { fetchOrderViewerData, subscribeToOrderUpdates } from '@/services/dispatcherService'
+import { fetchOrderViewerData, subscribeToOrderUpdates, type ViewerOrderData } from '@/services/dispatcherService'
+import { TableLabelBadge } from '@/components/common/TableLabelBadge'
 
-interface ViewerOrder {
-  orderId: number
-  tableDisplay: string
+interface ViewerOrder extends ViewerOrderData {
   items: Array<{
     name: string
     quantity: number
@@ -20,7 +19,13 @@ export default function OrderViewer() {
   const loadData = useCallback(async () => {
     try {
       const tData = await fetchOrderViewerData()
-      setTableOrders(tData)
+      const sorted = [...tData].sort((a, b) => {
+        const aPrio = a.labelPriority != null ? a.labelPriority : 999999
+        const bPrio = b.labelPriority != null ? b.labelPriority : 999999
+        if (aPrio !== bPrio) return aPrio - bPrio
+        return a.orderId - b.orderId
+      })
+      setTableOrders(sorted)
     } catch (error) {
       console.error('Failed to load order viewer orders:', error)
     }
@@ -49,6 +54,8 @@ export default function OrderViewer() {
       .channel('order-viewer-table-sync')
       .on('postgres_changes', { event: '*', schema: 'orders', table: 'Restaurant_Orders' }, () => void loadData())
       .on('postgres_changes', { event: '*', schema: 'orders', table: 'Order_Items' }, () => void loadData())
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => void loadData())
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Labels' }, () => void loadData())
       .subscribe()
 
     return () => {
@@ -78,10 +85,39 @@ export default function OrderViewer() {
             })
 
             return (
-              <article className="order-viewer-card" key={order.orderId}>
-                <div className="order-viewer-card-header flex items-center justify-between">
-                  <div className="flex flex-col">
+              <article
+                className="order-viewer-card"
+                key={order.orderId}
+                style={{
+                  border: order.labelColor ? `2.5px solid ${order.labelColor}` : '1px solid #e2e8f0',
+                  boxShadow: order.labelColor
+                    ? `0 4px 16px ${order.labelColor}25, 0 0 0 1px ${order.labelColor}30`
+                    : undefined,
+                }}
+              >
+                {/* Top Color Accent Strip */}
+                {order.labelColor && (
+                  <div
+                    className="h-1.5 w-full shrink-0"
+                    style={{ backgroundColor: order.labelColor }}
+                  />
+                )}
+                <div
+                  className="order-viewer-card-header flex items-center justify-between"
+                  style={{
+                    backgroundColor: order.labelColor ? `${order.labelColor}0d` : undefined,
+                  }}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
                     <strong>{order.tableDisplay}</strong>
+                    {order.labelName && order.labelColor && (
+                      <TableLabelBadge
+                        name={order.labelName}
+                        color={order.labelColor}
+                        size="sm"
+                        showDot
+                      />
+                    )}
                   </div>
                   <span>Order #{order.orderId}</span>
                 </div>

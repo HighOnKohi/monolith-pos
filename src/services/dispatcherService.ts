@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 import type { Order, OrderItem, OrderStatus } from '@/types/order'
 import { resolveTableGroupByList } from '@/services/tableGroupService'
 import type { TableData } from '@/services/tableService'
+import { fetchActiveLabels, type TableLabel } from '@/services/tableLabelService'
 import { logOrderEvent } from '@/services/orderLogsService'
 import { broadcastMenuItemStatus } from '@/hooks/useRealtimeMenu'
 import { logCashierAction } from '@/services/cashierAuditService'
@@ -14,6 +15,10 @@ export type DispatcherOrderItem = Omit<OrderItem, 'quantity'> & {
 export interface DispatcherOrder extends Omit<Order, 'items'> {
   tableNum?: number
   tableDisplay?: string
+  labelId?: number | null
+  labelName?: string | null
+  labelColor?: string | null
+  labelPriority?: number | null
   items: DispatcherOrderItem[]
 }
 
@@ -124,9 +129,13 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
     itemsByOrder.get(orderId)!.push(item)
   })
 
-  // Fetch tables to resolve merged display labels
-  const { data: tablesData } = await supabase.schema('tables').from('Restaurant_Tables').select('*')
+  // Fetch tables and active labels to resolve merged display labels & priority tiers
+  const [{ data: tablesData }, activeLabels] = await Promise.all([
+    supabase.schema('tables').from('Restaurant_Tables').select('*'),
+    fetchActiveLabels().catch(() => []),
+  ])
   const allTables = (tablesData as TableData[]) ?? []
+  const labelMap = new Map<number, TableLabel>(activeLabels.map((l) => [l.LABEL_ID, l]))
 
   return orders
     .map((row: Record<string, unknown>) => {
@@ -136,13 +145,17 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
       if (!hasActiveItems) return null
 
       const tableId = Number(row.TABLE_ID)
-      const group = resolveTableGroupByList(tableId, allTables)
+      const group = resolveTableGroupByList(tableId, allTables, labelMap)
 
       return {
         orderId,
         tableId,
         tableNum: group.anchorTableNum,
         tableDisplay: group.displayLabel,
+        labelId: group.labelId ?? null,
+        labelName: group.labelName ?? null,
+        labelColor: group.labelColor ?? null,
+        labelPriority: group.labelPriority ?? null,
         orderStatus: String(row.ORDER_STATUS ?? '').toUpperCase() as OrderStatus,
         orderType: row.ORDER_TYPE as Order['orderType'],
         totalBill: Number(row.TOTAL_BILL ?? 0),
@@ -158,12 +171,17 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
 export interface ViewerOrderItem {
   name: string
   quantity: number
-  categoryName: string
+  categoryName?: string
+  isGroup?: boolean
+  includedItems?: Array<{ id: number; name: string; quantity: number }>
 }
 
 export interface ViewerOrderData {
   orderId: number
   tableDisplay: string
+  labelName?: string | null
+  labelColor?: string | null
+  labelPriority?: number | null
   items: ViewerOrderItem[]
 }
 
@@ -243,9 +261,13 @@ export async function fetchOrderViewerData(): Promise<ViewerOrderData[]> {
     })
   })
 
-  // Step 4: fetch tables for display labels
-  const { data: tablesData } = await supabase.schema('tables').from('Restaurant_Tables').select('*')
+  // Step 4: fetch tables and active labels for display labels and priority tiers
+  const [{ data: tablesData }, activeLabels] = await Promise.all([
+    supabase.schema('tables').from('Restaurant_Tables').select('*'),
+    fetchActiveLabels().catch(() => []),
+  ])
   const allTables = (tablesData as TableData[]) ?? []
+  const labelMap = new Map<number, TableLabel>(activeLabels.map((l) => [l.LABEL_ID, l]))
 
   // Group items by order and name
   const itemsByOrder = new Map<number, Map<string, ViewerOrderItem>>()
@@ -264,13 +286,16 @@ export async function fetchOrderViewerData(): Promise<ViewerOrderData[]> {
   })
 
   return ordersData.flatMap((o: Record<string, unknown>) => {
-    const grp = resolveTableGroupByList(Number(o['TABLE_ID']), allTables)
+    const grp = resolveTableGroupByList(Number(o['TABLE_ID']), allTables, labelMap)
     const itemMap = itemsByOrder.get(Number(o['ORDER_ID'])) ?? new Map()
     if (itemMap.size === 0) return []
     return [
       {
         orderId: Number(o['ORDER_ID']),
         tableDisplay: grp.displayLabel,
+        labelName: grp.labelName ?? null,
+        labelColor: grp.labelColor ?? null,
+        labelPriority: grp.labelPriority ?? null,
         items: Array.from(itemMap.values()),
       },
     ]

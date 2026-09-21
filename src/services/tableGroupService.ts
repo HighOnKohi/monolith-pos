@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { TableData, TableStatus } from '@/services/tableService'
+import { fetchActiveLabels, type TableLabel } from '@/services/tableLabelService'
 
 export interface TableGroupInfo {
   groupId: number               // Canonical identifier (anchorTableId)
@@ -15,6 +16,10 @@ export interface TableGroupInfo {
   currentGuestCount: number     // Combined seated pax
   status: TableStatus           // Aggregated status
   billOutRequested: boolean     // Any member has bill out requested
+  labelId: number | null        // Effective label ID (highest-priority among group members)
+  labelName?: string | null
+  labelColor?: string | null
+  labelPriority?: number | null
 }
 
 /**
@@ -23,6 +28,7 @@ export interface TableGroupInfo {
 function buildGroupInfoFromMembers(
   anchorTable: TableData,
   allMembers: TableData[],
+  labelsMap?: Map<number, TableLabel> | TableLabel[],
 ): TableGroupInfo {
   // Sort members by TABLE_NUM ascending
   const sortedMembers = [...allMembers].sort(
@@ -61,6 +67,42 @@ function buildGroupInfoFromMembers(
     status = 'UNAVAILABLE'
   }
 
+  // Resolve effective label: use highest priority label among members if labels map provided
+  let effectiveLabelId: number | null = null
+  let effectiveLabel: TableLabel | null = null
+
+  if (labelsMap) {
+    const lMap =
+      labelsMap instanceof Map
+        ? labelsMap
+        : new Map(labelsMap.map((l) => [l.LABEL_ID, l]))
+
+    let bestPriority = Infinity
+    for (const m of sortedMembers) {
+      if (m.LABEL_ID != null) {
+        const lid = Number(m.LABEL_ID)
+        const lbl = lMap.get(lid)
+        if (lbl) {
+          if (lbl.PRIORITY < bestPriority) {
+            bestPriority = lbl.PRIORITY
+            effectiveLabelId = lbl.LABEL_ID
+            effectiveLabel = lbl
+          }
+        } else if (effectiveLabelId === null) {
+          effectiveLabelId = lid
+        }
+      }
+    }
+  } else {
+    for (const m of sortedMembers) {
+      const lid = m.LABEL_ID
+      if (lid != null) {
+        effectiveLabelId = Number(lid)
+        break
+      }
+    }
+  }
+
   return {
     groupId: anchorTable.TABLE_ID,
     anchorTableId: anchorTable.TABLE_ID,
@@ -74,6 +116,10 @@ function buildGroupInfoFromMembers(
     currentGuestCount,
     status,
     billOutRequested,
+    labelId: effectiveLabelId,
+    labelName: effectiveLabel?.NAME ?? null,
+    labelColor: effectiveLabel?.COLOR ?? null,
+    labelPriority: effectiveLabel?.PRIORITY ?? null,
   }
 }
 
@@ -84,6 +130,7 @@ function buildGroupInfoFromMembers(
 export function resolveTableGroupByList(
   targetTableId: number,
   allTables: TableData[],
+  labelsMap?: Map<number, TableLabel> | TableLabel[],
 ): TableGroupInfo {
   const target = allTables.find((t) => t.TABLE_ID === targetTableId || t.TABLE_NUM === targetTableId)
   if (!target) {
@@ -100,6 +147,10 @@ export function resolveTableGroupByList(
       currentGuestCount: 0,
       status: 'AVAILABLE',
       billOutRequested: false,
+      labelId: null,
+      labelName: null,
+      labelColor: null,
+      labelPriority: null,
     }
   }
 
@@ -135,7 +186,7 @@ export function resolveTableGroupByList(
   membersMap.set(target.TABLE_ID, target)
 
   const members = Array.from(membersMap.values())
-  return buildGroupInfoFromMembers(anchor, members)
+  return buildGroupInfoFromMembers(anchor, members, labelsMap)
 }
 
 /**
@@ -143,11 +194,14 @@ export function resolveTableGroupByList(
  * Ideal for Customer interface entry point and external hooks.
  */
 export async function resolveTableGroup(targetTableId: number): Promise<TableGroupInfo> {
-  const { data: allTablesData, error: allErr } = await supabase
-    .schema('tables')
-    .from('Restaurant_Tables')
-    .select('*')
-    .order('TABLE_NUM')
+  const [{ data: allTablesData, error: allErr }, activeLabels] = await Promise.all([
+    supabase
+      .schema('tables')
+      .from('Restaurant_Tables')
+      .select('*')
+      .order('TABLE_NUM'),
+    fetchActiveLabels().catch(() => []),
+  ])
 
   if (allErr || !allTablesData || allTablesData.length === 0) {
     return {
@@ -163,10 +217,14 @@ export async function resolveTableGroup(targetTableId: number): Promise<TableGro
       currentGuestCount: 0,
       status: 'AVAILABLE',
       billOutRequested: false,
+      labelId: null,
+      labelName: null,
+      labelColor: null,
+      labelPriority: null,
     }
   }
 
-  return resolveTableGroupByList(targetTableId, allTablesData as TableData[])
+  return resolveTableGroupByList(targetTableId, allTablesData as TableData[], activeLabels)
 }
 
 /**

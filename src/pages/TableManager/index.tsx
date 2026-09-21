@@ -32,6 +32,18 @@ import { printBulkQrPdf } from '@/components/table-qr/tableQrPrinter'
 import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
 import { useActiveEvent } from '@/hooks/useActiveEvent'
 import { GitMerge } from 'lucide-react'
+import { TableTypesManager } from './components/TableTypesManager'
+import { LabelHierarchyManager } from './components/LabelHierarchyManager'
+import { RemoveAllTablesModal } from './components/RemoveAllTablesModal'
+import { AdminAuthModal } from './components/AdminAuthModal'
+import { AutomaticAllocationModal } from './components/AutomaticAllocationModal'
+import { TableListView } from './components/TableListView'
+import { PresetsManagerView } from './components/PresetsManagerView'
+import type { TableManagerAdminTab } from './components/TableManagerHeader'
+import { validateTableTypeCount } from '@/services/tableTypeConfigService'
+import { removeAllTables } from '@/services/tableService'
+import { logTableAction } from '@/services/tableAuditService'
+import { fetchActiveLabels, assignLabelToTable, type TableLabel } from '@/services/tableLabelService'
 
 interface DragState {
   tableNum: number
@@ -230,6 +242,20 @@ export default function TableManager() {
   })
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
 
+  // Admin Interface Tabs & Modals
+  const [activeAdminTab, setActiveAdminTab] = useState<TableManagerAdminTab>('layout')
+  const [removeAllModalOpen, setRemoveAllModalOpen] = useState(false)
+  const [autoAllocModalOpen, setAutoAllocModalOpen] = useState(false)
+  const [adminAuthModalOpen, setAdminAuthModalOpen] = useState(false)
+  const [pendingAdminAction, setPendingAdminAction] = useState<(() => void | Promise<void>) | null>(null)
+  const [activeLabels, setActiveLabels] = useState<TableLabel[]>([])
+
+  const activeLabelMap = useMemo(() => {
+    const map = new Map<number, TableLabel>()
+    activeLabels.forEach((l) => map.set(l.LABEL_ID, l))
+    return map
+  }, [activeLabels])
+
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
@@ -362,12 +388,14 @@ export default function TableManager() {
   const loadInitialData = useCallback(async () => {
     setIsLoading(true)
     try {
-      const [allPresets, liveTables] = await Promise.all([
+      const [allPresets, liveTables, labelsData] = await Promise.all([
         fetchAllLayoutPresets(),
         fetchLiveRestaurantTables(),
+        fetchActiveLabels(),
       ])
       setPresets(allPresets)
       setRestaurantTables(liveTables)
+      setActiveLabels(labelsData)
 
       if (allPresets.length > 0) {
         const defaultPreset = allPresets.find((p) => p.IS_DEFAULT) || allPresets[0]
@@ -611,6 +639,10 @@ export default function TableManager() {
         setConfirmModal((prev) => ({ ...prev, isOpen: false }))
         try {
           await deleteLayoutPreset(presetId)
+          void logTableAction('PRESET_DELETED', `Deleted layout preset #${presetId}.`, {
+            targetEntity: 'PRESET',
+            targetId: String(presetId),
+          })
           const remaining = presets.filter((p) => p.LAYOUT_PRESET_ID !== presetId)
           setPresets(remaining)
           if (remaining.length > 0) {
@@ -693,13 +725,25 @@ export default function TableManager() {
     setLayoutTables(initialLayout)
     setRestaurantTables(liveTables)
     setIsDirty(false)
+    void logTableAction('PRESET_CREATED', `Created layout preset "${name}" with ${validMaxPax} pax capacity.`, {
+      targetEntity: 'PRESET',
+      targetId: String(created.LAYOUT_PRESET_ID),
+      metadata: { name, maxPax: validMaxPax, isDefault: isDef },
+    })
     showToast(`Preset "${name}" created with ${validMaxPax} pax capacity`, 'success')
   }
 
-  // ── 7. Add Table from Floating Controls ──
-  const handleAddTable = (type: TableType) => {
+  // ── 7. Add Table from Floating Controls & Directory ──
+  const handleAddTable = async (type: TableType, customLabelId?: number | null) => {
     if (!activePresetId) return
     const typeConfig = TABLE_TYPES[type]
+
+    // Validate table type limit at database/business logic level
+    const typeValidation = await validateTableTypeCount(type, 1, layoutTables)
+    if (!typeValidation.allowed) {
+      showToast(typeValidation.message || `Maximum limit reached for ${typeConfig.name}.`, 'error')
+      return
+    }
 
     // Check venue capacity
     const remainingVenueCap = activePresetMaxPax - totalAllocatedCapacity
@@ -756,13 +800,15 @@ export default function TableManager() {
       LAYOUT_PRESET_ID: activePresetId,
       TABLE_NUM: nextTableNum,
       TABLE_TYPE: type,
+      LABEL_ID: customLabelId ?? null,
       MERGE_GROUP_ID: null,
       X_POS: placedX,
       Y_POS: placedY,
       TABLE_CAPACITY: assignedCapacity,
     }
 
-    setLayoutTables((prev) => [...prev, newTable])
+    const updatedLayout = [...layoutTables, newTable]
+    setLayoutTables(updatedLayout)
     setRestaurantTables((prev) => [
       ...prev,
       {
@@ -773,11 +819,36 @@ export default function TableManager() {
         CURRENT_GUEST_COUNT: 0,
         RESERVED_SINCE: null,
         BILL_OUT_REQUESTED: false,
+        LABEL_ID: customLabelId ?? null,
         MERGE_GROUP_ID: null,
       },
     ])
     setSelectedTableNum(nextTableNum)
+
+    // Automatically persist to database if not in manual edit mode
+    if (!isEditMode && activePresetId) {
+      try {
+        const capacityMap = new Map<number, number>()
+        for (const t of updatedLayout) {
+          capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
+        }
+        await savePresetLayout(activePresetId, updatedLayout, capacityMap, activePresetMaxPax)
+        const refreshedLive = await fetchLiveRestaurantTables()
+        setRestaurantTables(refreshedLive)
+        setIsDirty(false)
+        void logTableAction('TABLE_CREATED', `Table ${nextTableNum} (${typeConfig.name}) added and saved to database.`)
+        showToast(`Added ${typeConfig.name} #${nextTableNum} (${assignedCapacity} seats) — Saved`, 'success')
+        return
+      } catch (err) {
+        console.error('Failed to auto-save added table:', err)
+        setIsDirty(true)
+        showToast(`Added ${typeConfig.name} #${nextTableNum} (unsaved)`, 'info')
+        return
+      }
+    }
+
     setIsDirty(true)
+    void logTableAction('TABLE_CREATED', `Table ${nextTableNum} (${typeConfig.name}) added to layout.`)
     showToast(`Added ${typeConfig.name} #${nextTableNum} (${assignedCapacity} seats)`, 'info')
   }
 
@@ -934,7 +1005,7 @@ export default function TableManager() {
   }
 
   // ── 9. Update Seat Count (Cannot exceed max capacity or venue limit) ──
-  const handleUpdateSeatCount = (tableNum: number, seats: number) => {
+  const handleUpdateSeatCount = async (tableNum: number, seats: number) => {
     lastMutationTimeRef.current = Date.now()
     const target = layoutTables.find((t) => t.TABLE_NUM === tableNum)
     if (!target) return
@@ -951,9 +1022,10 @@ export default function TableManager() {
     const venueMaxForThisTable = Math.max(1, activePresetMaxPax - otherTablesCap)
     const clampedSeats = Math.max(1, Math.min(maxCapacity, venueMaxForThisTable, seats))
 
-    setLayoutTables((prev) =>
-      prev.map((t) => (t.TABLE_NUM === tableNum ? { ...t, TABLE_CAPACITY: clampedSeats } : t)),
+    const updatedLayout = layoutTables.map((t) =>
+      t.TABLE_NUM === tableNum ? { ...t, TABLE_CAPACITY: clampedSeats } : t,
     )
+    setLayoutTables(updatedLayout)
 
     setRestaurantTables((prev) => {
       const exists = prev.some((r) => r.TABLE_NUM === tableNum)
@@ -978,8 +1050,22 @@ export default function TableManager() {
       }
     })
 
-    void updateTableCapacity(tableNum, clampedSeats).catch(() => { })
-    setIsDirty(true)
+    try {
+      await updateTableCapacity(tableNum, clampedSeats)
+      if (!isEditMode && activePresetId) {
+        const capacityMap = new Map<number, number>()
+        for (const t of updatedLayout) {
+          capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
+        }
+        await savePresetLayout(activePresetId, updatedLayout, capacityMap, activePresetMaxPax)
+        setIsDirty(false)
+      } else {
+        setIsDirty(true)
+      }
+    } catch (err) {
+      console.error('Failed to update table capacity:', err)
+      setIsDirty(true)
+    }
   }
 
   // ── 9b. Update Live Guest Count (View Mode & Live Ops) ──
@@ -1015,40 +1101,170 @@ export default function TableManager() {
   }
 
   // ── 10. Delete Selected Table ──
-  const handleDeleteTable = (tableNum: number) => {
-    setLayoutTables((prev) => {
-      const remaining = prev.filter((t) => t.TABLE_NUM !== tableNum)
-      const groupCounts = new Map<number, number>()
-      for (const t of remaining) {
-        if (t.MERGE_GROUP_ID != null) {
-          groupCounts.set(t.MERGE_GROUP_ID, (groupCounts.get(t.MERGE_GROUP_ID) || 0) + 1)
-        }
+  const handleDeleteTable = async (tableNum: number) => {
+    const remaining = layoutTables.filter((t) => t.TABLE_NUM !== tableNum)
+    const groupCounts = new Map<number, number>()
+    for (const t of remaining) {
+      if (t.MERGE_GROUP_ID != null) {
+        groupCounts.set(t.MERGE_GROUP_ID, (groupCounts.get(t.MERGE_GROUP_ID) || 0) + 1)
       }
-      const result = remaining.map((t) => {
-        if (t.MERGE_GROUP_ID != null && (groupCounts.get(t.MERGE_GROUP_ID) || 0) < 2) {
-          return { ...t, MERGE_GROUP_ID: null }
-        }
-        return t
-      })
-      const suppMap = calculateSuppressionForLayout(result)
-
-      setRestaurantTables((rPrev) =>
-        syncRestaurantTablesWithLayout(
-          result,
-          suppMap,
-          rPrev.filter((r) => r.TABLE_NUM !== tableNum),
-        ),
-      )
-      return result
+    }
+    const result = remaining.map((t) => {
+      if (t.MERGE_GROUP_ID != null && (groupCounts.get(t.MERGE_GROUP_ID) || 0) < 2) {
+        return { ...t, MERGE_GROUP_ID: null }
+      }
+      return t
     })
+    const suppMap = calculateSuppressionForLayout(result)
+
+    setLayoutTables(result)
+    setRestaurantTables((rPrev) =>
+      syncRestaurantTablesWithLayout(
+        result,
+        suppMap,
+        rPrev.filter((r) => r.TABLE_NUM !== tableNum),
+      ),
+    )
     setSelectedTableNum(null)
     setSelectedTableNums((prev) => {
       const next = new Set(prev)
       next.delete(tableNum)
       return next
     })
+
+    if (!isEditMode && activePresetId) {
+      try {
+        const capacityMap = new Map<number, number>()
+        for (const t of result) {
+          capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
+        }
+        await savePresetLayout(activePresetId, result, capacityMap, activePresetMaxPax)
+        const refreshedLive = await fetchLiveRestaurantTables()
+        setRestaurantTables(refreshedLive)
+        setIsDirty(false)
+        void logTableAction('TABLE_DELETED', `Table ${tableNum} removed and saved to database.`)
+        showToast(`Removed Table ${tableNum} — Saved`, 'info')
+        return
+      } catch (err) {
+        console.error('Failed to auto-save table removal:', err)
+        setIsDirty(true)
+        showToast(`Removed Table ${tableNum} (unsaved)`, 'info')
+        return
+      }
+    }
+
     setIsDirty(true)
     showToast(`Removed Table ${tableNum}`, 'info')
+  }
+
+  // ── 11b. Remove All Tables ──
+  const handleConfirmRemoveAll = async () => {
+    try {
+      const res = await removeAllTables()
+      const blockedNums = new Set(res.blocked.map((b) => b.num))
+      const remaining = layoutTables.filter((t) => blockedNums.has(t.TABLE_NUM))
+      setLayoutTables(remaining)
+      setSelectedTableNum(null)
+      setSelectedTableNums(new Set())
+      if (activePresetId) {
+        await savePresetLayout(activePresetId, remaining, undefined, activePresetMaxPax)
+      }
+      const refreshedLive = await fetchLiveRestaurantTables()
+      setRestaurantTables(refreshedLive)
+      void logTableAction('ALL_TABLES_DELETED', `Removed ${res.deleted.length} tables from layout.`)
+      if (res.blocked.length > 0) {
+        showToast(
+          `Removed ${res.deleted.length} tables. ${res.blocked.length} table(s) retained due to active orders.`,
+          'info',
+        )
+      } else {
+        showToast(`Successfully removed all ${res.deleted.length} tables.`, 'success')
+      }
+    } catch (err) {
+      console.error('Error removing all tables:', err)
+      showToast('Failed to remove tables.', 'error')
+    }
+  }
+
+  // ── 11c. Apply Auto Layout ──
+  const handleApplyAutoLayout = async (allocatedTables: TableLayoutInfo[]) => {
+    try {
+      setLayoutTables(allocatedTables)
+      setSelectedTableNum(null)
+      setSelectedTableNums(new Set())
+      const baseMap = new Map<number, number>()
+      allocatedTables.forEach((t) => baseMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? 4))
+      if (activePresetId) {
+        await savePresetLayout(activePresetId, allocatedTables, baseMap, activePresetMaxPax)
+      }
+      const refreshedLive = await fetchLiveRestaurantTables()
+      setRestaurantTables(refreshedLive)
+      setIsDirty(false)
+      void logTableAction('LAYOUT_CHANGED', `Applied automatic table allocation (${allocatedTables.length} tables).`)
+      showToast(`Automatically allocated ${allocatedTables.length} tables.`, 'success')
+    } catch (err) {
+      console.error('Error applying auto layout:', err)
+      showToast('Failed to apply allocated layout.', 'error')
+    }
+  }
+
+  // ── 11d. Admin Auth Execution ──
+  const handleAdminAuthSuccess = async () => {
+    setAdminAuthModalOpen(false)
+    if (pendingAdminAction) {
+      await pendingAdminAction()
+      setPendingAdminAction(null)
+    }
+  }
+
+  // ── 11e. Set Default Layout Preset (Protected Admin Operation) ──
+  const handleSetDefaultPreset = (presetId: number) => {
+    const targetPreset = presets.find((p) => p.LAYOUT_PRESET_ID === presetId)
+    setPendingAdminAction(() => async () => {
+      try {
+        await setDefaultLayoutPreset(presetId)
+        await loadInitialData()
+        void logTableAction('DEFAULT_LAYOUT_MODIFIED', `Set preset "${targetPreset?.PRESET_NAME}" as default layout.`)
+        showToast(`Preset "${targetPreset?.PRESET_NAME}" set as default.`, 'success')
+      } catch (err) {
+        showToast('Failed to set default preset.', 'error')
+      }
+    })
+    setAdminAuthModalOpen(true)
+  }
+
+  // ── 11f. Label Assignment on Directory ──
+  const handleLabelAssigned = async (tableNum: number, labelId: number | null) => {
+    setLayoutTables((prev) =>
+      prev.map((t) => (t.TABLE_NUM === tableNum ? { ...t, LABEL_ID: labelId } : t)),
+    )
+    setRestaurantTables((prev) =>
+      prev.map((r) => (r.TABLE_NUM === tableNum ? { ...r, LABEL_ID: labelId } : r)),
+    )
+
+    const liveTarget = restaurantTables.find((r) => r.TABLE_NUM === tableNum)
+    const targetTableId = liveTarget?.TABLE_ID ?? tableNum
+    try {
+      await assignLabelToTable(targetTableId, labelId)
+      if (!isEditMode && activePresetId) {
+        try {
+          await supabase
+            .schema('tables')
+            .from('Table_Layout_Info')
+            .update({ LABEL_ID: labelId })
+            .eq('LAYOUT_PRESET_ID', activePresetId)
+            .eq('TABLE_NUM', tableNum)
+        } catch {
+          // Ignore if column not present yet
+        }
+        setIsDirty(false)
+      } else {
+        setIsDirty(true)
+      }
+    } catch (err) {
+      console.error('Failed to persist label assignment:', err)
+      setIsDirty(true)
+    }
   }
 
   // ── 12. Update Table Number ──
@@ -1744,6 +1960,27 @@ export default function TableManager() {
           onSelectPreset={handleSelectPreset}
           onRenamePreset={handleRenamePreset}
           onDeletePreset={handleDeletePreset}
+          activeTab={activeAdminTab}
+          onTabChange={(tab) => {
+            if (isDirty) {
+              setConfirmModal({
+                isOpen: true,
+                title: 'Unsaved Layout Changes',
+                message: 'You have unsaved floor layout changes. Discard changes to switch tabs?',
+                confirmLabel: 'Discard & Switch',
+                variant: 'warning',
+                onConfirm: () => {
+                  setConfirmModal((prev) => ({ ...prev, isOpen: false }))
+                  setIsDirty(false)
+                  setActiveAdminTab(tab)
+                },
+              })
+              return
+            }
+            setActiveAdminTab(tab)
+          }}
+          onOpenAutoAlloc={() => setAutoAllocModalOpen(true)}
+          onOpenRemoveAll={() => setRemoveAllModalOpen(true)}
           onOpenNewPresetModal={() => {
             if (isEventActive) {
               showToast(
@@ -1783,8 +2020,59 @@ export default function TableManager() {
           hasTables={mergedNodes.length > 0}
         />
 
-        {/* Big Div: layout-container (consumes whole width with margins on all sides, contains grid) */}
-        <div className="layout-container flex-1 min-h-0 mx-5 mb-5 mt-1 rounded-2xl bg-white border border-slate-200/90 shadow-xs relative overflow-hidden flex flex-col">
+        {/* Tab 1: Tables Directory & CRUD */}
+        {activeAdminTab === 'tables' && (
+          <div className="flex-1 overflow-y-auto">
+            <TableListView
+              tables={mergedNodes}
+              onAddTable={(type) => void handleAddTable(type)}
+              onDeleteTable={handleDeleteTable}
+              onUpdateSeatCount={handleUpdateSeatCount}
+              onOpenQrModal={handleOpenQrModal}
+              onOpenRemoveAll={() => setRemoveAllModalOpen(true)}
+              onOpenAutoAlloc={() => setAutoAllocModalOpen(true)}
+              onLabelAssigned={handleLabelAssigned}
+            />
+          </div>
+        )}
+
+        {/* Tab 2: Layout Presets */}
+        {activeAdminTab === 'presets' && (
+          <div className="flex-1 overflow-y-auto">
+            <PresetsManagerView
+              presets={presets}
+              activePresetId={activePresetId}
+              isEventActive={isEventActive}
+              activeEventTitle={activeEvent?.title}
+              onSelectPreset={handleSelectPreset}
+              onSetDefaultPreset={handleSetDefaultPreset}
+              onRenamePreset={handleRenamePreset}
+              onDeletePreset={handleDeletePreset}
+              onOpenNewPresetModal={() => setNewPresetModalOpen(true)}
+            />
+          </div>
+        )}
+
+        {/* Tab 3: Table Types Limits */}
+        {activeAdminTab === 'types' && (
+          <div className="flex-1 overflow-y-auto">
+            <TableTypesManager
+              layoutTables={mergedNodes}
+              onConfigChange={() => void loadInitialData()}
+            />
+          </div>
+        )}
+
+        {/* Tab 4: Labels & Hierarchy Management */}
+        {activeAdminTab === 'labels' && (
+          <div className="flex-1 overflow-y-auto">
+            <LabelHierarchyManager />
+          </div>
+        )}
+
+        {/* Tab 5: Floor Layout Canvas (Admin Editor) */}
+        {activeAdminTab === 'layout' && (
+          <div className="layout-container flex-1 min-h-0 mx-5 mb-5 mt-1 rounded-2xl bg-white border border-slate-200/90 shadow-xs relative overflow-hidden flex flex-col">
           {/* Add Table button in upper right corner (Edit Mode only, non-obtrusive) */}
           {isEditMode && (
             <div className="absolute top-3.5 right-3.5 z-30">
@@ -1962,6 +2250,8 @@ export default function TableManager() {
                       status={node.STATUS}
                       guestCount={node.CURRENT_GUEST_COUNT}
                       capacity={node.GUEST_CAPACITY}
+                      labelName={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.NAME : undefined}
+                      labelColor={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.COLOR : undefined}
                       isMerged={node.MERGE_GROUP_ID != null}
                       mergeGroupId={node.MERGE_GROUP_ID}
                       isSelected={isSelected}
@@ -2005,32 +2295,64 @@ export default function TableManager() {
             </div>
           </div>
         </div>
+        )}
       </div>
 
-      {/* ── Right Div: table-manager-sidebar (Consistent & always visible) ── */}
-      <TableManagerSidebar
-        isEditMode={isEditMode}
-        isQrPrintMode={isQrPrintMode}
-        selectedTable={selectedNode}
-        allTables={mergedNodes}
-        remainingVenueCapacity={activePresetMaxPax - totalAllocatedCapacity}
-        maxVenueCapacity={activePresetMaxPax}
-        onSelectTableNum={(num) => setSelectedTableNum(num)}
-        selectedForPrintTableNums={selectedForPrintTableNums}
-        onTogglePrintSelectTable={handleTogglePrintSelectTable}
-        onToggleSelectAllPrint={handleToggleSelectAllPrint}
-        onDownloadQrPdf={handleDownloadQrPdf}
-        isGeneratingPdf={isGeneratingPdf}
-        onPrintSelectedQrs={handlePrintSelectedQrs}
-        isPrintingBulk={isPrintingBulk}
-        onUpdateTableNum={handleUpdateTableNum}
-        onChangeTableType={handleChangeTableType}
-        onUpdateSeatCount={handleUpdateSeatCount}
-        onUpdateGuestCount={handleUpdateGuestCount}
-        onUpdateStatus={handleUpdateStatus}
-        onUnmergeTable={handleUnmergeTable}
-        onDeleteTable={handleDeleteTable}
-        onOpenQrModal={handleOpenQrModal}
+      {/* ── Right Div: table-manager-sidebar (Visible in Layout tab) ── */}
+      {activeAdminTab === 'layout' && (
+        <TableManagerSidebar
+          isEditMode={isEditMode}
+          isQrPrintMode={isQrPrintMode}
+          selectedTable={selectedNode}
+          allTables={mergedNodes}
+          remainingVenueCapacity={activePresetMaxPax - totalAllocatedCapacity}
+          maxVenueCapacity={activePresetMaxPax}
+          onSelectTableNum={(num) => setSelectedTableNum(num)}
+          selectedForPrintTableNums={selectedForPrintTableNums}
+          onTogglePrintSelectTable={handleTogglePrintSelectTable}
+          onToggleSelectAllPrint={handleToggleSelectAllPrint}
+          onDownloadQrPdf={handleDownloadQrPdf}
+          isGeneratingPdf={isGeneratingPdf}
+          onPrintSelectedQrs={handlePrintSelectedQrs}
+          isPrintingBulk={isPrintingBulk}
+          onUpdateTableNum={handleUpdateTableNum}
+          onChangeTableType={handleChangeTableType}
+          onUpdateSeatCount={handleUpdateSeatCount}
+          onUpdateGuestCount={handleUpdateGuestCount}
+          onUpdateStatus={handleUpdateStatus}
+          onUnmergeTable={handleUnmergeTable}
+          onDeleteTable={handleDeleteTable}
+          onOpenQrModal={handleOpenQrModal}
+        />
+      )}
+
+      {/* Remove All Tables Modal */}
+      <RemoveAllTablesModal
+        isOpen={removeAllModalOpen}
+        totalTablesCount={layoutTables.length}
+        onClose={() => setRemoveAllModalOpen(false)}
+        onConfirm={handleConfirmRemoveAll}
+      />
+
+      {/* Automatic Table Allocation Modal */}
+      <AutomaticAllocationModal
+        isOpen={autoAllocModalOpen}
+        gridWidth={gridWidth}
+        gridHeight={gridHeight}
+        maxVenuePax={activePresetMaxPax}
+        presetId={activePresetId ?? 0}
+        onClose={() => setAutoAllocModalOpen(false)}
+        onApply={handleApplyAutoLayout}
+      />
+
+      {/* Admin Authorization Security Gate Modal */}
+      <AdminAuthModal
+        isOpen={adminAuthModalOpen}
+        onClose={() => {
+          setAdminAuthModalOpen(false)
+          setPendingAdminAction(null)
+        }}
+        onSuccess={handleAdminAuthSuccess}
       />
 
       {/* New Preset Modal */}

@@ -35,7 +35,7 @@ export const FloatingLayoutControls: React.FC<FloatingLayoutControlsProps> = mem
     }
   }, [isDropdownOpen])
 
-  const tableTypeOptions: TableType[] = [1, 2, 3, 4]
+  const tableTypeOptions: TableType[] = [1, 2, 3, 4, 5]
 
   return (
     <div className="relative select-none" ref={dropdownRef}>

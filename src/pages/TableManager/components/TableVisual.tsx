@@ -272,6 +272,8 @@ export interface TableVisualProps {
   isEditMode?: boolean
   isQrPrintMode?: boolean
   isPrintSelected?: boolean
+  labelName?: string | null
+  labelColor?: string | null
   onTogglePrintSelect?: () => void
   onRotate?: () => void
   hideChairs?: {
@@ -315,6 +317,8 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   isEditMode = false,
   isQrPrintMode = false,
   isPrintSelected = false,
+  labelName = null,
+  labelColor = null,
   onTogglePrintSelect,
   onRotate,
   hideChairs = {},
@@ -339,22 +343,73 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   const chairSize = Math.max(10, Math.round(cellSize * 0.22))
   const chairOffset = -Math.round(chairSize * 1.15)
 
-  // Border & background style for white tabletop with thick status-colored border
+  // Border & background style for tabletop with status-colored or label-colored border and soft status tint
   const getTabletopStyle = () => {
     if (isQrPrintMode) {
       return {
         backgroundColor: '#FFFFFF',
       }
     }
-    return {
-      backgroundColor: '#FFFFFF',
-      borderColor: isEditMode
+    const borderColor = labelColor
+      ? labelColor
+      : isEditMode
         ? isSelected ? '#14274E' : '#475569'
-        : statusInfo.color,
-      borderWidth: '3.5px',
+        : statusInfo.color
+
+    let bg = '#FFFFFF'
+    if (status === 'OCCUPIED') bg = '#EFF6FF'
+    else if (status === 'RESERVED') bg = '#FFFBEB'
+    else if (status === 'HAS_REQUEST') bg = '#FEF2F2'
+    else if (status === 'UNAVAILABLE') bg = '#F8FAFC'
+
+    return {
+      backgroundColor: bg,
+      borderColor,
+      borderWidth: labelColor ? '4px' : '3.5px',
       borderStyle: 'solid' as const,
+      boxShadow: labelColor
+        ? `0 0 0 2px ${labelColor}33, 0 4px 12px ${labelColor}25`
+        : isSelected
+          ? '0 4px 14px rgba(79, 70, 229, 0.25)'
+          : undefined,
     }
   }
+
+  // Common Header Badges (VIP / Label & Status Indicator)
+  const renderTabletopBadges = () => (
+    <>
+      {/* Table Label / VIP Floating Badge */}
+      {labelName && (
+        <div
+          className="absolute -top-3 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shadow-md z-30 whitespace-nowrap flex items-center gap-1 border-2 border-white pointer-events-none animate-in fade-in zoom-in-95 duration-150"
+          style={{
+            backgroundColor: labelColor || '#8B0000',
+            color: '#FFFFFF',
+          }}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+          <span>{labelName}</span>
+        </div>
+      )}
+
+      {/* Top Left Status & Merge Indicator */}
+      <div className="absolute top-1 left-1.5 flex items-center gap-1 pointer-events-none z-20">
+        <span
+          className="w-2.5 h-2.5 rounded-full ring-1.5 ring-white shadow-xs shrink-0"
+          style={{ backgroundColor: statusInfo.color }}
+          title={`Status: ${statusInfo.text}`}
+        />
+        {status === 'HAS_REQUEST' && (
+          <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping absolute top-0 left-0" />
+        )}
+        {!isQrPrintMode && isMerged && (
+          <div className="p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
+            <GitMerge className="w-2 h-2 text-indigo-600" />
+          </div>
+        )}
+      </div>
+    </>
+  )
 
   const getTabletopClasses = () => {
     if (isQrPrintMode) {
@@ -435,6 +490,8 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className={`relative z-10 w-full h-full rounded-xl flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
           style={getTabletopStyle()}
         >
+          {renderTabletopBadges()}
+
           {/* QR Print Mode Checkbox */}
           {isQrPrintMode && (
             <div
@@ -445,13 +502,6 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
               }`}
             >
               <Check className="w-2.5 h-2.5 stroke-[3.5]" />
-            </div>
-          )}
-
-          {/* Merged Indicator Badge */}
-          {!isQrPrintMode && isMerged && (
-            <div className="absolute top-1 left-1 p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
             </div>
           )}
 
@@ -549,6 +599,8 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className={`relative z-10 w-full h-full rounded-xl flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
           style={getTabletopStyle()}
         >
+          {renderTabletopBadges()}
+
           {/* QR Print Mode Checkbox */}
           {isQrPrintMode && (
             <div
@@ -559,13 +611,6 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
               }`}
             >
               <Check className="w-2.5 h-2.5 stroke-[3.5]" />
-            </div>
-          )}
-
-          {/* Merged Indicator Badge */}
-          {!isQrPrintMode && isMerged && (
-            <div className="absolute top-1.5 left-2 p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
             </div>
           )}
 
@@ -678,6 +723,8 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className={`relative z-10 w-full h-full rounded-xl flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
           style={getTabletopStyle()}
         >
+          {renderTabletopBadges()}
+
           {/* Floating Rotate Corner Button */}
           {isEditMode && isSelected && onRotate && (
             <button
@@ -703,13 +750,6 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
               }`}
             >
               <Check className="w-2.5 h-2.5 stroke-[3.5]" />
-            </div>
-          )}
-
-          {/* Merged Indicator Badge */}
-          {!isQrPrintMode && isMerged && (
-            <div className="absolute top-1.5 left-2 p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
             </div>
           )}
 
@@ -791,6 +831,8 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className={`relative z-10 w-full h-full rounded-full flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
           style={getTabletopStyle()}
         >
+          {renderTabletopBadges()}
+
           {/* QR Print Mode Checkbox (Tucked in Top-Right Quadrant) */}
           {isQrPrintMode && (
             <div
@@ -801,13 +843,6 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
               }`}
             >
               <Check className="w-2.5 h-2.5 stroke-[3.5]" />
-            </div>
-          )}
-
-          {/* Merged Indicator Badge (Tucked in Top-Left Quadrant so it never covers table number) */}
-          {!isQrPrintMode && isMerged && (
-            <div className="absolute top-1.5 left-2 p-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-2.5 h-2.5 text-indigo-600" />
             </div>
           )}
 
@@ -874,6 +909,8 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           className={`relative z-10 w-full h-full rounded-full flex flex-col items-center justify-center transition-all duration-150 ${getTabletopClasses()}`}
           style={getTabletopStyle()}
         >
+          {renderTabletopBadges()}
+
           {/* QR Print Mode Checkbox (Tucked in Top-Right Quadrant) */}
           {isQrPrintMode && (
             <div
@@ -884,13 +921,6 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
               }`}
             >
               <Check className="w-3 h-3 stroke-[3.5]" />
-            </div>
-          )}
-
-          {/* Merged Indicator Badge (Tucked in Top-Left Quadrant so it never covers table number) */}
-          {!isQrPrintMode && isMerged && (
-            <div className="absolute top-3 left-4 p-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-              <GitMerge className="w-3 h-3 text-indigo-600" />
             </div>
           )}
 

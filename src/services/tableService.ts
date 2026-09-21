@@ -27,6 +27,7 @@ export interface TableData {
   RESERVATION_NOTES: string | null
   LAYOUT_X?: number | null
   LAYOUT_Y?: number | null
+  LABEL_ID?: number | null
 }
 
 export interface TableWithOrders extends TableData {
@@ -180,6 +181,7 @@ export async function fetchAllTables(): Promise<TableData[]> {
         RESERVATION_NOTES: live?.RESERVATION_NOTES ?? null,
         LAYOUT_X: Number(lt.X_POS ?? 0),
         LAYOUT_Y: Number(lt.Y_POS ?? 0),
+        LABEL_ID: live?.LABEL_ID ?? (lt as Record<string, unknown>).LABEL_ID as number | null ?? null,
       }
     })
 
@@ -761,6 +763,18 @@ export async function deleteTables(tableIds: number[]): Promise<BulkDeleteResult
   return result
 }
 
+/**
+ * Remove all tables from Restaurant_Tables that have no active orders.
+ * Merged tables and tables with active orders are safely blocked.
+ */
+export async function removeAllTables(): Promise<BulkDeleteResult> {
+  const { data, error } = await supabase.schema('tables').from('Restaurant_Tables').select('TABLE_ID')
+  if (error) throw error
+  const tableIds = (data ?? []).map((r) => Number(r.TABLE_ID))
+  if (tableIds.length === 0) return { deleted: [], blocked: [] }
+  return deleteTables(tableIds)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Bulk edit
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1253,3 +1267,4 @@ export async function updateSeatedPax(tableId: number, newCount: number): Promis
   if (!updated) throw new Error('Failed to update pax.')
   return updated
 }
+

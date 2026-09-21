@@ -641,6 +641,12 @@ export async function activateEvent(event: RestaurantEvent): Promise<void> {
     try {
       const { setDefaultLayoutPreset } = await import('@/services/tableLayoutService')
       await setDefaultLayoutPreset(event.presetId)
+      const { logTableAction } = await import('@/services/tableAuditService')
+      void logTableAction('EVENT_LAYOUT_APPLIED', `Event "${event.title}" activated: layout preset #${event.presetId} applied.`, {
+        targetEntity: 'EVENT',
+        targetId: String(event.eventId),
+        metadata: { presetId: event.presetId },
+      })
     } catch (err) {
       console.warn('[eventService] Failed to set default layout preset on event activate:', err)
     }
@@ -709,11 +715,12 @@ export async function deactivateEvent(eventId: number): Promise<void> {
     // Ignore fallback write errors
   }
 
-  // 1. Revert Table_Layout_Presets IS_DEFAULT to standard default layout
+  // 1. Revert Table_Layout_Presets IS_DEFAULT to standard default layout (prioritizing protected preset)
   try {
     const { fetchAllLayoutPresets, setDefaultLayoutPreset } = await import('@/services/tableLayoutService')
     const presets = await fetchAllLayoutPresets()
     const basePreset =
+      presets.find((p) => p.IS_PROTECTED) ||
       presets.find(
         (p) =>
           p.LAYOUT_PRESET_ID === 1 ||
@@ -723,6 +730,12 @@ export async function deactivateEvent(eventId: number): Promise<void> {
       ) || presets[0]
     if (basePreset) {
       await setDefaultLayoutPreset(basePreset.LAYOUT_PRESET_ID)
+      const { logTableAction } = await import('@/services/tableAuditService')
+      void logTableAction('EVENT_LAYOUT_RESET', `Event #${eventId} deactivated: floor layout reverted to default preset "${basePreset.PRESET_NAME}".`, {
+        targetEntity: 'EVENT',
+        targetId: String(eventId),
+        metadata: { presetId: basePreset.LAYOUT_PRESET_ID },
+      })
     }
   } catch (err) {
     console.warn('[eventService] Failed to revert default layout preset on event deactivate:', err)
