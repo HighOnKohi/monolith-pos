@@ -27,6 +27,7 @@ import {
   Layers,
 } from 'lucide-react'
 import { getTableQrUrl } from '@/components/table-qr/tableQrUtils'
+import { getMergeGroupColor } from '@/utils/floorPlan/mergeGroupColors'
 
 interface TableManagerSidebarProps {
   isEditMode: boolean
@@ -49,6 +50,7 @@ interface TableManagerSidebarProps {
   onUpdateGuestCount: (tableNum: number, guests: number) => void
   onUpdateStatus: (tableNum: number, status: RestaurantTableData['STATUS']) => void
   onUnmergeTable: (tableNum: number) => void
+  isMergeGroupBlockedFromUnmerge?: boolean
   onDeleteTable: (tableNum: number) => void
   onOpenQrModal?: (table: MergedTableNode) => void
 }
@@ -73,6 +75,7 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   onUpdateGuestCount,
   onUpdateStatus,
   onUnmergeTable,
+  isMergeGroupBlockedFromUnmerge = false,
   onDeleteTable,
   onOpenQrModal,
 }) => {
@@ -261,11 +264,19 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   const currentTypeConfig = selectedTable ? (TABLE_TYPES[selectedTable.TABLE_TYPE] || TABLE_TYPES[1]) : null
   const originalMaxSeats = currentTypeConfig ? currentTypeConfig.defaultCapacity : 4
   const maxSeatsAllowed = originalMaxSeats
-  const currentSeatCapacity = selectedTable
-    ? Math.min(maxSeatsAllowed, Math.max(1, selectedTable.GUEST_CAPACITY || maxSeatsAllowed))
+
+  // In Edit Mode: base unsuppressed capacity configured for the table
+  const configuredBaseCapacity = selectedTable
+    ? Math.min(maxSeatsAllowed, Math.max(1, selectedTable.TABLE_CAPACITY ?? selectedTable.GUEST_CAPACITY ?? maxSeatsAllowed))
     : 4
+
+  // In View Mode: effective capacity respecting suppressed adjacent chairs (e.g. 4 for big circle table)
+  const effectiveSeatCapacity = selectedTable
+    ? (selectedTable.GUEST_CAPACITY ?? selectedTable.TABLE_CAPACITY ?? maxSeatsAllowed)
+    : 4
+
   const currentGuestCount = selectedTable
-    ? Math.max(0, Math.min(currentSeatCapacity, selectedTable.CURRENT_GUEST_COUNT || 0))
+    ? Math.max(0, Math.min(effectiveSeatCapacity, selectedTable.CURRENT_GUEST_COUNT || 0))
     : 0
   const currentStatus = selectedTable?.STATUS || 'AVAILABLE'
 
@@ -430,11 +441,23 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
                 <h2 className="text-base font-black text-[#14274E] tracking-tight">
                   Table #{selectedTable.TABLE_NUM}
                 </h2>
-                {selectedTable.MERGE_GROUP_ID != null && (
-                  <span className="p-1 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 inline-flex items-center justify-center" title="Merged Table">
-                    <GitMerge className="w-3 h-3" />
-                  </span>
-                )}
+                {selectedTable.MERGE_GROUP_ID != null && (() => {
+                  const theme = getMergeGroupColor(selectedTable.MERGE_GROUP_ID)
+                  return (
+                    <span
+                      className="px-2 py-0.5 rounded-md border inline-flex items-center gap-1 text-[10px] font-black shadow-2xs"
+                      style={{
+                        backgroundColor: theme.lightBg,
+                        borderColor: theme.border,
+                        color: theme.text,
+                      }}
+                      title={`Merge Group #${selectedTable.MERGE_GROUP_ID}`}
+                    >
+                      <GitMerge className="w-3 h-3" style={{ color: theme.primary }} />
+                      <span>Group #{selectedTable.MERGE_GROUP_ID}</span>
+                    </span>
+                  )
+                })()}
               </div>
               <span className="text-xs font-bold text-slate-400">
                 {currentTypeConfig?.name}
@@ -485,7 +508,7 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
                       </span>
                     </div>
                     <span className="text-[11px] font-bold text-slate-400">
-                      Cap: {currentSeatCapacity}
+                      Cap: {effectiveSeatCapacity}
                     </span>
                   </div>
 
@@ -515,11 +538,11 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
 
                     <button
                       type="button"
-                      disabled={currentGuestCount >= currentSeatCapacity}
+                      disabled={currentGuestCount >= effectiveSeatCapacity}
                       onClick={() =>
                         onUpdateGuestCount(
                           selectedTable.TABLE_NUM,
-                          Math.min(currentSeatCapacity, currentGuestCount + 1),
+                          Math.min(effectiveSeatCapacity, currentGuestCount + 1),
                         )
                       }
                       className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-40 flex items-center justify-center font-black text-slate-700 cursor-pointer text-base active:scale-95 transition-all shadow-2xs"
@@ -530,16 +553,41 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
                 </div>
 
                 {/* 3. Unmerge Table in View Mode (if merged) */}
-                {selectedTable.MERGE_GROUP_ID != null && (
-                  <button
-                    type="button"
-                    onClick={() => onUnmergeTable(selectedTable.TABLE_NUM)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-2xs active:scale-98"
-                  >
-                    <Unlink className="w-3.5 h-3.5" />
-                    <span>Unmerge Table {selectedTable.TABLE_NUM}</span>
-                  </button>
-                )}
+                {selectedTable.MERGE_GROUP_ID != null && (() => {
+                  const theme = getMergeGroupColor(selectedTable.MERGE_GROUP_ID)
+                  return (
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        disabled={isMergeGroupBlockedFromUnmerge}
+                        onClick={() => onUnmergeTable(selectedTable.TABLE_NUM)}
+                        className={`w-full px-3 py-2.5 rounded-xl border text-xs font-black transition-all flex items-center justify-center gap-2 shadow-2xs ${
+                          isMergeGroupBlockedFromUnmerge
+                            ? 'opacity-50 cursor-not-allowed'
+                            : 'cursor-pointer active:scale-98'
+                        }`}
+                        style={{
+                          backgroundColor: theme.lightBg,
+                          borderColor: theme.border,
+                          color: theme.text,
+                        }}
+                        title={
+                          isMergeGroupBlockedFromUnmerge
+                            ? 'Cannot unmerge: active orders exist on this merge group'
+                            : `Unmerge Table ${selectedTable.TABLE_NUM}`
+                        }
+                      >
+                        <Unlink className="w-3.5 h-3.5" style={{ color: theme.primary }} />
+                        <span>Unmerge Table {selectedTable.TABLE_NUM} (Group #{selectedTable.MERGE_GROUP_ID})</span>
+                      </button>
+                      {isMergeGroupBlockedFromUnmerge && (
+                        <p className="text-[10px] font-bold text-amber-600 text-center">
+                          Active order on merge group. Settle order to unmerge.
+                        </p>
+                      )}
+                    </div>
+                  )
+                })()}
               </>
             )}
 
@@ -612,11 +660,11 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
                   <div className="flex items-center justify-between mt-3">
                     <button
                       type="button"
-                      disabled={currentSeatCapacity <= 1}
+                      disabled={configuredBaseCapacity <= 1}
                       onClick={() =>
                         onUpdateSeatCount(
                           selectedTable.TABLE_NUM,
-                          Math.max(1, currentSeatCapacity - 1),
+                          Math.max(1, configuredBaseCapacity - 1),
                         )
                       }
                       className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-40 flex items-center justify-center font-black text-slate-700 cursor-pointer text-base active:scale-95 transition-all shadow-2xs"
@@ -626,20 +674,20 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
 
                     <div className="flex flex-col items-center">
                       <span className="text-lg font-black text-[#14274E]">
-                        {currentSeatCapacity}
+                        {configuredBaseCapacity}
                       </span>
                       <span className="text-[10px] font-bold text-slate-400 -mt-0.5">
-                        {currentSeatCapacity === 1 ? 'Seat Max' : 'Seats Max'}
+                        {configuredBaseCapacity === 1 ? 'Seat Max' : 'Seats Max'}
                       </span>
                     </div>
 
                     <button
                       type="button"
-                      disabled={currentSeatCapacity >= originalMaxSeats || remainingVenueCapacity <= 0}
+                      disabled={configuredBaseCapacity >= originalMaxSeats || remainingVenueCapacity <= 0}
                       onClick={() =>
                         onUpdateSeatCount(
                           selectedTable.TABLE_NUM,
-                          Math.min(originalMaxSeats, currentSeatCapacity + 1),
+                          Math.min(originalMaxSeats, configuredBaseCapacity + 1),
                         )
                       }
                       className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-40 flex items-center justify-center font-black text-slate-700 cursor-pointer text-base active:scale-95 transition-all shadow-2xs"
@@ -651,16 +699,41 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
                 </div>
 
                 {/* 3. Unmerge Table (if merged) */}
-                {selectedTable.MERGE_GROUP_ID != null && (
-                  <button
-                    type="button"
-                    onClick={() => onUnmergeTable(selectedTable.TABLE_NUM)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100/80 text-indigo-700 text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <Unlink className="w-3.5 h-3.5" />
-                    <span>Unmerge Table {selectedTable.TABLE_NUM}</span>
-                  </button>
-                )}
+                {selectedTable.MERGE_GROUP_ID != null && (() => {
+                  const theme = getMergeGroupColor(selectedTable.MERGE_GROUP_ID)
+                  return (
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        disabled={isMergeGroupBlockedFromUnmerge}
+                        onClick={() => onUnmergeTable(selectedTable.TABLE_NUM)}
+                        className={`w-full px-3 py-2.5 rounded-xl border text-xs font-black transition-all flex items-center justify-center gap-2 shadow-2xs ${
+                          isMergeGroupBlockedFromUnmerge
+                            ? 'opacity-50 cursor-not-allowed'
+                            : 'cursor-pointer active:scale-98'
+                        }`}
+                        style={{
+                          backgroundColor: theme.lightBg,
+                          borderColor: theme.border,
+                          color: theme.text,
+                        }}
+                        title={
+                          isMergeGroupBlockedFromUnmerge
+                            ? 'Cannot unmerge: active orders exist on this merge group'
+                            : `Unmerge Table ${selectedTable.TABLE_NUM}`
+                        }
+                      >
+                        <Unlink className="w-3.5 h-3.5" style={{ color: theme.primary }} />
+                        <span>Unmerge Table {selectedTable.TABLE_NUM} (Group #{selectedTable.MERGE_GROUP_ID})</span>
+                      </button>
+                      {isMergeGroupBlockedFromUnmerge && (
+                        <p className="text-[10px] font-bold text-amber-600 text-center">
+                          Active order on merge group. Settle order to unmerge.
+                        </p>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             )}
 

@@ -64,9 +64,45 @@ import {
   deductMovedTableOnOverflow,
   type ChairSuppression as ChairSuppressionInfo,
 } from '@/utils/floorPlan/capacity'
+import { getMergeGroupColor } from '@/utils/floorPlan/mergeGroupColors'
+import { findNearestValidPosition } from '@/utils/floorPlan/collision'
 
 export const calculateSuppressionForLayout = calculateLayoutSuppression
 export type { ChairSuppressionInfo }
+
+export function isTableOverlapping(
+  tableNum: number,
+  tableType: TableType,
+  x: number,
+  y: number,
+  tables: TableLayoutInfo[],
+): boolean {
+  const cfgA = TABLE_TYPES[tableType] || TABLE_TYPES[1]
+  const aLeft = x
+  const aTop = y
+  const aRight = x + cfgA.width
+  const aBottom = y + cfgA.height
+
+  for (const other of tables) {
+    if (other.TABLE_NUM === tableNum) continue
+    const cfgB = TABLE_TYPES[other.TABLE_TYPE] || TABLE_TYPES[1]
+    const bLeft = other.X_POS
+    const bTop = other.Y_POS
+    const bRight = other.X_POS + cfgB.width
+    const bBottom = other.Y_POS + cfgB.height
+
+    const noOverlap =
+      aRight <= bLeft ||
+      aLeft >= bRight ||
+      aBottom <= bTop ||
+      aTop >= bBottom
+
+    if (!noOverlap) {
+      return true
+    }
+  }
+  return false
+}
 
 export function resolveConnectedMergeGroups(
   tables: TableLayoutInfo[],
@@ -86,6 +122,7 @@ export function resolveConnectedMergeGroups(
 
   const visited = new Array(n).fill(false)
   const result = [...tables]
+  const components: number[][] = []
 
   for (let i = 0; i < n; i++) {
     if (!visited[i]) {
@@ -105,13 +142,45 @@ export function resolveConnectedMergeGroups(
       }
 
       if (component.length >= 2) {
-        const minTableNum = Math.min(...component.map((idx) => tables[idx].TABLE_NUM))
-        for (const idx of component) {
-          result[idx] = { ...result[idx], MERGE_GROUP_ID: minTableNum }
-        }
+        components.push(component)
       } else {
         result[component[0]] = { ...result[component[0]], MERGE_GROUP_ID: null }
       }
+    }
+  }
+
+  // 1. First record all existing assigned group IDs so they are NEVER stolen or reassigned
+  const usedGroupIds = new Set<number>()
+  for (const comp of components) {
+    const existingGroupIds = comp
+      .map((idx) => tables[idx].MERGE_GROUP_ID)
+      .filter((gid): gid is number => gid != null && gid > 0)
+    if (existingGroupIds.length > 0) {
+      usedGroupIds.add(existingGroupIds[0])
+    }
+  }
+
+  let nextAvailableId = 1
+
+  for (const comp of components) {
+    const existingGroupIds = comp
+      .map((idx) => tables[idx].MERGE_GROUP_ID)
+      .filter((gid): gid is number => gid != null && gid > 0)
+
+    let assignedId: number | null = null
+    if (existingGroupIds.length > 0) {
+      assignedId = existingGroupIds[0]
+    } else {
+      while (usedGroupIds.has(nextAvailableId)) {
+        nextAvailableId++
+      }
+      assignedId = nextAvailableId
+      usedGroupIds.add(assignedId)
+      nextAvailableId++
+    }
+
+    for (const idx of comp) {
+      result[idx] = { ...result[idx], MERGE_GROUP_ID: assignedId }
     }
   }
 
@@ -122,7 +191,7 @@ export function applyTableMove(
   movedTableNum: number,
   newX: number,
   newY: number,
-  areAdjacent: (t1: TableLayoutInfo, t2: TableLayoutInfo) => boolean,
+  _areAdjacent?: (t1: TableLayoutInfo, t2: TableLayoutInfo) => boolean,
 ): TableLayoutInfo[] {
   const currentTable = tables.find((t) => t.TABLE_NUM === movedTableNum)
   if (!currentTable) return tables
@@ -133,8 +202,7 @@ export function applyTableMove(
     Y_POS: newY,
   }
 
-  const updated = tables.map((t) => (t.TABLE_NUM === movedTableNum ? movedTable : t))
-  return resolveConnectedMergeGroups(updated, areAdjacent)
+  return tables.map((t) => (t.TABLE_NUM === movedTableNum ? movedTable : t))
 }
 
 export interface MergeGroupVisualBox {
@@ -179,6 +247,7 @@ export default function TableManager() {
   const [selectedForPrintTableNums, setSelectedForPrintTableNums] = useState<Set<number>>(new Set())
   const [selectedTableNum, setSelectedTableNum] = useState<number | null>(null)
   const [selectedTableNums, setSelectedTableNums] = useState<Set<number>>(new Set())
+  const [activeOrderTableNums, setActiveOrderTableNums] = useState<Set<number>>(new Set())
   const [marqueeBox, setMarqueeBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const isMarqueeActiveRef = useRef(false)
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null)
@@ -287,26 +356,33 @@ export default function TableManager() {
   const activePresetMaxPaxRef = useRef(activePresetMaxPax)
   activePresetMaxPaxRef.current = activePresetMaxPax
 
+  // Effective layout tables taking active drag position into account
+  const effectiveLayoutTables = useMemo(() => {
+    if (!dragState) return layoutTables
+    return layoutTables.map((t) =>
+      t.TABLE_NUM === dragState.tableNum ? { ...t, X_POS: dragState.currentX, Y_POS: dragState.currentY } : t
+    )
+  }, [layoutTables, dragState])
+
   // Chair suppression map computed reactively
   const chairSuppressionMap = useMemo(() => {
-    return calculateLayoutSuppression(layoutTables)
-  }, [layoutTables])
+    return calculateLayoutSuppression(effectiveLayoutTables)
+  }, [effectiveLayoutTables])
 
-  // Base capacities map (preserves individual configured capacities even when merged)
+  // Base capacities map (preserves individual configured base capacities even when merged)
   const baseCapacitiesMap = useMemo(() => {
     const map = new Map<number, number>()
     for (const t of layoutTables) {
-      const live = restaurantTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
       const defaultCap = calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE)
-      const base = live?.GUEST_CAPACITY ?? t.TABLE_CAPACITY ?? (t.MERGE_GROUP_ID != null ? defaultCap : defaultCap)
+      const base = t.TABLE_CAPACITY ?? defaultCap
       map.set(t.TABLE_NUM, base)
     }
     return map
-  }, [layoutTables, restaurantTables])
+  }, [layoutTables])
 
   // Live nodes representing all tables on floor plan
   const mergedNodes: MergedTableNode[] = useMemo(() => {
-    return layoutTables.map((lt) => {
+    return effectiveLayoutTables.map((lt) => {
       const live = restaurantTables.find((rt) => rt.TABLE_NUM === lt.TABLE_NUM)
       const effCap = calculateTableEffectiveCapacity(lt, chairSuppressionMap, baseCapacitiesMap)
 
@@ -315,12 +391,12 @@ export default function TableManager() {
         MERGE_GROUP_ID: lt.MERGE_GROUP_ID ?? null,
         STATUS: live?.STATUS ?? 'AVAILABLE',
         CURRENT_GUEST_COUNT: live?.CURRENT_GUEST_COUNT ?? 0,
-        GUEST_CAPACITY: live?.GUEST_CAPACITY ?? effCap,
+        GUEST_CAPACITY: effCap,
         BILL_OUT_REQUESTED: live?.BILL_OUT_REQUESTED ?? false,
         TABLE_ID: live?.TABLE_ID ?? lt.TABLE_NUM,
       }
     })
-  }, [layoutTables, restaurantTables, chairSuppressionMap, baseCapacitiesMap])
+  }, [effectiveLayoutTables, restaurantTables, chairSuppressionMap, baseCapacitiesMap])
 
   // Total allocated capacity across current tables (direct sum of all active tables on canvas)
   const totalAllocatedCapacity = useMemo(() => {
@@ -340,9 +416,8 @@ export default function TableManager() {
     // 1. Build base capacities map for new layout
     const baseMap = new Map<number, number>()
     for (const t of newLayout) {
-      const existing = prevLiveTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
       const defaultCap = calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE)
-      const base = baseCaps?.get(t.TABLE_NUM) ?? t.TABLE_CAPACITY ?? (t.MERGE_GROUP_ID != null ? defaultCap : (existing?.GUEST_CAPACITY ?? defaultCap))
+      const base = baseCaps?.get(t.TABLE_NUM) ?? t.TABLE_CAPACITY ?? defaultCap
       baseMap.set(t.TABLE_NUM, base)
     }
 
@@ -394,8 +469,8 @@ export default function TableManager() {
         fetchActiveLabels(),
       ])
       setPresets(allPresets)
-      setRestaurantTables(liveTables)
       setActiveLabels(labelsData)
+      void refreshActiveOrders()
 
       if (allPresets.length > 0) {
         const defaultPreset = allPresets.find((p) => p.IS_DEFAULT) || allPresets[0]
@@ -430,11 +505,44 @@ export default function TableManager() {
     }
   }, [gridWidth, gridHeight])
 
+  const refreshActiveOrders = useCallback(async () => {
+    try {
+      const { data: orders } = await supabase
+        .from('Restaurant_Orders')
+        .select('TABLE_ID')
+        .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED'])
+
+      const live = await fetchLiveRestaurantTables()
+      const liveIdToNum = new Map(live.map((t) => [t.TABLE_ID, t.TABLE_NUM]))
+      const occupiedNums = new Set<number>()
+
+      for (const t of live) {
+        if (
+          t.STATUS === 'OCCUPIED' ||
+          t.STATUS === 'HAS_REQUEST' ||
+          (t.CURRENT_GUEST_COUNT && t.CURRENT_GUEST_COUNT > 0)
+        ) {
+          occupiedNums.add(t.TABLE_NUM)
+        }
+      }
+
+      for (const o of orders ?? []) {
+        const tableId = Number(o.TABLE_ID)
+        const tableNum = liveIdToNum.get(tableId) ?? tableId
+        occupiedNums.add(tableNum)
+      }
+
+      setActiveOrderTableNums(occupiedNums)
+    } catch (err) {
+      console.warn('[TableManager] Failed to fetch active orders:', err)
+    }
+  }, [])
+
   useEffect(() => {
     loadInitialData()
   }, [loadInitialData])
 
-  // ── 2. Realtime Subscription to Live Tables & Presets ──
+  // ── 2. Realtime Subscription to Live Tables, Presets & Orders ──
   useEffect(() => {
     const channel = supabase
       .channel('table-manager-live-sync')
@@ -453,9 +561,17 @@ export default function TableManager() {
           try {
             const updated = await fetchLiveRestaurantTables()
             setRestaurantTables(updated)
+            void refreshActiveOrders()
           } catch (err) {
             console.error('Error in live tables realtime sync:', err)
           }
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Restaurant_Orders' },
+        () => {
+          void refreshActiveOrders()
         },
       )
       .on(
@@ -510,6 +626,7 @@ export default function TableManager() {
         ])
         setPresets(allPresets)
         setRestaurantTables(live)
+        void refreshActiveOrders()
 
         const targetPresetId = detail?.presetId
         if (
@@ -531,7 +648,7 @@ export default function TableManager() {
       void supabase.removeChannel(channel)
       window.removeEventListener('monolith-order-update', handleBroadcastSync)
     }
-  }, [isDirty])
+  }, [isDirty, refreshActiveOrders])
 
   // ── 3. Switch Active Preset ──
   const performSelectPreset = async (presetId: number) => {
@@ -1015,8 +1132,7 @@ export default function TableManager() {
     const otherTablesCap = layoutTables
       .filter((t) => t.TABLE_NUM !== tableNum)
       .reduce((sum, t) => {
-        const live = restaurantTables.find((r) => r.TABLE_NUM === t.TABLE_NUM)
-        return sum + (live?.GUEST_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
+        return sum + (t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
       }, 0)
 
     const venueMaxForThisTable = Math.max(1, activePresetMaxPax - otherTablesCap)
@@ -1025,30 +1141,20 @@ export default function TableManager() {
     const updatedLayout = layoutTables.map((t) =>
       t.TABLE_NUM === tableNum ? { ...t, TABLE_CAPACITY: clampedSeats } : t,
     )
+    const suppMap = calculateSuppressionForLayout(updatedLayout)
+    const baseCaps = new Map<number, number>()
+    for (const t of updatedLayout) {
+      baseCaps.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE))
+    }
+    const updatedRest = syncRestaurantTablesWithLayout(
+      updatedLayout,
+      suppMap,
+      restaurantTables,
+      activePresetMaxPax,
+      baseCaps,
+    )
     setLayoutTables(updatedLayout)
-
-    setRestaurantTables((prev) => {
-      const exists = prev.some((r) => r.TABLE_NUM === tableNum)
-      if (exists) {
-        return prev.map((r) =>
-          r.TABLE_NUM === tableNum ? { ...r, GUEST_CAPACITY: clampedSeats } : r,
-        )
-      } else {
-        return [
-          ...prev,
-          {
-            TABLE_ID: tableNum,
-            TABLE_NUM: tableNum,
-            STATUS: 'AVAILABLE' as const,
-            GUEST_CAPACITY: clampedSeats,
-            CURRENT_GUEST_COUNT: 0,
-            RESERVED_SINCE: null,
-            BILL_OUT_REQUESTED: false,
-            MERGE_GROUP_ID: target.MERGE_GROUP_ID,
-          },
-        ]
-      }
-    })
+    setRestaurantTables(updatedRest)
 
     try {
       await updateTableCapacity(tableNum, clampedSeats)
@@ -1297,6 +1403,38 @@ export default function TableManager() {
     const currentMergeId = target.MERGE_GROUP_ID
 
     const groupMembers = layoutTables.filter((t) => t.MERGE_GROUP_ID === currentMergeId)
+
+    // Check if any member in this merge group has active orders or seated guests
+    const memberNums = groupMembers.map((m) => m.TABLE_NUM)
+    const memberIds = groupMembers.map((m) => {
+      const live = restaurantTables.find((r) => r.TABLE_NUM === m.TABLE_NUM)
+      return live?.TABLE_ID ?? m.TABLE_NUM
+    })
+
+    try {
+      const { data: activeOrders } = await supabase
+        .from('Restaurant_Orders')
+        .select('ORDER_ID')
+        .in('TABLE_ID', [...new Set([...memberIds, ...memberNums])])
+        .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED'])
+
+      const hasOccupied = restaurantTables.some(
+        (r) =>
+          memberNums.includes(r.TABLE_NUM) &&
+          (r.STATUS === 'OCCUPIED' || r.STATUS === 'HAS_REQUEST' || (r.CURRENT_GUEST_COUNT && r.CURRENT_GUEST_COUNT > 0)),
+      )
+
+      if ((activeOrders && activeOrders.length > 0) || hasOccupied) {
+        showToast(
+          `Cannot unmerge Group #${currentMergeId}: Table has active order(s) or seated guests. Settle or void orders first.`,
+          'error',
+        )
+        return
+      }
+    } catch (err) {
+      console.warn('Active orders check before unmerge:', err)
+    }
+
     const remainingMembers = groupMembers.filter((t) => t.TABLE_NUM !== tableNum)
 
     let updatedLayout: TableLayoutInfo[]
@@ -1309,14 +1447,10 @@ export default function TableManager() {
         return t
       })
     } else {
-      // 2 or more remain in group, reassign min table number as group ID
-      const newGroupId = Math.min(...remainingMembers.map((m) => m.TABLE_NUM))
+      // 2 or more remain in group, preserve existing currentMergeId for the group
       updatedLayout = layoutTables.map((t) => {
         if (t.TABLE_NUM === tableNum) {
           return { ...t, MERGE_GROUP_ID: null }
-        }
-        if (t.MERGE_GROUP_ID === currentMergeId) {
-          return { ...t, MERGE_GROUP_ID: newGroupId }
         }
         return t
       })
@@ -1353,13 +1487,34 @@ export default function TableManager() {
     }
   }
 
-  // ── 13b. Merge Multi-Selected Tables (Floating Button in View Mode) ──
+  // ── 13b. Merge Multi-Selected Tables (Floating Button in View/Edit Mode) ──
   const handleMergeSelectedTables = async () => {
     if (selectedTableNums.size < 2) return
     lastMutationTimeRef.current = Date.now()
 
     const selectedList = Array.from(selectedTableNums)
-    const targetMergeGroupId = Math.min(...selectedList)
+
+    // Collect all existing merge group IDs currently assigned across all tables
+    const existingGroupIds = new Set(
+      layoutTables
+        .map((t) => t.MERGE_GROUP_ID)
+        .filter((gid): gid is number => gid != null && gid > 0),
+    )
+
+    // Check if any of the selected tables already belongs to an existing merge group
+    const selectedExisting = layoutTables
+      .filter((t) => selectedTableNums.has(t.TABLE_NUM) && t.MERGE_GROUP_ID != null)
+      .map((t) => t.MERGE_GROUP_ID!)
+
+    let targetMergeGroupId: number
+    if (selectedExisting.length > 0) {
+      targetMergeGroupId = selectedExisting[0]
+    } else {
+      targetMergeGroupId = 1
+      while (existingGroupIds.has(targetMergeGroupId)) {
+        targetMergeGroupId++
+      }
+    }
 
     const updatedLayout = layoutTables.map((t) => {
       if (selectedTableNums.has(t.TABLE_NUM)) {
@@ -1369,7 +1524,13 @@ export default function TableManager() {
     })
 
     const suppMap = calculateSuppressionForLayout(updatedLayout)
-    const updatedRest = syncRestaurantTablesWithLayout(updatedLayout, suppMap, restaurantTables, activePresetMaxPax, baseCapacitiesMap)
+    const updatedRest = syncRestaurantTablesWithLayout(
+      updatedLayout,
+      suppMap,
+      restaurantTables,
+      activePresetMaxPax,
+      baseCapacitiesMap,
+    )
 
     setLayoutTables(updatedLayout)
     setRestaurantTables(updatedRest)
@@ -1446,12 +1607,12 @@ export default function TableManager() {
     return false
   }, [])
 
-  // ── 16. Drag Handling (Only active in Edit Mode) ──
+  // ── 16. Drag Handling (Active in both View Mode and Edit Mode) ──
   const handleMouseDown = (tableNum: number, e: React.MouseEvent) => {
     if (isQrPrintMode) return
 
-    // Tables can only be moved when Edit Mode is active
-    if (!isEditMode) return
+    // Only respond to main left click (button 0)
+    if (e.button !== 0) return
 
     // Ctrl/Cmd click is reserved for multi-selection toggle
     if (e.ctrlKey || e.metaKey) {
@@ -1467,9 +1628,10 @@ export default function TableManager() {
 
     if (!selectedTableNums.has(tableNum)) {
       setSelectedTableNum(tableNum)
+      setSelectedTableNums(new Set([tableNum]))
     }
 
-    setDragState({
+    const newDrag: DragState = {
       tableNum,
       startMouseX: e.clientX,
       startMouseY: e.clientY,
@@ -1477,10 +1639,12 @@ export default function TableManager() {
       startTableY: table.Y_POS,
       currentX: table.X_POS,
       currentY: table.Y_POS,
-    })
+    }
+    dragStateRef.current = newDrag
+    setDragState(newDrag)
   }
 
-  // Handle Table Click (Single vs Ctrl+Click Multi-Select)
+  // Handle Table Click (Single vs Ctrl+Click Multi-Select like file explorers)
   const handleTableClick = (tableNum: number, e: React.MouseEvent) => {
     e.stopPropagation()
     if (isQrPrintMode) {
@@ -1491,19 +1655,26 @@ export default function TableManager() {
     if (e.ctrlKey || e.metaKey) {
       setSelectedTableNums((prev) => {
         const next = new Set(prev)
+        // If there was a single active selected table not in the set, retain it
+        if (selectedTableNum != null && !next.has(selectedTableNum)) {
+          next.add(selectedTableNum)
+        }
+
         if (next.has(tableNum)) {
           next.delete(tableNum)
+          if (selectedTableNum === tableNum) {
+            const remaining = Array.from(next)
+            setSelectedTableNum(remaining.length > 0 ? remaining[remaining.length - 1] : null)
+          }
         } else {
           next.add(tableNum)
+          setSelectedTableNum(tableNum)
         }
         return next
       })
-      setSelectedTableNum(tableNum)
     } else {
-      if (selectedTableNums.size > 0 && !selectedTableNums.has(tableNum)) {
-        setSelectedTableNums(new Set([tableNum]))
-      }
       setSelectedTableNum(tableNum)
+      setSelectedTableNums(new Set([tableNum]))
     }
   }
 
@@ -1535,22 +1706,33 @@ export default function TableManager() {
 
   useEffect(() => {
     const handleGlobalMouseMove = (e: MouseEvent) => {
+      // Safety check: If no mouse button is held down, finalize dragging immediately
+      if (e.buttons === 0) {
+        if (dragStateRef.current !== null || isMarqueeActiveRef.current) {
+          void handleGlobalMouseUp()
+        }
+        return
+      }
+
+      const activeDrag = dragStateRef.current || dragState
       // 1. Table Dragging
-      if (dragState) {
-        const deltaPixelX = e.clientX - dragState.startMouseX
-        const deltaPixelY = e.clientY - dragState.startMouseY
+      if (activeDrag) {
+        const deltaPixelX = e.clientX - activeDrag.startMouseX
+        const deltaPixelY = e.clientY - activeDrag.startMouseY
 
         const deltaGridX = Math.round(deltaPixelX / cellSize)
         const deltaGridY = Math.round(deltaPixelY / cellSize)
 
-        const targetTable = layoutTables.find((t) => t.TABLE_NUM === dragState.tableNum)
+        const targetTable = layoutTables.find((t) => t.TABLE_NUM === activeDrag.tableNum)
         if (targetTable) {
           const cfg = TABLE_TYPES[targetTable.TABLE_TYPE] || TABLE_TYPES[1]
-          const nextX = Math.max(0, Math.min(gridWidth - cfg.width, dragState.startTableX + deltaGridX))
-          const nextY = Math.max(0, Math.min(gridHeight - cfg.height, dragState.startTableY + deltaGridY))
+          const nextX = Math.max(0, Math.min(gridWidth - cfg.width, activeDrag.startTableX + deltaGridX))
+          const nextY = Math.max(0, Math.min(gridHeight - cfg.height, activeDrag.startTableY + deltaGridY))
 
-          if (nextX !== dragState.currentX || nextY !== dragState.currentY) {
-            setDragState((prev) => (prev ? { ...prev, currentX: nextX, currentY: nextY } : null))
+          if (nextX !== activeDrag.currentX || nextY !== activeDrag.currentY) {
+            const updated: DragState = { ...activeDrag, currentX: nextX, currentY: nextY }
+            dragStateRef.current = updated
+            setDragState(updated)
           }
         }
       }
@@ -1603,16 +1785,57 @@ export default function TableManager() {
     }
 
     const handleGlobalMouseUp = async () => {
+      const activeDrag = dragStateRef.current || dragState
+      dragStateRef.current = null
+      setDragState(null)
+
       // 1. Table Dragging Finish
-      if (dragState) {
-        const { tableNum, currentX, currentY, startTableX, startTableY } = dragState
+      if (activeDrag) {
+        const { tableNum, currentX, currentY, startTableX, startTableY } = activeDrag
         const hasMoved = currentX !== startTableX || currentY !== startTableY
 
         if (hasMoved) {
           lastMutationTimeRef.current = Date.now()
           const currentTable = layoutTables.find((t) => t.TABLE_NUM === tableNum)
           if (currentTable) {
-            const rawResult = applyTableMove(layoutTables, tableNum, currentX, currentY, areTablesAdjacent)
+            let finalX = currentX
+            let finalY = currentY
+
+            // Prevent tables from overlapping each other
+            if (isTableOverlapping(tableNum, currentTable.TABLE_TYPE, finalX, finalY, layoutTables)) {
+              const tablePositions = layoutTables.map((t) => {
+                const cfg = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
+                return {
+                  tableId: t.TABLE_NUM,
+                  x: t.X_POS,
+                  y: t.Y_POS,
+                  widthBlocks: cfg.width,
+                  heightBlocks: cfg.height,
+                }
+              })
+              const currentCfg = TABLE_TYPES[currentTable.TABLE_TYPE] || TABLE_TYPES[1]
+              const nearest = findNearestValidPosition(
+                finalX,
+                finalY,
+                tableNum,
+                1,
+                gridWidth,
+                gridHeight,
+                tablePositions,
+                currentCfg.width,
+                currentCfg.height,
+              )
+
+              if (nearest) {
+                finalX = nearest.x
+                finalY = nearest.y
+              } else {
+                finalX = startTableX
+                finalY = startTableY
+              }
+            }
+
+            const rawResult = applyTableMove(layoutTables, tableNum, finalX, finalY, areTablesAdjacent)
             const suppMap = calculateSuppressionForLayout(rawResult)
             const { updatedBaseCapacities, updatedLayout } = deductMovedTableOnOverflow(
               tableNum,
@@ -1631,10 +1854,22 @@ export default function TableManager() {
 
             setLayoutTables(updatedLayout)
             setRestaurantTables(updatedRest)
-            setIsDirty(true)
+
+            if (!isEditMode && activePresetId) {
+              try {
+                const capacityMap = new Map<number, number>()
+                for (const r of updatedRest) {
+                  capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
+                }
+                await savePresetLayout(activePresetId, updatedLayout, capacityMap, activePresetMaxPax)
+              } catch (err) {
+                console.error('Failed to save layout move in view mode:', err)
+              }
+            } else {
+              setIsDirty(true)
+            }
           }
         }
-        setDragState(null)
       }
 
       // 2. Marquee Selection Finish
@@ -1647,9 +1882,11 @@ export default function TableManager() {
 
     window.addEventListener('mousemove', handleGlobalMouseMove)
     window.addEventListener('mouseup', handleGlobalMouseUp)
+    window.addEventListener('pointerup', handleGlobalMouseUp)
     return () => {
       window.removeEventListener('mousemove', handleGlobalMouseMove)
       window.removeEventListener('mouseup', handleGlobalMouseUp)
+      window.removeEventListener('pointerup', handleGlobalMouseUp)
     }
   }, [dragState, gridWidth, gridHeight, layoutTables, areTablesAdjacent, cellSize, isEditMode, activePresetId, restaurantTables, syncRestaurantTablesWithLayout, selectedTableNums, activePresetMaxPax, baseCapacitiesMap])
 
@@ -1806,9 +2043,15 @@ export default function TableManager() {
     }
 
     return visuals
-  }, [mergedNodes, dragState, cellSize, selectedTableNum, selectedTableNums])
+  }, [mergedNodes, selectedTableNum, selectedTableNums, dragState, cellSize])
 
   const selectedNode = mergedNodes.find((n) => n.TABLE_NUM === selectedTableNum) || null
+
+  const isSelectedMergeGroupBlockedFromUnmerge = useMemo(() => {
+    if (!selectedNode || selectedNode.MERGE_GROUP_ID == null) return false
+    const groupMembers = layoutTables.filter((t) => t.MERGE_GROUP_ID === selectedNode.MERGE_GROUP_ID)
+    return groupMembers.some((m) => activeOrderTableNums.has(m.TABLE_NUM))
+  }, [selectedNode, layoutTables, activeOrderTableNums])
 
   // ── 19. Table QR Code Preview & Bulk Operations ──
   const [qrModalTable, setQrModalTable] = useState<{
@@ -2084,8 +2327,8 @@ export default function TableManager() {
             </div>
           )}
 
-          {/* Floating Merge Tables button in upper right corner (View Mode only when >= 2 tables selected) */}
-          {!isEditMode && !isQrPrintMode && selectedTableNums.size >= 2 && (
+          {/* Floating Merge Tables button in upper right corner (When >= 2 tables selected) */}
+          {!isQrPrintMode && selectedTableNums.size >= 2 && (
             <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150">
               <button
                 type="button"
@@ -2120,6 +2363,8 @@ export default function TableManager() {
             >
               {/* Dynamic Merge Group Indicators (Box or Broken Chain Link Lines) */}
               {mergeGroupVisuals.map((visual) => {
+                const theme = getMergeGroupColor(visual.groupId)
+
                 if (visual.type === 'box') {
                   const padding = Math.max(6, Math.round(cellSize * 0.12))
                   const left = visual.minX * cellSize - padding
@@ -2130,12 +2375,14 @@ export default function TableManager() {
                   return (
                     <div
                       key={`merge-group-box-${visual.groupId}`}
-                      className="absolute pointer-events-none rounded-2xl border-2 border-dashed border-indigo-400/80 bg-indigo-500/5 transition-all duration-150 z-10 shadow-xs"
+                      className="absolute pointer-events-none rounded-2xl border-2 border-dashed transition-all duration-150 z-10 shadow-xs"
                       style={{
                         left: `${left}px`,
                         top: `${top}px`,
                         width: `${width}px`,
                         height: `${height}px`,
+                        borderColor: theme.primary,
+                        backgroundColor: theme.containerBg || theme.lightBg,
                       }}
                     />
                   )
@@ -2156,7 +2403,7 @@ export default function TableManager() {
                             y1={link.y1}
                             x2={link.x2}
                             y2={link.y2}
-                            stroke="#818CF8"
+                            stroke={theme.glow}
                             strokeWidth={6}
                             strokeOpacity={0.35}
                             strokeDasharray="10 6"
@@ -2168,7 +2415,7 @@ export default function TableManager() {
                             y1={link.y1}
                             x2={link.x2}
                             y2={link.y2}
-                            stroke="#4F46E5"
+                            stroke={theme.primary}
                             strokeWidth={2.5}
                             strokeDasharray="8 5"
                             strokeLinecap="round"
@@ -2183,7 +2430,7 @@ export default function TableManager() {
                             cx={node.cx}
                             cy={node.cy}
                             r={6}
-                            fill="#4F46E5"
+                            fill={theme.primary}
                             stroke="#FFFFFF"
                             strokeWidth={2}
                           />
@@ -2235,9 +2482,9 @@ export default function TableManager() {
                     onClick={(e) => {
                       handleTableClick(node.TABLE_NUM, e)
                     }}
-                    className={`table-node-item absolute transition-transform select-none ${
-                      isEditMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
-                    } ${isDraggingThis ? 'z-40 scale-105 opacity-90' : 'z-20'}`}
+                    className={`table-node-item absolute transition-transform select-none cursor-grab active:cursor-grabbing ${
+                      isDraggingThis ? 'z-40 scale-105 opacity-90' : 'z-20'
+                    }`}
                     style={{
                       left: `${posX * cellSize}px`,
                       top: `${posY * cellSize}px`,
@@ -2321,6 +2568,7 @@ export default function TableManager() {
           onUpdateGuestCount={handleUpdateGuestCount}
           onUpdateStatus={handleUpdateStatus}
           onUnmergeTable={handleUnmergeTable}
+          isMergeGroupBlockedFromUnmerge={isSelectedMergeGroupBlockedFromUnmerge}
           onDeleteTable={handleDeleteTable}
           onOpenQrModal={handleOpenQrModal}
         />

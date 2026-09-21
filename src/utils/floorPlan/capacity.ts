@@ -37,8 +37,10 @@ export function calculateLayoutSuppression(
 ): Map<number, ChairSuppression> {
   const map = new Map<number, ChairSuppression>()
   const cellMap = new Map<string, number>()
+  const tableByNum = new Map<number, TableLayoutInfo>()
 
   for (const t of tables) {
+    tableByNum.set(t.TABLE_NUM, t)
     const cfg = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
     for (let dx = 0; dx < cfg.width; dx++) {
       for (let dy = 0; dy < cfg.height; dy++) {
@@ -50,16 +52,22 @@ export function calculateLayoutSuppression(
   for (const t of tables) {
     let suppressedCount = 0
 
+    // Suppress chairs whenever adjacent to ANY other table (clears up touching chairs dynamically)
+    const isTouchingAdjacentTable = (neighborTableNum: number | undefined) => {
+      if (!neighborTableNum || neighborTableNum === t.TABLE_NUM) return false
+      return true
+    }
+
     if (t.TABLE_TYPE === 1 || t.TABLE_TYPE === 3) {
       const topCell = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
       const bottomCell = cellMap.get(`${t.X_POS},${t.Y_POS + 1}`)
       const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
       const rightCell = cellMap.get(`${t.X_POS + 1},${t.Y_POS}`)
 
-      const top = Boolean(topCell && topCell !== t.TABLE_NUM)
-      const bottom = Boolean(bottomCell && bottomCell !== t.TABLE_NUM)
-      const left = Boolean(leftCell && leftCell !== t.TABLE_NUM)
-      const right = Boolean(rightCell && rightCell !== t.TABLE_NUM)
+      const top = isTouchingAdjacentTable(topCell)
+      const bottom = isTouchingAdjacentTable(bottomCell)
+      const left = isTouchingAdjacentTable(leftCell)
+      const right = isTouchingAdjacentTable(rightCell)
 
       if (top) suppressedCount++
       if (bottom) suppressedCount++
@@ -70,16 +78,16 @@ export function calculateLayoutSuppression(
     } else if (t.TABLE_TYPE === 2) {
       const topMask = [0, 1, 2].map((dx) => {
         const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS - 1}`)
-        return Boolean(c && c !== t.TABLE_NUM)
+        return isTouchingAdjacentTable(c)
       })
       const bottomMask = [0, 1, 2].map((dx) => {
         const c = cellMap.get(`${t.X_POS + dx},${t.Y_POS + 1}`)
-        return Boolean(c && c !== t.TABLE_NUM)
+        return isTouchingAdjacentTable(c)
       })
       const leftCell = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
       const rightCell = cellMap.get(`${t.X_POS + 3},${t.Y_POS}`)
-      const left = Boolean(leftCell && leftCell !== t.TABLE_NUM)
-      const right = Boolean(rightCell && rightCell !== t.TABLE_NUM)
+      const left = isTouchingAdjacentTable(leftCell)
+      const right = isTouchingAdjacentTable(rightCell)
 
       suppressedCount += topMask.filter(Boolean).length
       suppressedCount += bottomMask.filter(Boolean).length
@@ -90,23 +98,23 @@ export function calculateLayoutSuppression(
     } else if (t.TABLE_TYPE === 4) {
       const top1 = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
       const top2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS - 1}`)
-      const topOcc = Boolean((top1 && top1 !== t.TABLE_NUM) || (top2 && top2 !== t.TABLE_NUM))
+      const topOcc = isTouchingAdjacentTable(top1) || isTouchingAdjacentTable(top2)
 
       const tr = cellMap.get(`${t.X_POS + 2},${t.Y_POS}`)
-      const trOcc = Boolean(tr && tr !== t.TABLE_NUM)
+      const trOcc = isTouchingAdjacentTable(tr)
 
       const br = cellMap.get(`${t.X_POS + 2},${t.Y_POS + 1}`)
-      const brOcc = Boolean(br && br !== t.TABLE_NUM)
+      const brOcc = isTouchingAdjacentTable(br)
 
       const bot1 = cellMap.get(`${t.X_POS},${t.Y_POS + 2}`)
       const bot2 = cellMap.get(`${t.X_POS + 1},${t.Y_POS + 2}`)
-      const botOcc = Boolean((bot1 && bot1 !== t.TABLE_NUM) || (bot2 && bot2 !== t.TABLE_NUM))
+      const botOcc = isTouchingAdjacentTable(bot1) || isTouchingAdjacentTable(bot2)
 
       const bl = cellMap.get(`${t.X_POS - 1},${t.Y_POS + 1}`)
-      const blOcc = Boolean(bl && bl !== t.TABLE_NUM)
+      const blOcc = isTouchingAdjacentTable(bl)
 
       const tl = cellMap.get(`${t.X_POS - 1},${t.Y_POS}`)
-      const tlOcc = Boolean(tl && tl !== t.TABLE_NUM)
+      const tlOcc = isTouchingAdjacentTable(tl)
 
       const radial = [topOcc, trOcc, brOcc, botOcc, blOcc, tlOcc]
       suppressedCount = radial.filter(Boolean).length
@@ -114,16 +122,16 @@ export function calculateLayoutSuppression(
     } else if (t.TABLE_TYPE === 5) {
       const topCell = cellMap.get(`${t.X_POS},${t.Y_POS - 1}`)
       const bottomCell = cellMap.get(`${t.X_POS},${t.Y_POS + 3}`)
-      const top = Boolean(topCell && topCell !== t.TABLE_NUM)
-      const bottom = Boolean(bottomCell && bottomCell !== t.TABLE_NUM)
+      const top = isTouchingAdjacentTable(topCell)
+      const bottom = isTouchingAdjacentTable(bottomCell)
 
       const leftMask = [0, 1, 2].map((dy) => {
         const c = cellMap.get(`${t.X_POS - 1},${t.Y_POS + dy}`)
-        return Boolean(c && c !== t.TABLE_NUM)
+        return isTouchingAdjacentTable(c)
       })
       const rightMask = [0, 1, 2].map((dy) => {
         const c = cellMap.get(`${t.X_POS + 1},${t.Y_POS + dy}`)
-        return Boolean(c && c !== t.TABLE_NUM)
+        return isTouchingAdjacentTable(c)
       })
 
       if (top) suppressedCount++
@@ -140,7 +148,7 @@ export function calculateLayoutSuppression(
 
 /**
  * Calculates the effective capacity for an individual table.
- * Preserves the table's base capacity, deducting only edge seats if merged and touching.
+ * Preserves the table's base capacity, deducting touching edge seats dynamically.
  */
 export function calculateTableEffectiveCapacity(
   table: TableLayoutInfo,
@@ -148,14 +156,9 @@ export function calculateTableEffectiveCapacity(
   baseCapacities?: Map<number, number>,
 ): number {
   const baseCap = baseCapacities?.get(table.TABLE_NUM) ?? calculateTableBaseCapacity(table.TABLE_NUM, table.TABLE_TYPE)
-
-  if (table.MERGE_GROUP_ID != null) {
-    const supp = suppressionMap.get(table.TABLE_NUM)
-    const suppCount = supp?.suppressedCount ?? 0
-    return Math.max(1, baseCap - suppCount)
-  }
-
-  return Math.max(1, baseCap)
+  const supp = suppressionMap.get(table.TABLE_NUM)
+  const suppCount = supp?.suppressedCount ?? 0
+  return Math.max(1, baseCap - suppCount)
 }
 
 /**
@@ -200,7 +203,7 @@ export function resolveLayoutCapacityOverflow(
 
   let totalEffective = layout.reduce((sum, t) => {
     const supp = suppressionMap.get(t.TABLE_NUM)?.suppressedCount ?? 0
-    const eff = Math.max(1, (resolved.get(t.TABLE_NUM) ?? 4) - (t.MERGE_GROUP_ID != null ? supp : 0))
+    const eff = Math.max(1, (resolved.get(t.TABLE_NUM) ?? 4) - supp)
     return sum + eff
   }, 0)
 

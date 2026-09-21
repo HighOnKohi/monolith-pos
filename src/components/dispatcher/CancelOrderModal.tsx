@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { X, AlertTriangle, Flag, Loader2 } from 'lucide-react'
+import { X, AlertTriangle, Loader2 } from 'lucide-react'
+import { FlagFilledIcon } from '@/components/icons/FilledIcons'
 import type { DispatcherOrder } from '@/services/dispatcherService'
 
 interface CancelOrderModalProps {
@@ -115,7 +116,7 @@ export function CancelOrderModal({ order, onClose, onConfirm }: CancelOrderModal
                         : 'text-[#9BA4B4] hover:bg-amber-50 hover:text-amber-600',
                     ].join(' ')}
                   >
-                    <Flag className="h-3.5 w-3.5" fill={isFlagged ? 'currentColor' : 'none'} />
+                    <FlagFilledIcon className="h-3.5 w-3.5" />
                     {isFlagged ? 'Flagged' : 'Flag'}
                   </button>
                 </div>

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import type { MergedTableNode } from '@/services/tableLayoutService'
 import { TABLE_TYPES } from '@/services/tableLayoutService'
+import { getMergeGroupColor } from '@/utils/floorPlan/mergeGroupColors'
 
 interface TableQuickInspectorProps {
   table: MergedTableNode
@@ -45,7 +46,7 @@ export const TableQuickInspector: React.FC<TableQuickInspectorProps> = ({
             {typeConfig.name}
           </h4>
           <p className="text-[10px] font-bold text-slate-400">
-            {typeConfig.width}x{typeConfig.height} ({typeConfig.defaultCapacity} Seats)
+            {typeConfig.width}x{typeConfig.height} ({table.GUEST_CAPACITY ?? table.TABLE_CAPACITY ?? typeConfig.defaultCapacity} Seats)
           </p>
         </div>
       </div>
@@ -114,15 +115,25 @@ export const TableQuickInspector: React.FC<TableQuickInspectorProps> = ({
 
           <div className="flex items-center gap-1.5">
             <Users className="w-3.5 h-3.5 text-slate-400" />
-            <span>{table.CURRENT_GUEST_COUNT || 0} / {table.GUEST_CAPACITY || typeConfig.defaultCapacity} Pax</span>
+            <span>{table.CURRENT_GUEST_COUNT || 0} / {table.GUEST_CAPACITY ?? table.TABLE_CAPACITY ?? typeConfig.defaultCapacity} Pax</span>
           </div>
 
-          {table.MERGE_GROUP_ID != null && (
-            <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md border border-indigo-200 text-[10px] flex items-center gap-1 font-extrabold">
-              <GitMerge className="w-3 h-3 text-indigo-600" />
-              <span>Merged Table</span>
-            </span>
-          )}
+          {table.MERGE_GROUP_ID != null && (() => {
+            const theme = getMergeGroupColor(table.MERGE_GROUP_ID)
+            return (
+              <span
+                className="px-2 py-0.5 rounded-md border text-[10px] flex items-center gap-1 font-extrabold shadow-2xs"
+                style={{
+                  backgroundColor: theme.lightBg,
+                  borderColor: theme.border,
+                  color: theme.text,
+                }}
+              >
+                <GitMerge className="w-3 h-3" style={{ color: theme.primary }} />
+                <span>Group #{table.MERGE_GROUP_ID}</span>
+              </span>
+            )
+          })()}
 
           {/* QR Code Button */}
           {onOpenQr && (

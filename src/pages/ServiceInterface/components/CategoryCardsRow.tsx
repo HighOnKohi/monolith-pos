@@ -17,42 +17,44 @@ export const CategoryCardsRow: React.FC<CategoryCardsRowProps> = ({
   selectedCategory,
   onSelectCategory,
 }) => {
-  const getCategoryIcon = (id: string, iconName?: string, index = 0) => {
-    if (id === 'all') return <Grid className="service-interface-category-icon" />
-    const savedIcon = iconName ? categoryIconMap[iconName] : undefined
-    const Icon = savedIcon ?? categoryIcons[index % categoryIcons.length].component ?? UtensilsCrossed
-    return <Icon className="service-interface-category-icon" />
-  }
-
   return (
-    <div className="w-full max-w-full min-w-0 overflow-hidden px-4 sm:px-6 py-3 sm:py-3.5 border-b border-slate-200/60 bg-[#F8FAFD] shrink-0">
-      <div className="flex items-center gap-3 sm:gap-4 overflow-x-auto no-scrollbar py-1 w-full max-w-full min-w-0">
-        {categories.map((cat, index) => {
-          const isActive = selectedCategory === cat.id
-          return (
-            <button
-              key={cat.id}
-              onClick={() => onSelectCategory(cat.id)}
-              className={[
-                'service-interface-category-card shrink-0',
-                isActive ? 'is-active' : '',
-              ].join(' ')}
-            >
-              <div className="mb-1.5 p-1.5 rounded-full bg-slate-50 flex items-center justify-center">
-                {getCategoryIcon(cat.id, cat.icon, index)}
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-bold text-[#14274E] whitespace-nowrap">
-                  {cat.name.replace('⭐ ', '')}
-                </span>
-              </div>
-              <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">
-                {cat.count} {cat.count === 1 ? 'item' : 'items'}
-              </span>
-            </button>
-          )
-        })}
+    <section className="menu-item-category-buttons-section w-full max-w-full min-w-0 px-4 sm:px-6 py-2 shrink-0">
+      <div className="menu-item-category-buttons-header">
+        <div className="menu-item-category-buttons-row">
+          <div className="menu-item-category-buttons-container">
+            {categories.map((cat, index) => {
+              const CategoryIcon = cat.id === 'all'
+                ? Grid
+                : (cat.icon ? categoryIconMap[cat.icon as keyof typeof categoryIconMap] : undefined)
+                  ?? categoryIcons[index % categoryIcons.length]?.component
+                  ?? UtensilsCrossed
+
+              const isActive = selectedCategory === cat.id
+
+              return (
+                <div
+                  key={cat.id}
+                  className={['menu-item-category-button shrink-0', isActive ? 'is-active' : ''].join(' ')}
+                >
+                  <button
+                    type="button"
+                    className="menu-item-category-default cursor-pointer text-left"
+                    onClick={() => onSelectCategory(cat.id)}
+                  >
+                    <div className="menu-item-category-body">
+                      <CategoryIcon className="menu-item-category-icon" />
+                      <span className="menu-item-category-title">{cat.name.replace('⭐ ', '')}</span>
+                    </div>
+                    <span className="menu-item-category-count">
+                      {cat.count} {cat.count === 1 ? 'Item' : 'Items'}
+                    </span>
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
       </div>
-    </div>
+    </section>
   )
 }

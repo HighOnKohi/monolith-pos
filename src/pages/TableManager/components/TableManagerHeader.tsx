@@ -338,17 +338,6 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={isSaving}
-              onClick={onToggleEditMode}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-white hover:bg-slate-50 disabled:opacity-40 text-[#14274E] border border-slate-300 rounded-xl text-xs font-bold shadow-2xs transition-transform active:scale-95 cursor-pointer"
-              title="Exit edit mode"
-            >
-              <X className="w-3.5 h-3.5 text-[#14274E]" />
-              <span>Exit Edit</span>
-            </button>
-
             {onDiscardChanges && (
               <button
                 type="button"

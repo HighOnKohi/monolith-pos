@@ -1,6 +1,7 @@
 import React, { memo } from 'react'
 import { Users, GitMerge, Check, RotateCw } from 'lucide-react'
 import type { TableType } from '@/services/tableLayoutService'
+import { getMergeGroupColor } from '@/utils/floorPlan/mergeGroupColors'
 
 interface ChairProps {
   rotation?: number // in degrees: 0 = facing down (placed on top), 180 = facing up (placed on bottom), 90 = facing left, 270 = facing right
@@ -312,7 +313,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   guestCount = 0,
   capacity = 4,
   isMerged = false,
-  mergeGroupId: _mergeGroupId = null,
+  mergeGroupId = null,
   isSelected = false,
   isEditMode = false,
   isQrPrintMode = false,
@@ -340,6 +341,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   }
 
   const statusInfo = getStatusDetails()
+  const mergeTheme = getMergeGroupColor(mergeGroupId)
   const chairSize = Math.max(10, Math.round(cellSize * 0.22))
   const chairOffset = -Math.round(chairSize * 1.15)
 
@@ -403,8 +405,14 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping absolute top-0 left-0" />
         )}
         {!isQrPrintMode && isMerged && (
-          <div className="p-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center pointer-events-none shadow-xs">
-            <GitMerge className="w-2 h-2 text-indigo-600" />
+          <div
+            className="p-0.5 rounded-md flex items-center justify-center pointer-events-none shadow-xs"
+            style={{
+              backgroundColor: mergeTheme.primary,
+            }}
+            title={`Merge Group #${mergeGroupId}`}
+          >
+            <GitMerge className="w-2.5 h-2.5 text-white" style={{ color: '#FFFFFF' }} />
           </div>
         )}
       </div>
