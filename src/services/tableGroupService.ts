@@ -47,7 +47,7 @@ function buildGroupInfoFromMembers(
     : `T${anchorTable.TABLE_NUM || anchorTable.TABLE_ID}`
 
   const capacity = isMerged
-    ? (anchorTable.GUEST_CAPACITY || sortedMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY || 0), 0))
+    ? sortedMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY || 0), 0)
     : anchorTable.GUEST_CAPACITY
   const currentGuestCount = sortedMembers.reduce(
     (sum, m) => sum + (m.CURRENT_GUEST_COUNT || 0),

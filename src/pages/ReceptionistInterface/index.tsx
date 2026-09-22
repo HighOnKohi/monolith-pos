@@ -49,7 +49,9 @@ import {
   Check,
   Layers,
   Flame,
+  Tag,
 } from 'lucide-react'
+import { LabelManagementModal } from '@/pages/TableManager/components/LabelManagementModal'
 
 interface MergeGroupVisualBox {
   type: 'box'
@@ -92,6 +94,7 @@ export default function ReceptionistInterface() {
   const [mergeMode, setMergeMode] = useState(false)
   const [mergeSelection, setMergeSelection] = useState<number[]>([])
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 })
+  const [labelsModalOpen, setLabelsModalOpen] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -173,36 +176,91 @@ export default function ReceptionistInterface() {
         })
       }
 
+      // Build shared label map across merged table groups
+      const mergeGroupLabelMap = new Map<number | string, number>()
+      for (const lt of layoutData) {
+        const live = liveByNum.get(lt.TABLE_NUM)
+        let gid: number | string | null = lt.MERGE_GROUP_ID ?? null
+        if (gid == null && live?.MERGE_GROUP_ID != null) {
+          gid = live.MERGE_GROUP_ID
+        }
+        if (gid == null && live?.TABLE_ID != null) {
+          const isCaptain = liveTables.some((rt) => rt.MERGE_GROUP_ID === live.TABLE_ID)
+          if (isCaptain) gid = live.TABLE_ID
+        }
+        if (gid != null) {
+          const lbl = live?.LABEL_ID != null ? live.LABEL_ID : (lt.LABEL_ID ?? null)
+          if (lbl != null && !mergeGroupLabelMap.has(gid)) {
+            mergeGroupLabelMap.set(gid, lbl)
+          }
+        }
+      }
+
       if (layoutData.length > 0) {
         const mergedNodes: MergedTableNode[] = layoutData.map((lt) => {
           const live = liveByNum.get(lt.TABLE_NUM)
+          let gid: number | null = lt.MERGE_GROUP_ID != null ? Number(lt.MERGE_GROUP_ID) : null
+          if (gid == null && live?.MERGE_GROUP_ID != null) {
+            gid = Number(live.MERGE_GROUP_ID)
+          }
+          if (gid == null && live?.TABLE_ID != null) {
+            const isCaptain = liveTables.some((rt) => rt.MERGE_GROUP_ID === live.TABLE_ID)
+            if (isCaptain) gid = Number(live.TABLE_ID)
+          }
+
+          const directLabel = live?.LABEL_ID != null ? live.LABEL_ID : (lt.LABEL_ID ?? null)
+          const resolvedLabel = gid != null ? (mergeGroupLabelMap.get(gid) ?? directLabel) : directLabel
+
           return {
             ...lt,
+            MERGE_GROUP_ID: gid,
             STATUS: (live?.STATUS || 'AVAILABLE') as MergedTableNode['STATUS'],
             CURRENT_GUEST_COUNT: live?.CURRENT_GUEST_COUNT ?? 0,
             GUEST_CAPACITY: live?.GUEST_CAPACITY ?? lt.TABLE_CAPACITY ?? TABLE_TYPES[lt.TABLE_TYPE]?.defaultCapacity ?? 4,
             BILL_OUT_REQUESTED: live?.BILL_OUT_REQUESTED ?? false,
             TABLE_ID: live?.TABLE_ID ?? lt.TABLE_NUM,
-            LABEL_ID: live?.LABEL_ID != null ? live.LABEL_ID : (lt.LABEL_ID ?? null),
+            LABEL_ID: resolvedLabel,
           }
         })
         setLayoutTables(mergedNodes)
       } else if (liveTables.length > 0) {
-        const fallbackNodes: MergedTableNode[] = liveTables.map((rt, idx) => ({
-          INFO_ID: `live-table-${rt.TABLE_NUM}`,
-          LAYOUT_PRESET_ID: targetPreset?.LAYOUT_PRESET_ID ?? 0,
-          TABLE_NUM: rt.TABLE_NUM,
-          MERGE_GROUP_ID: rt.MERGE_GROUP_ID,
-          TABLE_TYPE: 1,
-          X_POS: (idx % 6) * 3 + 1,
-          Y_POS: Math.floor(idx / 6) * 3 + 1,
-          STATUS: rt.STATUS,
-          CURRENT_GUEST_COUNT: rt.CURRENT_GUEST_COUNT,
-          GUEST_CAPACITY: rt.GUEST_CAPACITY,
-          BILL_OUT_REQUESTED: rt.BILL_OUT_REQUESTED,
-          TABLE_ID: rt.TABLE_ID,
-          LABEL_ID: rt.LABEL_ID ?? null,
-        }))
+        const fallbackGroupLabelMap = new Map<number | string, number>()
+        for (const rt of liveTables) {
+          let gid: number | string | null = rt.MERGE_GROUP_ID ?? null
+          if (gid == null) {
+            const isCaptain = liveTables.some((other) => other.MERGE_GROUP_ID === rt.TABLE_ID)
+            if (isCaptain) gid = rt.TABLE_ID
+          }
+          if (gid != null && rt.LABEL_ID != null && !fallbackGroupLabelMap.has(gid)) {
+            fallbackGroupLabelMap.set(gid, rt.LABEL_ID)
+          }
+        }
+
+        const fallbackNodes: MergedTableNode[] = liveTables.map((rt, idx) => {
+          let gid: number | null = rt.MERGE_GROUP_ID != null ? Number(rt.MERGE_GROUP_ID) : null
+          if (gid == null) {
+            const isCaptain = liveTables.some((other) => other.MERGE_GROUP_ID === rt.TABLE_ID)
+            if (isCaptain) gid = Number(rt.TABLE_ID)
+          }
+          const directLabel = rt.LABEL_ID ?? null
+          const resolvedLabel = gid != null ? (fallbackGroupLabelMap.get(gid) ?? directLabel) : directLabel
+
+          return {
+            INFO_ID: `live-table-${rt.TABLE_NUM}`,
+            LAYOUT_PRESET_ID: targetPreset?.LAYOUT_PRESET_ID ?? 0,
+            TABLE_NUM: rt.TABLE_NUM,
+            MERGE_GROUP_ID: gid,
+            TABLE_TYPE: 1,
+            X_POS: (idx % 6) * 3 + 1,
+            Y_POS: Math.floor(idx / 6) * 3 + 1,
+            STATUS: rt.STATUS,
+            CURRENT_GUEST_COUNT: rt.CURRENT_GUEST_COUNT,
+            GUEST_CAPACITY: rt.GUEST_CAPACITY,
+            BILL_OUT_REQUESTED: rt.BILL_OUT_REQUESTED,
+            TABLE_ID: rt.TABLE_ID,
+            LABEL_ID: resolvedLabel,
+          }
+        })
         setLayoutTables(fallbackNodes)
       } else {
         setLayoutTables([])
@@ -238,12 +296,24 @@ export default function ReceptionistInterface() {
       })
       .subscribe()
 
-    const handleOrderUpdate = () => {
+    const handleOrderUpdate = (e?: Event) => {
+      const detail = (e as CustomEvent<{ type?: string }>)?.detail
+      if (detail?.type === 'table_label_changed') {
+        void loadData(true)
+        return
+      }
       if (Date.now() - lastMutationTimeRef.current >= 2500) {
         void loadData(true)
       }
     }
     window.addEventListener('monolith-order-update', handleOrderUpdate)
+
+    const bc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('monolith_order_events') : null
+    if (bc) {
+      bc.onmessage = (msgEvent) => {
+        window.dispatchEvent(new CustomEvent('monolith-order-update', { detail: msgEvent.data }))
+      }
+    }
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible' && Date.now() - lastMutationTimeRef.current >= 2500) {
@@ -255,6 +325,7 @@ export default function ReceptionistInterface() {
     return () => {
       window.removeEventListener('monolith-order-update', handleOrderUpdate)
       document.removeEventListener('visibilitychange', handleVisibility)
+      bc?.close()
       supabase.removeChannel(channel)
     }
   }, [loadData])
@@ -523,13 +594,19 @@ export default function ReceptionistInterface() {
   async function handleLabelChange(tableId: number, labelId: number | null) {
     lastMutationTimeRef.current = Date.now()
 
-    // Optimistic label update
+    // Find if target table belongs to a merge group so we update all merged tables optimistically
+    const targetTable = layoutTables.find((t) => t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM)
+    const targetMergeGroupId = targetTable?.MERGE_GROUP_ID
+
+    // Optimistic label update for target table and any merged group members
     setLayoutTables((prev) =>
-      prev.map((t) =>
-        t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM
+      prev.map((t) => {
+        const isTarget = t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM
+        const isMergedWithTarget = targetMergeGroupId != null && t.MERGE_GROUP_ID === targetMergeGroupId
+        return isTarget || isMergedWithTarget
           ? { ...t, LABEL_ID: labelId }
-          : t,
-      ),
+          : t
+      }),
     )
 
     try {
@@ -775,6 +852,17 @@ export default function ReceptionistInterface() {
             </button>
           )}
 
+          {/* Labels & Priority Button */}
+          <button
+            type="button"
+            onClick={() => setLabelsModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 rounded-lg border border-slate-200 cursor-pointer transition-colors shadow-2xs"
+            title="Manage Table Labels & VIP Tiers"
+          >
+            <Tag className="w-3.5 h-3.5 text-amber-600" />
+            <span className="hidden sm:inline">Labels</span>
+          </button>
+
           {/* Refresh Button */}
           <button
             type="button"
@@ -1000,6 +1088,14 @@ export default function ReceptionistInterface() {
                   <div className="flex items-center gap-1.5 text-xs font-black text-[#14274E]">
                     <Crown className="w-4 h-4 text-amber-500 fill-amber-500/30" />
                     <span>VIP & Table Tier</span>
+                    <button
+                      type="button"
+                      onClick={() => setLabelsModalOpen(true)}
+                      className="p-1 rounded-md text-amber-700 hover:text-amber-900 hover:bg-amber-100/60 transition-colors cursor-pointer ml-1"
+                      title="Manage labels"
+                    >
+                      <Tag className="w-3 h-3 text-amber-600" />
+                    </button>
                   </div>
 
                   {/* Active Label Pill */}
@@ -1155,6 +1251,9 @@ export default function ReceptionistInterface() {
                   </div>
                   <span className="text-xs font-semibold text-slate-500">
                     Max {selectedTable.GUEST_CAPACITY ?? 4} Pax
+                    {selectedGroup?.isMerged && selectedGroup.capacity > (selectedTable.GUEST_CAPACITY ?? 4)
+                      ? ` (${selectedGroup.capacity} Group)`
+                      : ''}
                   </span>
                 </div>
 
@@ -1188,7 +1287,7 @@ export default function ReceptionistInterface() {
                       handleSeatedPaxChange(
                         selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
                         Math.min(
-                          selectedTable.GUEST_CAPACITY ?? 99,
+                          Math.max(selectedTable.GUEST_CAPACITY ?? 4, selectedGroup?.capacity ?? 0),
                           (selectedTable.CURRENT_GUEST_COUNT ?? 0) + 1,
                         ),
                       )
@@ -1400,6 +1499,15 @@ export default function ReceptionistInterface() {
           </div>
         )
       })()}
+
+      {/* Label Management In-App Modal */}
+      <LabelManagementModal
+        isOpen={labelsModalOpen}
+        onClose={() => {
+          setLabelsModalOpen(false)
+          void loadData(true)
+        }}
+      />
     </div>
   )
 }

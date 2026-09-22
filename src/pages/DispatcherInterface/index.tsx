@@ -1,16 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Loader2 } from 'lucide-react'
-import {
-  Clock,
-  ChefHat,
-  RefreshCw,
-  Check,
-  CheckCircle,
-  CheckCircle2,
-  Flag,
-  XCircle,
-  RotateCcw,
-} from 'lucide-react'
+import { Loader2, RefreshCw, RotateCcw } from 'lucide-react'
 import {
   ClockFilledIcon,
   ChefHatFilledIcon,
@@ -792,37 +781,41 @@ export default function DispatcherInterface() {
                                       key={group.itemId}
                                       className={`dispatcher-order-item transition-all duration-200 ${zebraClass}`}
                                     >
-                                      <div className="flex items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="flex flex-col gap-1 min-w-0 flex-1">
                                           <span
-                                            className={`dispatcher-item-name truncate ${
-                                              isAllDone ? 'line-through text-slate-400 font-normal' : 'text-[#14274E] font-bold'
+                                            className={`dispatcher-item-name ${
+                                              isAllDone ? 'line-through text-slate-400 font-medium' : 'text-[#0f1d3a] font-extrabold'
                                             }`}
                                           >
                                             {group.name}
                                           </span>
-                                          {group.isFlagged && (
-                                            <span className="dispatcher-flag-badge shrink-0">
-                                              <FlagFilledIcon className="h-2.5 w-2.5" />
-                                              Flagged
-                                            </span>
-                                          )}
-                                          {group.totalQuantity > 1 && (
-                                            <span
-                                              className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-md shrink-0 border ${
-                                                isAllDone
-                                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                                                  : isPartiallyDone
-                                                    ? 'bg-amber-100 text-amber-800 border-amber-300'
-                                                    : 'bg-slate-100 text-slate-600 border-slate-200'
-                                              }`}
-                                            >
-                                              {group.doneCount}/{group.totalQuantity} ready
-                                            </span>
+                                          {(group.isFlagged || group.totalQuantity > 1) && (
+                                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                              {group.isFlagged && (
+                                                <span className="dispatcher-flag-badge shrink-0">
+                                                  <FlagFilledIcon className="h-2.5 w-2.5" />
+                                                  Flagged
+                                                </span>
+                                              )}
+                                              {group.totalQuantity > 1 && (
+                                                <span
+                                                  className={`text-[11px] font-extrabold px-2 py-0.5 rounded-md shrink-0 border ${
+                                                    isAllDone
+                                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                                                      : isPartiallyDone
+                                                        ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                                                  }`}
+                                                >
+                                                  {group.doneCount}/{group.totalQuantity} ready
+                                                </span>
+                                              )}
+                                            </div>
                                           )}
                                         </div>
 
-                                        <div className="flex items-center gap-2 shrink-0">
+                                        <div className="flex items-center gap-2 shrink-0 pt-0.5">
                                           <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
                                           {isAllDone ? (
                                             <div className="px-2.5 py-1.5 rounded-xl text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shadow-2xs">
@@ -886,29 +879,33 @@ export default function DispatcherInterface() {
 
                                   return (
                                     <div key={group.itemId} className={`dispatcher-order-item ${zebraClass}`}>
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="dispatcher-item-name flex-1">
-                                          {group.name}
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="flex flex-col gap-1 min-w-0 flex-1">
+                                          <span className="dispatcher-item-name text-[#0f1d3a] font-extrabold">
+                                            {group.name}
+                                          </span>
                                           {group.isFlagged && (
-                                            <span className="dispatcher-flag-badge ml-1.5">
-                                              <FlagFilledIcon className="h-2.5 w-2.5" />
-                                              Flagged
-                                            </span>
+                                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                              <span className="dispatcher-flag-badge shrink-0">
+                                                <FlagFilledIcon className="h-2.5 w-2.5" />
+                                                Flagged
+                                              </span>
+                                            </div>
                                           )}
-                                        </span>
+                                        </div>
 
-                                        {activeTableStage === 'preparing' ? (
-                                          <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                                          {activeTableStage === 'preparing' && (
                                             <button
                                               type="button"
                                               onClick={() =>
                                                 handleToggleItemFlag(order.orderId, group.itemId, !group.isFlagged)
                                               }
                                               className={[
-                                                'px-2 py-0.5 text-[10px] font-extrabold rounded-md flex items-center gap-1 transition-all cursor-pointer border',
+                                                'px-2.5 py-1 text-[11px] font-extrabold rounded-lg flex items-center gap-1 transition-all cursor-pointer border',
                                                 group.isFlagged
                                                   ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 shadow-2xs'
-                                                  : 'bg-white text-slate-400 border-slate-200 hover:border-amber-300 hover:text-amber-600',
+                                                  : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:text-amber-600',
                                               ].join(' ')}
                                               title={
                                                 group.isFlagged
@@ -916,14 +913,12 @@ export default function DispatcherInterface() {
                                                   : 'Flag item as unavailable / out of stock'
                                               }
                                             >
-                                              <FlagFilledIcon className="w-2.5 h-2.5" />
+                                              <FlagFilledIcon className="w-3 h-3" />
                                               <span>{group.isFlagged ? 'Flagged' : 'Flag'}</span>
                                             </button>
-                                            <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
-                                          </div>
-                                        ) : (
+                                          )}
                                           <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
-                                        )}
+                                        </div>
                                       </div>
                                     </div>
                                   )

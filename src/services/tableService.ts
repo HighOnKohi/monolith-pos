@@ -435,9 +435,11 @@ export async function updateTable(
 
   const allMembers = isMerged ? await fetchTablesByIds(targetIds) : [current]
   const anchorTable = allMembers.find((t) => t.TABLE_ID === anchorId) ?? current
+  const totalGroupCapacity = allMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY || 0), 0)
 
+  // When merged, allow seating up to the table's own capacity or the combined group capacity
   const effectiveCapacity = isMerged
-    ? anchorTable.GUEST_CAPACITY
+    ? Math.max(current.GUEST_CAPACITY, totalGroupCapacity)
     : (fields.capacity ?? current.GUEST_CAPACITY)
   const currentPax = isMerged ? anchorTable.CURRENT_GUEST_COUNT : current.CURRENT_GUEST_COUNT
 
@@ -488,41 +490,24 @@ export async function updateTable(
   if (fields.seatedPax !== undefined) {
     const newPax = fields.seatedPax
 
-    if (isMerged) {
-      // For merged groups: store guest count on anchor table; ensure secondaries have 0
-      const { error: anchorPaxErr } = await supabase
-        .schema('tables').from('Restaurant_Tables')
-        .update({ CURRENT_GUEST_COUNT: newPax })
-        .eq('TABLE_ID', anchorId)
-      if (anchorPaxErr) throw anchorPaxErr
+    // Update target table's guest count directly (preserves individual table max pax in merged groups)
+    const payload: Record<string, unknown> = { CURRENT_GUEST_COUNT: newPax }
+    if (newPax > 0 && (current.STATUS === 'AVAILABLE' || current.STATUS === 'RESERVED')) {
+      payload.STATUS = 'OCCUPIED'
+    }
 
-      if (secondaries.length > 0) {
-        const secIds = secondaries.map((s) => s.TABLE_ID)
-        await supabase
-          .schema('tables').from('Restaurant_Tables')
-          .update({ CURRENT_GUEST_COUNT: 0 })
-          .in('TABLE_ID', secIds)
-      }
+    const { error: paxErr } = await supabase
+      .schema('tables').from('Restaurant_Tables')
+      .update(payload)
+      .eq('TABLE_ID', tableId)
+    if (paxErr) throw paxErr
 
-      // If newPax > 0 and group status was AVAILABLE or RESERVED, update all members to OCCUPIED
-      if (newPax > 0 && (anchorTable.STATUS === 'AVAILABLE' || anchorTable.STATUS === 'RESERVED')) {
-        const { error: statusErr } = await supabase
-          .schema('tables').from('Restaurant_Tables')
-          .update({ STATUS: 'OCCUPIED' })
-          .in('TABLE_ID', targetIds)
-        if (statusErr) throw statusErr
-      }
-    } else {
-      // Single table
-      const payload: Record<string, unknown> = { CURRENT_GUEST_COUNT: newPax }
-      if (newPax > 0 && (current.STATUS === 'AVAILABLE' || current.STATUS === 'RESERVED')) {
-        payload.STATUS = 'OCCUPIED'
-      }
-      const { error: paxErr } = await supabase
+    // If newPax > 0 and table is merged, update all member tables to OCCUPIED
+    if (isMerged && newPax > 0) {
+      await supabase
         .schema('tables').from('Restaurant_Tables')
-        .update(payload)
-        .eq('TABLE_ID', tableId)
-      if (paxErr) throw paxErr
+        .update({ STATUS: 'OCCUPIED' })
+        .in('TABLE_ID', targetIds)
     }
   }
 
@@ -971,6 +956,25 @@ export async function mergeTables(tableIds: number[]): Promise<TableData[]> {
       .update({ MERGE_GROUP_ID: primaryId, STATUS: 'AVAILABLE', CURRENT_GUEST_COUNT: 0, BILL_OUT_REQUESTED: false })
       .in('TABLE_ID', secondaryIds)
     if (secErr) throw secErr
+  }
+
+  // 3b. Share labels across all merged tables
+  const sharedLabel = preview.allMembers.find((t) => t.LABEL_ID != null)?.LABEL_ID ?? null
+  if (sharedLabel != null) {
+    await supabase
+      .schema('tables').from('Restaurant_Tables')
+      .update({ LABEL_ID: sharedLabel })
+      .in('TABLE_ID', allMemberIds)
+
+    try {
+      const allNums = preview.allMembers.map((t) => t.TABLE_NUM)
+      await supabase
+        .schema('tables').from('Table_Layout_Info')
+        .update({ LABEL_ID: sharedLabel })
+        .in('TABLE_NUM', allNums)
+    } catch {
+      // Non-critical
+    }
   }
 
   // 4. Return freshly fetched rows for targeted state update

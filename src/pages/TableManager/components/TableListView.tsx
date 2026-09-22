@@ -11,7 +11,6 @@ import {
   Trash2,
   QrCode,
   Search,
-  Sparkles,
 } from 'lucide-react'
 
 interface TableListViewProps {
@@ -21,7 +20,6 @@ interface TableListViewProps {
   onUpdateSeatCount: (tableNum: number, seats: number) => void
   onOpenQrModal: (table: MergedTableNode) => void
   onOpenRemoveAll: () => void
-  onOpenAutoAlloc: () => void
   onLabelAssigned: (tableNum: number, labelId: number | null) => void
 }
 
@@ -32,7 +30,6 @@ export const TableListView: React.FC<TableListViewProps> = ({
   onUpdateSeatCount,
   onOpenQrModal,
   onOpenRemoveAll,
-  onOpenAutoAlloc,
   onLabelAssigned,
 }) => {
   const [searchTerm, setSearchTerm] = useState('')
@@ -61,14 +58,6 @@ export const TableListView: React.FC<TableListViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onOpenAutoAlloc}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100 text-indigo-900 text-xs font-bold transition-all cursor-pointer shadow-2xs"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Auto Allocate</span>
-          </button>
           <button
             type="button"
             onClick={onOpenRemoveAll}

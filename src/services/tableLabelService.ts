@@ -212,60 +212,78 @@ export async function assignLabelToTable(
   tableId: number,
   labelId: number | null,
 ): Promise<void> {
-  // Update Restaurant_Tables by TABLE_ID
-  const { data, error } = await supabase
+  // Query target table to find MERGE_GROUP_ID and TABLE_NUM
+  const { data: rtData } = await supabase
     .schema('tables')
     .from('Restaurant_Tables')
-    .update({ LABEL_ID: labelId })
-    .eq('TABLE_ID', tableId)
-    .select('TABLE_ID, TABLE_NUM')
+    .select('TABLE_ID, TABLE_NUM, MERGE_GROUP_ID')
+    .or(`TABLE_ID.eq.${tableId},TABLE_NUM.eq.${tableId}`)
+    .maybeSingle()
 
-  let resolvedTableNum: number = tableId
-  if (error) {
-    console.error('[tableLabelService] Error assigning label by TABLE_ID, attempting by TABLE_NUM:', error)
-    const { data: numData, error: numError } = await supabase
-      .schema('tables')
-      .from('Restaurant_Tables')
-      .update({ LABEL_ID: labelId })
-      .eq('TABLE_NUM', tableId)
-      .select('TABLE_ID, TABLE_NUM')
+  let mergeGroupId = rtData?.MERGE_GROUP_ID ?? null
+  const resolvedTableNum = rtData?.TABLE_NUM != null ? Number(rtData.TABLE_NUM) : tableId
+  const resolvedTableId = rtData?.TABLE_ID != null ? Number(rtData.TABLE_ID) : tableId
 
-    if (numError) {
-      console.error('[tableLabelService] Error assigning label by TABLE_NUM:', numError)
-      throw error
-    }
-    if (numData && numData.length > 0) {
-      resolvedTableNum = Number(numData[0].TABLE_NUM)
-    }
-  } else if (data && data.length > 0) {
-    resolvedTableNum = Number(data[0].TABLE_NUM)
-  } else {
-    // If 0 rows matched by TABLE_ID, try by TABLE_NUM
-    const { data: numData } = await supabase
+  if (mergeGroupId == null) {
+    const { data: layoutData } = await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
-      .update({ LABEL_ID: labelId })
-      .eq('TABLE_NUM', tableId)
-      .select('TABLE_ID, TABLE_NUM')
-    if (numData && numData.length > 0) {
-      resolvedTableNum = Number(numData[0].TABLE_NUM)
+      .from('Table_Layout_Info')
+      .select('MERGE_GROUP_ID')
+      .eq('TABLE_NUM', resolvedTableNum)
+      .not('MERGE_GROUP_ID', 'is', null)
+      .maybeSingle()
+    if (layoutData?.MERGE_GROUP_ID != null) {
+      mergeGroupId = layoutData.MERGE_GROUP_ID
     }
   }
 
-  // Also sync Table_Layout_Info for current layout snapshots
-  try {
+  if (mergeGroupId != null) {
+    // Merged table: Share label across all merged tables in Restaurant_Tables & Table_Layout_Info
     await supabase
       .schema('tables')
-      .from('Table_Layout_Info')
+      .from('Restaurant_Tables')
       .update({ LABEL_ID: labelId })
-      .eq('TABLE_NUM', resolvedTableNum)
-  } catch {
-    // Non-critical
+      .or(`MERGE_GROUP_ID.eq.${mergeGroupId},TABLE_ID.eq.${mergeGroupId},TABLE_ID.eq.${resolvedTableId}`)
+
+    try {
+      await supabase
+        .schema('tables')
+        .from('Table_Layout_Info')
+        .update({ LABEL_ID: labelId })
+        .eq('MERGE_GROUP_ID', mergeGroupId)
+    } catch {
+      // Non-critical
+    }
+  } else {
+    // Single table update
+    const { error } = await supabase
+      .schema('tables')
+      .from('Restaurant_Tables')
+      .update({ LABEL_ID: labelId })
+      .eq('TABLE_ID', resolvedTableId)
+
+    if (error) {
+      await supabase
+        .schema('tables')
+        .from('Restaurant_Tables')
+        .update({ LABEL_ID: labelId })
+        .eq('TABLE_NUM', resolvedTableNum)
+    }
+
+    try {
+      await supabase
+        .schema('tables')
+        .from('Table_Layout_Info')
+        .update({ LABEL_ID: labelId })
+        .eq('TABLE_NUM', resolvedTableNum)
+    } catch {
+      // Non-critical
+    }
   }
 
   // Broadcast update for cross-interface sync
   if (typeof window !== 'undefined') {
-    const detail = { type: 'table_label_changed', tableId, labelId }
+    const detail = { type: 'table_label_changed', tableId, labelId, mergeGroupId }
     window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
 
     try {

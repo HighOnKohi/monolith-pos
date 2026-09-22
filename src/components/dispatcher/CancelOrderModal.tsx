@@ -98,12 +98,16 @@ export function CancelOrderModal({ order, onClose, onConfirm }: CancelOrderModal
               return (
                 <div
                   key={itemId}
-                  className="flex items-center justify-between rounded-xl border border-[#9BA4B4]/20 bg-[#F1F6F9]/60 px-3 py-2"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-[#9BA4B4]/20 bg-[#F1F6F9]/60 px-3.5 py-2.5"
                 >
-                  <span className="text-xs font-bold text-[#14274E]">
-                    {group.name || `Item #${itemId}`}
-                    <span className="ml-2 text-[#9BA4B4]">x{group.items.length}</span>
-                  </span>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="text-sm font-extrabold text-[#14274E] break-words">
+                      {group.name || `Item #${itemId}`}
+                    </span>
+                    <span className="shrink-0 text-xs font-black text-[#14274E] bg-slate-200/80 px-2 py-0.5 rounded-md">
+                      ×{group.items.length}
+                    </span>
+                  </div>
                   <button
                     type="button"
                     onClick={() => toggleFlag(itemId)}

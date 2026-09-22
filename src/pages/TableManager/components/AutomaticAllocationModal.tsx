@@ -442,7 +442,7 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
           <div className="p-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl">
             <h4 className="text-[10px] font-black uppercase tracking-wider text-indigo-900 mb-2.5 flex items-center gap-1.5">
               <Layers className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Generated Layout Estimate</span>
+              <span>Layout Summary</span>
             </h4>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">

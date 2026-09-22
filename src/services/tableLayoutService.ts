@@ -60,6 +60,9 @@ export const TABLE_TYPES: Record<TableType, TableTypeConfig> = {
   },
 }
 
+export const DEFAULT_GRID_WIDTH = 20
+export const DEFAULT_GRID_HEIGHT = 16
+
 export interface TableLayoutPreset {
   LAYOUT_PRESET_ID: number
   PRESET_NAME: string
@@ -457,6 +460,23 @@ export async function updateLayoutPresetDimensions(
 
   if (error) {
     console.error('[tableLayoutService] Error updating preset dimensions:', error)
+  }
+}
+
+export async function syncAllLayoutPresetsToDefaultGridSize(): Promise<void> {
+  const { error } = await supabase
+    .schema('tables')
+    .from('Table_Layout_Presets')
+    .update({
+      PRESET_GRID_WIDTH: DEFAULT_GRID_WIDTH,
+      PRESET_GRID_HEIGHT: DEFAULT_GRID_HEIGHT,
+      UPDATED_AT: new Date().toISOString(),
+    })
+    .neq('LAYOUT_PRESET_ID', 0)
+
+  if (error) {
+    console.error('[tableLayoutService] Error syncing preset grid sizes to default:', error)
+    throw error
   }
 }
 

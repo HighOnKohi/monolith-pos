@@ -345,18 +345,14 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   const chairSize = Math.max(10, Math.round(cellSize * 0.22))
   const chairOffset = -Math.round(chairSize * 1.15)
 
-  // Border & background style for tabletop with status-colored or label-colored border and soft status tint
+  // Border & background style for tabletop - border colors strictly indicate table status
   const getTabletopStyle = () => {
     if (isQrPrintMode) {
       return {
         backgroundColor: '#FFFFFF',
       }
     }
-    const borderColor = labelColor
-      ? labelColor
-      : isEditMode
-        ? isSelected ? '#14274E' : '#475569'
-        : statusInfo.color
+    const borderColor = statusInfo.color
 
     let bg = '#FFFFFF'
     if (status === 'OCCUPIED') bg = '#EFF6FF'
@@ -367,17 +363,15 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
     return {
       backgroundColor: bg,
       borderColor,
-      borderWidth: labelColor ? '4px' : '3.5px',
+      borderWidth: '3.5px',
       borderStyle: 'solid' as const,
-      boxShadow: labelColor
-        ? `0 0 0 2px ${labelColor}33, 0 4px 12px ${labelColor}25`
-        : isSelected
-          ? '0 4px 14px rgba(79, 70, 229, 0.25)'
-          : undefined,
+      boxShadow: isSelected
+        ? '0 4px 14px rgba(79, 70, 229, 0.25)'
+        : undefined,
     }
   }
 
-  // Common Header Badges (VIP / Label & Status Indicator)
+  // Common Header Badges (VIP / Label & Merge Indicator)
   const renderTabletopBadges = () => (
     <>
       {/* Table Label / VIP Floating Badge */}
@@ -394,17 +388,9 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
         </div>
       )}
 
-      {/* Top Left Status & Merge Indicator */}
-      <div className="absolute top-1 left-1.5 flex items-center gap-1 pointer-events-none z-20">
-        <span
-          className="w-2.5 h-2.5 rounded-full ring-1.5 ring-white shadow-xs shrink-0"
-          style={{ backgroundColor: statusInfo.color }}
-          title={`Status: ${statusInfo.text}`}
-        />
-        {status === 'HAS_REQUEST' && (
-          <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping absolute top-0 left-0" />
-        )}
-        {!isQrPrintMode && isMerged && (
+      {/* Top Left Merge Indicator (status dot beside merge dot removed as border shows status) */}
+      {!isQrPrintMode && isMerged && (
+        <div className="absolute top-1 left-1.5 flex items-center gap-1 pointer-events-none z-20">
           <div
             className="p-0.5 rounded-md flex items-center justify-center pointer-events-none shadow-xs"
             style={{
@@ -414,8 +400,8 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           >
             <GitMerge className="w-2.5 h-2.5 text-white" style={{ color: '#FFFFFF' }} />
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </>
   )
 

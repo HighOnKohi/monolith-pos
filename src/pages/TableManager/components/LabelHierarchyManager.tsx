@@ -9,6 +9,7 @@ import {
 } from '@/services/tableLabelService'
 import { TableLabelBadge } from '@/components/common/TableLabelBadge'
 import { logTableAction, logHierarchyChange } from '@/services/tableAuditService'
+import { ConfirmModal } from './ConfirmModal'
 import {
   GripVertical,
   Plus,
@@ -21,6 +22,7 @@ import {
   ArrowUp,
   ArrowDown,
   Sparkles,
+  Tag,
 } from 'lucide-react'
 
 const COLOR_PRESETS = [
@@ -33,7 +35,15 @@ const COLOR_PRESETS = [
   { name: 'Silver', hex: '#A3A3A3' },
 ]
 
-export const LabelHierarchyManager: React.FC = () => {
+export interface LabelHierarchyManagerProps {
+  isModal?: boolean
+  onClose?: () => void
+}
+
+export const LabelHierarchyManager: React.FC<LabelHierarchyManagerProps> = ({
+  isModal = false,
+  onClose,
+}) => {
   const [labels, setLabels] = useState<TableLabel[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -51,6 +61,23 @@ export const LabelHierarchyManager: React.FC = () => {
 
   // Drag state
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+
+  // System-generated Delete Confirmation Modal state
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null)
+
+  const broadcastLabelChange = () => {
+    if (typeof window !== 'undefined') {
+      const detail = { type: 'table_label_changed' }
+      window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
+      try {
+        const bc = new BroadcastChannel('monolith_order_events')
+        bc.postMessage(detail)
+        bc.close()
+      } catch {
+        // Ignore
+      }
+    }
+  }
 
   const loadLabels = useCallback(async () => {
     setLoading(true)
@@ -89,6 +116,7 @@ export const LabelHierarchyManager: React.FC = () => {
       await reorderLabels(updated.map((l) => l.LABEL_ID))
       void logHierarchyChange(updated.map((l) => l.NAME))
       showSuccess('Hierarchy priorities updated.')
+      broadcastLabelChange()
     } catch (err) {
       setError((err as Error).message || 'Failed to save reordered hierarchy.')
       void loadLabels()
@@ -138,6 +166,7 @@ export const LabelHierarchyManager: React.FC = () => {
       setEditingId(null)
       showSuccess('Label updated successfully.')
       await loadLabels()
+      broadcastLabelChange()
     } catch (err) {
       setError((err as Error).message || 'Failed to update label.')
     }
@@ -161,16 +190,21 @@ export const LabelHierarchyManager: React.FC = () => {
       setIsAdding(false)
       showSuccess('New label created.')
       await loadLabels()
+      broadcastLabelChange()
     } catch (err) {
       setError((err as Error).message || 'Failed to create label.')
     }
   }
 
-  // ── Delete ──
-  const handleDelete = async (id: number, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete the "${name}" label? It will be unassigned from all tables.`)) {
-      return
-    }
+  // ── Delete (Trigger System-Generated Popup) ──
+  const handleDelete = (id: number, name: string) => {
+    setDeleteConfirm({ id, name })
+  }
+
+  const confirmDeleteLabel = async () => {
+    if (!deleteConfirm) return
+    const { id, name } = deleteConfirm
+    setDeleteConfirm(null)
     try {
       await deleteLabel(id)
       void logTableAction('LABEL_DELETED', `Deleted label "${name}".`, {
@@ -179,22 +213,26 @@ export const LabelHierarchyManager: React.FC = () => {
       })
       showSuccess(`Deleted label "${name}".`)
       await loadLabels()
+      broadcastLabelChange()
     } catch (err) {
       setError((err as Error).message || 'Failed to delete label.')
     }
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className={`max-w-4xl mx-auto space-y-6 ${isModal ? 'p-6 sm:p-8' : 'p-6'}`}>
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-base font-black text-[#14274E]">Table Hierarchy & Label Management</h2>
-          <p className="text-xs font-semibold text-slate-500">
+          <div className="flex items-center gap-2">
+            <Tag className="w-4 h-4 text-[#14274E]" />
+            <h2 className="text-base font-black text-[#14274E]">Table Hierarchy & Label Management</h2>
+          </div>
+          <p className="text-xs font-semibold text-slate-500 mt-0.5">
             Orders from higher-priority tables jump ahead in Kitchen and Dispatcher queues.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => void loadLabels()}
@@ -212,6 +250,16 @@ export const LabelHierarchyManager: React.FC = () => {
             <Plus className="w-3.5 h-3.5" />
             <span>Add Label</span>
           </button>
+          {isModal && onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer ml-1"
+              title="Close dialog"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -259,32 +307,37 @@ export const LabelHierarchyManager: React.FC = () => {
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. VIP, Platinum, Event Guest"
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-[#14274E]/20"
+                placeholder="e.g. VIP, Platinum, Regular"
+                maxLength={30}
+                className="w-full px-3 py-2 text-xs font-bold bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-[#14274E]"
                 autoFocus
               />
             </div>
 
             <div>
               <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1">
-                Color Treatment
+                Badge Color
               </label>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
                   value={newColor}
                   onChange={(e) => setNewColor(e.target.value)}
-                  className="w-9 h-9 p-0.5 rounded-xl border border-slate-200 cursor-pointer bg-white"
+                  className="w-8 h-8 rounded-lg border border-slate-200 cursor-pointer p-0.5"
                 />
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  {COLOR_PRESETS.map((p) => (
+                  {COLOR_PRESETS.map((c) => (
                     <button
-                      key={p.hex}
+                      key={c.hex}
                       type="button"
-                      onClick={() => setNewColor(p.hex)}
-                      className="w-5 h-5 rounded-full border border-slate-200 hover:scale-110 transition-transform"
-                      style={{ backgroundColor: p.hex }}
-                      title={p.name}
+                      onClick={() => setNewColor(c.hex)}
+                      className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${
+                        newColor.toLowerCase() === c.hex.toLowerCase()
+                          ? 'border-[#14274E] scale-110'
+                          : 'border-white'
+                      }`}
+                      style={{ backgroundColor: c.hex }}
+                      title={c.name}
                     />
                   ))}
                 </div>
@@ -292,41 +345,39 @@ export const LabelHierarchyManager: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold text-slate-400">Preview:</span>
-              <TableLabelBadge name={newName || 'Preview'} color={newColor} />
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsAdding(false)}
-                className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-200/60 rounded-xl transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 text-xs font-black text-white bg-[#14274E] hover:bg-[#0f1f40] rounded-xl shadow-xs transition-colors"
-              >
-                Create Label
-              </button>
-            </div>
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={() => setIsAdding(false)}
+              className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-1.5 bg-[#14274E] text-white text-xs font-black rounded-xl hover:bg-[#0f1f40] transition-colors shadow-xs"
+            >
+              Save Label
+            </button>
           </div>
         </form>
       )}
 
       {/* Priority Hierarchy List */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between px-3 text-[11px] font-black uppercase tracking-wider text-slate-400">
-          <span>Priority Hierarchy (Top = Highest Priority)</span>
-          <span>Actions</span>
-        </div>
+        {labels.length === 0 && !loading && (
+          <div className="text-center py-12 bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
+            <p className="text-xs font-bold text-slate-400">No labels configured.</p>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Click &quot;Add Label&quot; to create your first VIP or table priority tier.
+            </p>
+          </div>
+        )}
 
         {labels.map((lbl, index) => {
-          const isEditing = editingId === lbl.LABEL_ID
           const isHighest = index === 0
           const isLowest = index === labels.length - 1
+          const isEditing = editingId === lbl.LABEL_ID
 
           return (
             <div
@@ -335,23 +386,24 @@ export const LabelHierarchyManager: React.FC = () => {
               onDragStart={(e) => handleDragStart(e, index)}
               onDragOver={(e) => handleDragOver(e, index)}
               onDragEnd={handleDragEnd}
-              className={`flex items-center justify-between p-3.5 bg-white rounded-2xl border transition-all shadow-2xs ${
+              className={`flex items-center justify-between p-3 sm:p-3.5 bg-white border rounded-2xl transition-all ${
                 draggedIndex === index
-                  ? 'border-[#14274E] ring-2 ring-[#14274E]/10 bg-slate-50'
-                  : 'border-slate-200 hover:border-slate-300'
+                  ? 'border-indigo-400 shadow-md opacity-50'
+                  : 'border-slate-200 hover:border-slate-300 shadow-2xs'
               }`}
             >
               {/* Left: Grip, Priority Index, Name & Badge */}
               <div className="flex items-center gap-3">
-                <div
-                  className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-slate-700"
-                  title="Drag to reorder priority"
+                <button
+                  type="button"
+                  className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600"
+                  title="Drag to reorder hierarchy"
                 >
                   <GripVertical className="w-4 h-4" />
-                </div>
+                </button>
 
-                <div className="w-7 h-7 rounded-xl bg-slate-100 flex items-center justify-center font-mono font-black text-xs text-slate-700 shrink-0">
-                  #{lbl.PRIORITY}
+                <div className="w-6 h-6 rounded-lg bg-slate-100 flex items-center justify-center text-[11px] font-black text-slate-600">
+                  {lbl.PRIORITY}
                 </div>
 
                 {isEditing ? (
@@ -360,32 +412,23 @@ export const LabelHierarchyManager: React.FC = () => {
                       type="text"
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
-                      className="px-2.5 py-1 text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-[#14274E]"
+                      className="px-2 py-1 text-xs font-bold bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-[#14274E]"
+                      maxLength={30}
+                      autoFocus
                     />
                     <input
                       type="color"
                       value={editColor}
                       onChange={(e) => setEditColor(e.target.value)}
-                      className="w-7 h-7 p-0.5 rounded-lg border border-slate-200 cursor-pointer bg-white"
+                      className="w-7 h-7 rounded border border-slate-200 cursor-pointer p-0.5"
                     />
-                    <div className="flex items-center gap-1">
-                      {COLOR_PRESETS.map((p) => (
-                        <button
-                          key={p.hex}
-                          type="button"
-                          onClick={() => setEditColor(p.hex)}
-                          className="w-4 h-4 rounded-full border border-slate-200"
-                          style={{ backgroundColor: p.hex }}
-                        />
-                      ))}
-                    </div>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-3">
-                    <TableLabelBadge name={lbl.NAME} color={lbl.COLOR} />
-                    {isHighest && (
-                      <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                        Top Priority
+                  <div className="flex items-center gap-2">
+                    <TableLabelBadge name={lbl.NAME} color={lbl.COLOR} size="md" showDot />
+                    {index === 0 && (
+                      <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                        HIGHEST PRIORITY
                       </span>
                     )}
                   </div>
@@ -398,53 +441,54 @@ export const LabelHierarchyManager: React.FC = () => {
                   <>
                     <button
                       type="button"
-                      onClick={cancelEdit}
-                      className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg transition-colors"
-                      title="Cancel"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => void saveEdit(lbl.LABEL_ID)}
                       className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                       title="Save"
                     >
                       <Check className="w-4 h-4" />
                     </button>
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors"
+                      title="Cancel"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </>
                 ) : (
                   <>
                     <button
                       type="button"
-                      onClick={() => void handleMove(index, index - 1)}
                       disabled={isHighest}
-                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                      title="Increase priority (move up)"
+                      onClick={() => void handleMove(index, index - 1)}
+                      className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-20 rounded"
+                      title="Move up in priority"
                     >
                       <ArrowUp className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => void handleMove(index, index + 1)}
                       disabled={isLowest}
-                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                      title="Decrease priority (move down)"
+                      onClick={() => void handleMove(index, index + 1)}
+                      className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-20 rounded"
+                      title="Move down in priority"
                     >
                       <ArrowDown className="w-3.5 h-3.5" />
                     </button>
+                    <div className="w-px h-4 bg-slate-200 mx-1" />
                     <button
                       type="button"
                       onClick={() => startEdit(lbl)}
-                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                      className="p-1.5 text-slate-400 hover:text-[#14274E] hover:bg-slate-100 rounded-lg transition-colors"
                       title="Edit label"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => void handleDelete(lbl.LABEL_ID, lbl.NAME)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                      onClick={() => handleDelete(lbl.LABEL_ID, lbl.NAME)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                       title="Delete label"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -456,6 +500,18 @@ export const LabelHierarchyManager: React.FC = () => {
           )
         })}
       </div>
+
+      {/* System-Generated In-App Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={deleteConfirm !== null}
+        title="Delete Table Label"
+        message={`Are you sure you want to delete the "${deleteConfirm?.name}" label? It will be unassigned from all tables.`}
+        confirmLabel="Delete Label"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={() => void confirmDeleteLabel()}
+        onCancel={() => setDeleteConfirm(null)}
+      />
     </div>
   )
 }

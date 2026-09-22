@@ -1,12 +1,9 @@
 import React, { useState, useRef, useEffect, memo } from 'react'
 import {
-  Edit3,
-  Save,
   Plus,
   Trash2,
   Pencil,
   ChevronDown,
-  RotateCcw,
   Printer,
   Lock,
   X,
@@ -14,8 +11,9 @@ import {
   List,
   Layers,
   Sliders,
+  Check,
+  RefreshCw,
   Tag,
-  Sparkles,
 } from 'lucide-react'
 import type { TableLayoutPreset } from '@/services/tableLayoutService'
 
@@ -33,10 +31,7 @@ interface TableManagerHeaderProps {
   onRenamePreset: (presetId: number, currentName: string) => void
   onDeletePreset: (presetId: number) => void
   onOpenNewPresetModal: () => void
-  isEditMode: boolean
-  onToggleEditMode: () => void
-  onSaveLayout?: () => void
-  onDiscardChanges?: () => void
+  isEditMode?: boolean
   isSaving?: boolean
   isQrPrintMode?: boolean
   selectedPrintCount?: number
@@ -47,8 +42,8 @@ interface TableManagerHeaderProps {
   hasTables?: boolean
   activeTab?: TableManagerAdminTab
   onTabChange?: (tab: TableManagerAdminTab) => void
-  onOpenAutoAlloc?: () => void
   onOpenRemoveAll?: () => void
+  onOpenLabelsModal?: () => void
 }
 
 export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
@@ -63,10 +58,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   onRenamePreset,
   onDeletePreset,
   onOpenNewPresetModal,
-  isEditMode,
-  onToggleEditMode,
-  onSaveLayout,
-  onDiscardChanges,
+  isEditMode = true,
   isSaving = false,
   isQrPrintMode = false,
   selectedPrintCount = 0,
@@ -74,11 +66,11 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   onCancelQrPrint,
   onPrintSelectedQrs,
   isPrintingBulk = false,
-  hasTables = true,
+  hasTables = false,
   activeTab = 'layout',
   onTabChange,
-  onOpenAutoAlloc,
   onOpenRemoveAll,
+  onOpenLabelsModal,
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -301,7 +293,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
               </span>
             </button>
           </>
-        ) : !isEditMode ? (
+        ) : (
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -314,52 +306,32 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
               <span>Print All QRs</span>
             </button>
 
-            {isDirty && onSaveLayout && (
-              <button
-                type="button"
-                disabled={isSaving}
-                onClick={onSaveLayout}
-                className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs transition-transform active:scale-95 cursor-pointer disabled:opacity-40"
-                title="Save unsaved changes to database"
+            {/* Auto-Save Status Indicator */}
+            {isSaving ? (
+              <div
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-50 text-slate-600 border border-slate-200 rounded-xl text-xs font-black shadow-2xs select-none"
+                title="Saving layout changes..."
               >
-                <Save className="w-3.5 h-3.5 text-white" />
-                <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={onToggleEditMode}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#14274E] hover:bg-[#0f1f40] text-[#E9C46A] rounded-xl text-xs font-black shadow-xs transition-transform active:scale-95 cursor-pointer"
-            >
-              <Edit3 className="w-3.5 h-3.5 text-[#E9C46A]" />
-              <span>Edit Layout</span>
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            {onDiscardChanges && (
-              <button
-                type="button"
-                disabled={isSaving || !isDirty}
-                onClick={onDiscardChanges}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-white hover:bg-rose-50 disabled:opacity-40 disabled:hover:bg-white text-rose-600 border border-slate-200 hover:border-rose-300 rounded-xl text-xs font-black shadow-2xs transition-transform active:scale-95 cursor-pointer disabled:cursor-not-allowed"
-                title="Discard all unsaved layout changes"
+                <RefreshCw className="w-3.5 h-3.5 text-slate-500 animate-spin" />
+                <span>Saving...</span>
+              </div>
+            ) : isDirty ? (
+              <div
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-black shadow-2xs select-none"
+                title="Changes will be saved automatically"
               >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Discard Changes</span>
-              </button>
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                <span>Unsaved changes</span>
+              </div>
+            ) : (
+              <div
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-xl text-xs font-black shadow-2xs select-none"
+                title="All floor changes automatically saved to database"
+              >
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span>All changes saved</span>
+              </div>
             )}
-
-            <button
-              type="button"
-              disabled={isSaving}
-              onClick={onSaveLayout}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#E9C46A] hover:bg-[#dfba5f] disabled:opacity-50 text-[#14274E] rounded-xl text-xs font-black shadow-xs transition-transform active:scale-95 cursor-pointer"
-            >
-              <Save className="w-3.5 h-3.5 text-[#14274E]" />
-              <span>{isSaving ? 'Saving...' : 'Save Layout'}</span>
-            </button>
           </div>
         )}
       </div>
@@ -418,7 +390,13 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
           </button>
           <button
             type="button"
-            onClick={() => onTabChange?.('labels')}
+            onClick={() => {
+              if (onOpenLabelsModal) {
+                onOpenLabelsModal()
+              } else {
+                onTabChange?.('labels')
+              }
+            }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
               activeTab === 'labels'
                 ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
@@ -431,18 +409,6 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {onOpenAutoAlloc && (
-            <button
-              type="button"
-              onClick={onOpenAutoAlloc}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-900 text-xs font-bold transition-all shadow-2xs cursor-pointer"
-              title="Automatically distribute tables to match capacity"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Auto Allocate</span>
-            </button>
-          )}
-
           {onOpenRemoveAll && (
             <button
               type="button"

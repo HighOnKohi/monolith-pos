@@ -14,6 +14,8 @@ import {
   updateTableGuestCount,
   deleteLayoutPreset,
   TABLE_TYPES,
+  DEFAULT_GRID_WIDTH,
+  DEFAULT_GRID_HEIGHT,
   type TableLayoutPreset,
   type TableLayoutInfo,
   type RestaurantTableData,
@@ -34,6 +36,7 @@ import { useActiveEvent } from '@/hooks/useActiveEvent'
 import { GitMerge } from 'lucide-react'
 import { TableTypesManager } from './components/TableTypesManager'
 import { LabelHierarchyManager } from './components/LabelHierarchyManager'
+import { LabelManagementModal } from './components/LabelManagementModal'
 import { RemoveAllTablesModal } from './components/RemoveAllTablesModal'
 import { AdminAuthModal } from './components/AdminAuthModal'
 import { AutomaticAllocationModal } from './components/AutomaticAllocationModal'
@@ -191,7 +194,6 @@ export function applyTableMove(
   movedTableNum: number,
   newX: number,
   newY: number,
-  _areAdjacent?: (t1: TableLayoutInfo, t2: TableLayoutInfo) => boolean,
 ): TableLayoutInfo[] {
   const currentTable = tables.find((t) => t.TABLE_NUM === movedTableNum)
   if (!currentTable) return tables
@@ -241,8 +243,9 @@ export default function TableManager() {
   const [layoutTables, setLayoutTables] = useState<TableLayoutInfo[]>([])
   const [restaurantTables, setRestaurantTables] = useState<RestaurantTableData[]>([])
 
-  // Editor State
-  const [isEditMode, setIsEditMode] = useState(false)
+  // Editor State (Editing by default)
+  const isEditMode = true
+  const [labelsModalOpen, setLabelsModalOpen] = useState(false)
   const [isQrPrintMode, setIsQrPrintMode] = useState(false)
   const [selectedForPrintTableNums, setSelectedForPrintTableNums] = useState<Set<number>>(new Set())
   const [selectedTableNum, setSelectedTableNum] = useState<number | null>(null)
@@ -256,6 +259,15 @@ export default function TableManager() {
   const [isLoading, setIsLoading] = useState(true)
   const lastMutationTimeRef = useRef<number>(0)
   const { activeEvent, isEventActive } = useActiveEvent()
+
+  // Auto-Save & Egress Optimization Refs
+  const lastSavedLayoutHashRef = useRef<string>('')
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const isSavingRef = useRef<boolean>(false)
+  const layoutTablesRef = useRef<TableLayoutInfo[]>(layoutTables)
+  layoutTablesRef.current = layoutTables
+  const restaurantTablesRef = useRef<RestaurantTableData[]>(restaurantTables)
+  restaurantTablesRef.current = restaurantTables
 
   // ── Navigation Guard: block route changes when there are unsaved edits ──
   const shouldBlock = isDirty
@@ -330,6 +342,88 @@ export default function TableManager() {
     setTimeout(() => setToast(null), 3000)
   }
 
+  // Serialize floor layout configuration to detect true layout changes and protect against DB egress
+  const serializeLayout = useCallback((tables: TableLayoutInfo[]): string => {
+    return tables
+      .map((t) => `${t.TABLE_NUM}:${t.TABLE_TYPE}:${t.X_POS}:${t.Y_POS}:${t.TABLE_CAPACITY ?? ''}:${t.MERGE_GROUP_ID ?? ''}:${t.LABEL_ID ?? ''}`)
+      .sort()
+      .join('|')
+  }, [])
+
+  // Auto-save floor layout to database without burning egress
+  const performAutoSave = useCallback(
+    async (tablesToSave?: TableLayoutInfo[], restTablesToSave?: RestaurantTableData[]) => {
+      const presetId = activePresetIdRef.current
+      if (!presetId) return
+
+      const targetLayout = tablesToSave ?? layoutTablesRef.current
+      const targetRest = restTablesToSave ?? restaurantTablesRef.current
+      const currentHash = serializeLayout(targetLayout)
+
+      // Egress Protection: If layout hasn't changed from last saved state, skip database write completely!
+      if (currentHash === lastSavedLayoutHashRef.current) {
+        setIsDirty(false)
+        return
+      }
+
+      if (isSavingRef.current) {
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = setTimeout(() => {
+          void performAutoSave()
+        }, 500)
+        return
+      }
+
+      isSavingRef.current = true
+      setIsSaving(true)
+
+      try {
+        lastMutationTimeRef.current = Date.now()
+        const capacityMap = new Map<number, number>()
+        for (const r of targetRest) {
+          capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
+        }
+        for (const t of targetLayout) {
+          if (!capacityMap.has(t.TABLE_NUM)) {
+            capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
+          }
+        }
+
+        await savePresetLayout(presetId, targetLayout, capacityMap, activePresetMaxPaxRef.current)
+        lastSavedLayoutHashRef.current = currentHash
+        setIsDirty(false)
+      } catch (err) {
+        console.error('[TableManager] Failed auto-saving floor plan:', err)
+        setIsDirty(true)
+      } finally {
+        isSavingRef.current = false
+        setIsSaving(false)
+      }
+    },
+    [serializeLayout],
+  )
+
+  const scheduleAutoSave = useCallback(
+    (tablesToSave?: TableLayoutInfo[], restTablesToSave?: RestaurantTableData[], delayMs = 400) => {
+      setIsDirty(true)
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+      }
+      autoSaveTimerRef.current = setTimeout(() => {
+        void performAutoSave(tablesToSave, restTablesToSave)
+      }, delayMs)
+    },
+    [performAutoSave],
+  )
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+      }
+    }
+  }, [])
+
   // Compute dynamic cell size and dimensions (~30% reduced grid count for venue capacity 50)
   const cellSize = useMemo(() => {
     if (containerDimensions.height <= 0) return 48
@@ -382,18 +476,50 @@ export default function TableManager() {
 
   // Live nodes representing all tables on floor plan
   const mergedNodes: MergedTableNode[] = useMemo(() => {
+    // Collect shared label for each merge group
+    const mergeGroupLabelMap = new Map<number | string, number>()
+    for (const lt of effectiveLayoutTables) {
+      const live = restaurantTables.find((rt) => rt.TABLE_NUM === lt.TABLE_NUM)
+      let gid: number | string | null = lt.MERGE_GROUP_ID ?? null
+      if (gid == null && live?.MERGE_GROUP_ID != null) {
+        gid = live.MERGE_GROUP_ID
+      }
+      if (gid == null && live?.TABLE_ID != null) {
+        const isCaptain = restaurantTables.some((rt) => rt.MERGE_GROUP_ID === live.TABLE_ID)
+        if (isCaptain) gid = live.TABLE_ID
+      }
+      if (gid != null) {
+        const lbl = (live?.LABEL_ID !== undefined && live.LABEL_ID !== null) ? live.LABEL_ID : (lt.LABEL_ID ?? null)
+        if (lbl != null && !mergeGroupLabelMap.has(gid)) {
+          mergeGroupLabelMap.set(gid, lbl)
+        }
+      }
+    }
+
     return effectiveLayoutTables.map((lt) => {
       const live = restaurantTables.find((rt) => rt.TABLE_NUM === lt.TABLE_NUM)
       const effCap = calculateTableEffectiveCapacity(lt, chairSuppressionMap, baseCapacitiesMap)
+      let gid: number | null = lt.MERGE_GROUP_ID != null ? Number(lt.MERGE_GROUP_ID) : null
+      if (gid == null && live?.MERGE_GROUP_ID != null) {
+        gid = Number(live.MERGE_GROUP_ID)
+      }
+      if (gid == null && live?.TABLE_ID != null) {
+        const isCaptain = restaurantTables.some((rt) => rt.MERGE_GROUP_ID === live.TABLE_ID)
+        if (isCaptain) gid = Number(live.TABLE_ID)
+      }
+
+      const individualLabel = live?.LABEL_ID !== undefined ? live.LABEL_ID : (lt.LABEL_ID ?? null)
+      const resolvedLabel = gid != null ? (mergeGroupLabelMap.get(gid) ?? individualLabel) : individualLabel
 
       return {
         ...lt,
-        MERGE_GROUP_ID: lt.MERGE_GROUP_ID ?? null,
+        MERGE_GROUP_ID: gid,
         STATUS: live?.STATUS ?? 'AVAILABLE',
         CURRENT_GUEST_COUNT: live?.CURRENT_GUEST_COUNT ?? 0,
         GUEST_CAPACITY: effCap,
         BILL_OUT_REQUESTED: live?.BILL_OUT_REQUESTED ?? false,
         TABLE_ID: live?.TABLE_ID ?? lt.TABLE_NUM,
+        LABEL_ID: resolvedLabel,
       }
     })
   }, [effectiveLayoutTables, restaurantTables, chairSuppressionMap, baseCapacitiesMap])
@@ -470,6 +596,7 @@ export default function TableManager() {
       ])
       setPresets(allPresets)
       setActiveLabels(labelsData)
+      setRestaurantTables(liveTables)
       void refreshActiveOrders()
 
       if (allPresets.length > 0) {
@@ -477,6 +604,7 @@ export default function TableManager() {
         setActivePresetId(defaultPreset.LAYOUT_PRESET_ID)
         const layoutData = await fetchPresetLayout(defaultPreset.LAYOUT_PRESET_ID)
         setLayoutTables(layoutData)
+        lastSavedLayoutHashRef.current = serializeLayout(layoutData)
         // If liveTables are missing tables from layoutData, sync them
         const missingTables = layoutData.some((lt) => !liveTables.some((rt) => rt.TABLE_NUM === lt.TABLE_NUM))
         if (missingTables) {
@@ -489,12 +617,15 @@ export default function TableManager() {
           }
         }
       } else {
-        const created = await createLayoutPreset('Main Dining Hall', 50, gridWidth, gridHeight, true)
+        const created = await createLayoutPreset('Main Dining Hall', 50, DEFAULT_GRID_WIDTH, DEFAULT_GRID_HEIGHT, true)
         setPresets([created])
         setActivePresetId(created.LAYOUT_PRESET_ID)
-        const { layoutTables: distributedTables, baseCapacities: distributedCaps } = distributePresetTables(50, gridWidth, gridHeight)
+        const { layoutTables: distributedTables, baseCapacities: distributedCaps } = distributePresetTables(50, DEFAULT_GRID_WIDTH, DEFAULT_GRID_HEIGHT)
         await savePresetLayout(created.LAYOUT_PRESET_ID, distributedTables, distributedCaps, 50)
         setLayoutTables(distributedTables)
+        lastSavedLayoutHashRef.current = serializeLayout(distributedTables)
+        const refreshedLive = await fetchLiveRestaurantTables()
+        setRestaurantTables(refreshedLive)
       }
       setIsDirty(false)
     } catch (err) {
@@ -503,7 +634,7 @@ export default function TableManager() {
     } finally {
       setIsLoading(false)
     }
-  }, [gridWidth, gridHeight])
+  }, [gridWidth, gridHeight, serializeLayout])
 
   const refreshActiveOrders = useCallback(async () => {
     try {
@@ -569,6 +700,18 @@ export default function TableManager() {
       )
       .on(
         'postgres_changes',
+        { event: '*', schema: 'tables', table: 'Table_Labels' },
+        async () => {
+          try {
+            const labels = await fetchActiveLabels()
+            setActiveLabels(labels)
+          } catch (err) {
+            console.error('Error in labels realtime sync:', err)
+          }
+        },
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'Restaurant_Orders' },
         () => {
           void refreshActiveOrders()
@@ -598,6 +741,7 @@ export default function TableManager() {
                 fetchLiveRestaurantTables(),
               ])
               setLayoutTables(layoutData)
+              lastSavedLayoutHashRef.current = serializeLayout(layoutData)
               setRestaurantTables(live)
             }
           } catch (err) {
@@ -609,7 +753,18 @@ export default function TableManager() {
 
     const handleBroadcastSync = async (e: Event) => {
       try {
-        const detail = (e as CustomEvent<{ type?: string; presetId?: number }>).detail
+        const detail = (e as CustomEvent<{ type?: string; presetId?: number; tableId?: number; labelId?: number | null }>).detail
+
+        // Immediately sync labels and live tables when table labels change
+        if (detail?.type === 'table_label_changed') {
+          const [labels, live] = await Promise.all([
+            fetchActiveLabels(),
+            fetchLiveRestaurantTables(),
+          ])
+          setActiveLabels(labels)
+          setRestaurantTables(live)
+          return
+        }
 
         // If local mutation was done recently or dragging/selection is active, skip
         if (
@@ -637,6 +792,7 @@ export default function TableManager() {
           setActivePresetId(targetPresetId)
           const layoutData = await fetchPresetLayout(targetPresetId)
           setLayoutTables(layoutData)
+          lastSavedLayoutHashRef.current = serializeLayout(layoutData)
         }
       } catch (err) {
         console.warn('Error handling broadcast sync in TableManager:', err)
@@ -644,11 +800,19 @@ export default function TableManager() {
     }
     window.addEventListener('monolith-order-update', handleBroadcastSync)
 
+    const bc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('monolith_order_events') : null
+    if (bc) {
+      bc.onmessage = (msgEvent) => {
+        void handleBroadcastSync(new CustomEvent('monolith-order-update', { detail: msgEvent.data }))
+      }
+    }
+
     return () => {
       void supabase.removeChannel(channel)
       window.removeEventListener('monolith-order-update', handleBroadcastSync)
+      bc?.close()
     }
-  }, [isDirty, refreshActiveOrders])
+  }, [isDirty, refreshActiveOrders, serializeLayout])
 
   // ── 3. Switch Active Preset ──
   const performSelectPreset = async (presetId: number) => {
@@ -662,6 +826,7 @@ export default function TableManager() {
         fetchLiveRestaurantTables(),
       ])
       setLayoutTables(layoutData)
+      lastSavedLayoutHashRef.current = serializeLayout(layoutData)
       setRestaurantTables(liveTables)
       setIsDirty(false)
       setPresets((prev) =>
@@ -773,34 +938,14 @@ export default function TableManager() {
     })
   }
 
-  // ── 5b. Discard Changes ──
-  const handleDiscardChanges = () => {
-    if (!activePresetId || !isDirty) return
-    setConfirmModal({
-      isOpen: true,
-      title: 'Discard Changes',
-      message: 'Are you sure you want to discard all unsaved layout changes and reload the last saved floor plan?',
-      confirmLabel: 'Discard Changes',
-      variant: 'warning',
-      onConfirm: async () => {
-        setConfirmModal((prev) => ({ ...prev, isOpen: false }))
-        setIsLoading(true)
-        try {
-          const layoutData = await fetchPresetLayout(activePresetId)
-          setLayoutTables(layoutData)
-          setIsDirty(false)
-          showToast('Layout changes discarded', 'info')
-        } catch {
-          showToast('Failed to revert layout', 'error')
-        } finally {
-          setIsLoading(false)
-        }
-      },
-    })
-  }
 
   // ── 6. Create New Preset ──
-  const handleCreatePreset = async (name: string, maxPax: number, isDef: boolean) => {
+  const handleCreatePreset = async (
+    name: string,
+    maxPax: number,
+    isDef: boolean,
+    customTables?: TableLayoutInfo[],
+  ) => {
     if (isEventActive) {
       showToast(
         `Cannot create or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
@@ -809,19 +954,29 @@ export default function TableManager() {
       return
     }
     const validMaxPax = Math.max(1, Math.round(maxPax))
-    const created = await createLayoutPreset(name, validMaxPax, gridWidth, gridHeight, isDef)
+    const created = await createLayoutPreset(name, validMaxPax, DEFAULT_GRID_WIDTH, DEFAULT_GRID_HEIGHT, isDef)
 
-    // Automatically distribute tables to match maxPax
-    const { layoutTables: distributedTables, baseCapacities: distributedCaps } = distributePresetTables(
-      validMaxPax,
-      gridWidth,
-      gridHeight,
-    )
+    let initialLayout: TableLayoutInfo[]
+    let distributedCaps: Map<number, number>
 
-    const initialLayout = distributedTables.map((t) => ({
-      ...t,
-      LAYOUT_PRESET_ID: created.LAYOUT_PRESET_ID,
-    }))
+    if (customTables && customTables.length > 0) {
+      initialLayout = customTables.map((t) => ({
+        ...t,
+        LAYOUT_PRESET_ID: created.LAYOUT_PRESET_ID,
+      }))
+      distributedCaps = new Map<number, number>()
+      initialLayout.forEach((t) => {
+        distributedCaps.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? 4)
+      })
+    } else {
+      // Automatically distribute tables to match maxPax
+      const res = distributePresetTables(validMaxPax, DEFAULT_GRID_WIDTH, DEFAULT_GRID_HEIGHT)
+      initialLayout = res.layoutTables.map((t) => ({
+        ...t,
+        LAYOUT_PRESET_ID: created.LAYOUT_PRESET_ID,
+      }))
+      distributedCaps = res.baseCapacities
+    }
 
     // Persist layout for preset and synchronize Restaurant_Tables
     try {
@@ -925,48 +1080,33 @@ export default function TableManager() {
     }
 
     const updatedLayout = [...layoutTables, newTable]
+    const suppMap = calculateSuppressionForLayout(updatedLayout)
+    const updatedRest = syncRestaurantTablesWithLayout(
+      updatedLayout,
+      suppMap,
+      [
+        ...restaurantTables,
+        {
+          TABLE_ID: nextTableNum,
+          TABLE_NUM: nextTableNum,
+          STATUS: 'AVAILABLE',
+          GUEST_CAPACITY: assignedCapacity,
+          CURRENT_GUEST_COUNT: 0,
+          RESERVED_SINCE: null,
+          BILL_OUT_REQUESTED: false,
+          LABEL_ID: customLabelId ?? null,
+          MERGE_GROUP_ID: null,
+        },
+      ],
+      activePresetMaxPax,
+    )
     setLayoutTables(updatedLayout)
-    setRestaurantTables((prev) => [
-      ...prev,
-      {
-        TABLE_ID: nextTableNum,
-        TABLE_NUM: nextTableNum,
-        STATUS: 'AVAILABLE',
-        GUEST_CAPACITY: assignedCapacity,
-        CURRENT_GUEST_COUNT: 0,
-        RESERVED_SINCE: null,
-        BILL_OUT_REQUESTED: false,
-        LABEL_ID: customLabelId ?? null,
-        MERGE_GROUP_ID: null,
-      },
-    ])
+    setRestaurantTables(updatedRest)
     setSelectedTableNum(nextTableNum)
 
-    // Automatically persist to database if not in manual edit mode
-    if (!isEditMode && activePresetId) {
-      try {
-        const capacityMap = new Map<number, number>()
-        for (const t of updatedLayout) {
-          capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
-        }
-        await savePresetLayout(activePresetId, updatedLayout, capacityMap, activePresetMaxPax)
-        const refreshedLive = await fetchLiveRestaurantTables()
-        setRestaurantTables(refreshedLive)
-        setIsDirty(false)
-        void logTableAction('TABLE_CREATED', `Table ${nextTableNum} (${typeConfig.name}) added and saved to database.`)
-        showToast(`Added ${typeConfig.name} #${nextTableNum} (${assignedCapacity} seats) — Saved`, 'success')
-        return
-      } catch (err) {
-        console.error('Failed to auto-save added table:', err)
-        setIsDirty(true)
-        showToast(`Added ${typeConfig.name} #${nextTableNum} (unsaved)`, 'info')
-        return
-      }
-    }
-
-    setIsDirty(true)
+    scheduleAutoSave(updatedLayout, updatedRest, 100)
     void logTableAction('TABLE_CREATED', `Table ${nextTableNum} (${typeConfig.name}) added to layout.`)
-    showToast(`Added ${typeConfig.name} #${nextTableNum} (${assignedCapacity} seats)`, 'info')
+    showToast(`Added ${typeConfig.name} #${nextTableNum} (${assignedCapacity} seats)`, 'success')
   }
 
   // ── 8. Change Table Type (With Automatic Collision Resolution) ──
@@ -1083,13 +1223,15 @@ export default function TableManager() {
 
       const combined = [updatedTarget, ...adjustedOtherTables]
       const suppMap = calculateSuppressionForLayout(combined)
+      const updatedRest = syncRestaurantTablesWithLayout(combined, suppMap, restaurantTables)
 
-      setRestaurantTables((prev) => syncRestaurantTablesWithLayout(combined, suppMap, prev))
+      setRestaurantTables(updatedRest)
+      setLayoutTables(combined)
+      scheduleAutoSave(combined, updatedRest, 100)
 
       return combined
     })
 
-    setIsDirty(true)
     showToast(`Table ${tableNum} changed to ${newCfg.name}`, 'info')
   }
 
@@ -1113,11 +1255,12 @@ export default function TableManager() {
       )
 
       const suppMap = calculateSuppressionForLayout(updated)
-      setRestaurantTables((rPrev) => syncRestaurantTablesWithLayout(updated, suppMap, rPrev))
+      const updatedRest = syncRestaurantTablesWithLayout(updated, suppMap, restaurantTables)
+      setRestaurantTables(updatedRest)
+      scheduleAutoSave(updated, updatedRest, 100)
 
       return updated
     })
-    setIsDirty(true)
     showToast(`Rotated Table ${tableNum}`, 'info')
   }
 
@@ -1158,16 +1301,7 @@ export default function TableManager() {
 
     try {
       await updateTableCapacity(tableNum, clampedSeats)
-      if (!isEditMode && activePresetId) {
-        const capacityMap = new Map<number, number>()
-        for (const t of updatedLayout) {
-          capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
-        }
-        await savePresetLayout(activePresetId, updatedLayout, capacityMap, activePresetMaxPax)
-        setIsDirty(false)
-      } else {
-        setIsDirty(true)
-      }
+      scheduleAutoSave(updatedLayout, updatedRest, 200)
     } catch (err) {
       console.error('Failed to update table capacity:', err)
       setIsDirty(true)
@@ -1223,14 +1357,13 @@ export default function TableManager() {
     })
     const suppMap = calculateSuppressionForLayout(result)
 
-    setLayoutTables(result)
-    setRestaurantTables((rPrev) =>
-      syncRestaurantTablesWithLayout(
-        result,
-        suppMap,
-        rPrev.filter((r) => r.TABLE_NUM !== tableNum),
-      ),
+    const updatedRest = syncRestaurantTablesWithLayout(
+      result,
+      suppMap,
+      restaurantTables.filter((r) => r.TABLE_NUM !== tableNum),
     )
+    setLayoutTables(result)
+    setRestaurantTables(updatedRest)
     setSelectedTableNum(null)
     setSelectedTableNums((prev) => {
       const next = new Set(prev)
@@ -1238,28 +1371,8 @@ export default function TableManager() {
       return next
     })
 
-    if (!isEditMode && activePresetId) {
-      try {
-        const capacityMap = new Map<number, number>()
-        for (const t of result) {
-          capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
-        }
-        await savePresetLayout(activePresetId, result, capacityMap, activePresetMaxPax)
-        const refreshedLive = await fetchLiveRestaurantTables()
-        setRestaurantTables(refreshedLive)
-        setIsDirty(false)
-        void logTableAction('TABLE_DELETED', `Table ${tableNum} removed and saved to database.`)
-        showToast(`Removed Table ${tableNum} — Saved`, 'info')
-        return
-      } catch (err) {
-        console.error('Failed to auto-save table removal:', err)
-        setIsDirty(true)
-        showToast(`Removed Table ${tableNum} (unsaved)`, 'info')
-        return
-      }
-    }
-
-    setIsDirty(true)
+    scheduleAutoSave(result, updatedRest, 100)
+    void logTableAction('TABLE_DELETED', `Table ${tableNum} removed from layout.`)
     showToast(`Removed Table ${tableNum}`, 'info')
   }
 
@@ -1332,7 +1445,7 @@ export default function TableManager() {
         await loadInitialData()
         void logTableAction('DEFAULT_LAYOUT_MODIFIED', `Set preset "${targetPreset?.PRESET_NAME}" as default layout.`)
         showToast(`Preset "${targetPreset?.PRESET_NAME}" set as default.`, 'success')
-      } catch (err) {
+      } catch {
         showToast('Failed to set default preset.', 'error')
       }
     })
@@ -1341,32 +1454,33 @@ export default function TableManager() {
 
   // ── 11f. Label Assignment on Directory ──
   const handleLabelAssigned = async (tableNum: number, labelId: number | null) => {
+    const target = layoutTables.find((t) => t.TABLE_NUM === tableNum)
+    const liveTarget = restaurantTables.find((r) => r.TABLE_NUM === tableNum)
+    let mergeGroupId: number | string | null = target?.MERGE_GROUP_ID ?? liveTarget?.MERGE_GROUP_ID ?? null
+    if (mergeGroupId == null && liveTarget?.TABLE_ID != null) {
+      const isCaptain = restaurantTables.some((rt) => rt.MERGE_GROUP_ID === liveTarget.TABLE_ID)
+      if (isCaptain) mergeGroupId = liveTarget.TABLE_ID
+    }
+
     setLayoutTables((prev) =>
-      prev.map((t) => (t.TABLE_NUM === tableNum ? { ...t, LABEL_ID: labelId } : t)),
+      prev.map((t) =>
+        t.TABLE_NUM === tableNum || (mergeGroupId != null && (t.MERGE_GROUP_ID === mergeGroupId || t.TABLE_NUM === Number(mergeGroupId)))
+          ? { ...t, LABEL_ID: labelId }
+          : t,
+      ),
     )
     setRestaurantTables((prev) =>
-      prev.map((r) => (r.TABLE_NUM === tableNum ? { ...r, LABEL_ID: labelId } : r)),
+      prev.map((r) =>
+        r.TABLE_NUM === tableNum || (mergeGroupId != null && (r.MERGE_GROUP_ID === mergeGroupId || r.TABLE_ID === Number(mergeGroupId)))
+          ? { ...r, LABEL_ID: labelId }
+          : r,
+      ),
     )
 
-    const liveTarget = restaurantTables.find((r) => r.TABLE_NUM === tableNum)
     const targetTableId = liveTarget?.TABLE_ID ?? tableNum
     try {
       await assignLabelToTable(targetTableId, labelId)
-      if (!isEditMode && activePresetId) {
-        try {
-          await supabase
-            .schema('tables')
-            .from('Table_Layout_Info')
-            .update({ LABEL_ID: labelId })
-            .eq('LAYOUT_PRESET_ID', activePresetId)
-            .eq('TABLE_NUM', tableNum)
-        } catch {
-          // Ignore if column not present yet
-        }
-        setIsDirty(false)
-      } else {
-        setIsDirty(true)
-      }
+      setIsDirty(false)
     } catch (err) {
       console.error('Failed to persist label assignment:', err)
       setIsDirty(true)
@@ -1468,23 +1582,8 @@ export default function TableManager() {
 
     setLayoutTables(finalLayout)
     setRestaurantTables(updatedRest)
-
-    if (!isEditMode && activePresetId) {
-      try {
-        const capacityMap = new Map<number, number>()
-        for (const r of updatedRest) {
-          capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
-        }
-        await savePresetLayout(activePresetId, finalLayout, capacityMap, activePresetMaxPax)
-        showToast(`Table ${tableNum} unmerged`, 'info')
-      } catch (err) {
-        console.error('Failed to save unmerge in view mode:', err)
-        showToast('Failed to unmerge table', 'error')
-      }
-    } else {
-      setIsDirty(true)
-      showToast(`Table ${tableNum} unmerged`, 'info')
-    }
+    scheduleAutoSave(finalLayout, updatedRest, 100)
+    showToast(`Table ${tableNum} unmerged`, 'info')
   }
 
   // ── 13b. Merge Multi-Selected Tables (Floating Button in View/Edit Mode) ──
@@ -1516,68 +1615,44 @@ export default function TableManager() {
       }
     }
 
+    // Collect any existing labels among the selected tables to share across the group
+    const existingLabels = layoutTables
+      .filter((t) => selectedTableNums.has(t.TABLE_NUM) && t.LABEL_ID != null)
+      .map((t) => t.LABEL_ID!)
+    const sharedLabelId = existingLabels.length > 0 ? existingLabels[0] : null
+
     const updatedLayout = layoutTables.map((t) => {
       if (selectedTableNums.has(t.TABLE_NUM)) {
-        return { ...t, MERGE_GROUP_ID: targetMergeGroupId }
+        return {
+          ...t,
+          MERGE_GROUP_ID: targetMergeGroupId,
+          ...(sharedLabelId != null ? { LABEL_ID: sharedLabelId } : {}),
+        }
       }
       return t
     })
 
     const suppMap = calculateSuppressionForLayout(updatedLayout)
-    const updatedRest = syncRestaurantTablesWithLayout(
+    const rawRest = syncRestaurantTablesWithLayout(
       updatedLayout,
       suppMap,
       restaurantTables,
       activePresetMaxPax,
       baseCapacitiesMap,
     )
+    const updatedRest = rawRest.map((r) =>
+      selectedTableNums.has(r.TABLE_NUM) && sharedLabelId != null
+        ? { ...r, LABEL_ID: sharedLabelId }
+        : r,
+    )
 
     setLayoutTables(updatedLayout)
     setRestaurantTables(updatedRest)
     setSelectedTableNums(new Set())
-
-    if (!isEditMode && activePresetId) {
-      try {
-        const capacityMap = new Map<number, number>()
-        for (const r of updatedRest) {
-          capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
-        }
-        await savePresetLayout(activePresetId, updatedLayout, capacityMap, activePresetMaxPax)
-        showToast(`Merged ${selectedList.length} tables into Group #${targetMergeGroupId}`, 'success')
-      } catch (err) {
-        console.error('Failed to save merged tables:', err)
-        showToast('Failed to merge tables', 'error')
-      }
-    } else {
-      setIsDirty(true)
-      showToast(`Merged ${selectedList.length} tables into Group #${targetMergeGroupId}`, 'success')
-    }
+    scheduleAutoSave(updatedLayout, updatedRest, 100)
+    showToast(`Merged ${selectedList.length} tables into Group #${targetMergeGroupId}`, 'success')
   }
 
-  // ── 14. Save Layout ──
-  const handleSaveLayout = async () => {
-    if (!activePresetId) return
-    setIsSaving(true)
-    try {
-      const capacityMap = new Map<number, number>()
-      for (const r of restaurantTables) {
-        capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
-      }
-      await savePresetLayout(activePresetId, layoutTables, capacityMap, activePresetMaxPax)
-      setIsDirty(false)
-      setIsEditMode(false)
-      setSelectedTableNum(null)
-      setSelectedTableNums(new Set())
-      showToast('Floor plan layout saved successfully!', 'success')
-      const updated = await fetchLiveRestaurantTables()
-      setRestaurantTables(updated)
-    } catch (err) {
-      console.error('Failed to save layout:', err)
-      showToast('Failed to save floor plan layout', 'error')
-    } finally {
-      setIsSaving(false)
-    }
-  }
 
   // ── 15. Merging & Adjacency Detection ──
   const areTablesAdjacent = useCallback((t1: TableLayoutInfo, t2: TableLayoutInfo) => {
@@ -1835,7 +1910,7 @@ export default function TableManager() {
               }
             }
 
-            const rawResult = applyTableMove(layoutTables, tableNum, finalX, finalY, areTablesAdjacent)
+            const rawResult = applyTableMove(layoutTables, tableNum, finalX, finalY)
             const suppMap = calculateSuppressionForLayout(rawResult)
             const { updatedBaseCapacities, updatedLayout } = deductMovedTableOnOverflow(
               tableNum,
@@ -1854,20 +1929,7 @@ export default function TableManager() {
 
             setLayoutTables(updatedLayout)
             setRestaurantTables(updatedRest)
-
-            if (!isEditMode && activePresetId) {
-              try {
-                const capacityMap = new Map<number, number>()
-                for (const r of updatedRest) {
-                  capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
-                }
-                await savePresetLayout(activePresetId, updatedLayout, capacityMap, activePresetMaxPax)
-              } catch (err) {
-                console.error('Failed to save layout move in view mode:', err)
-              }
-            } else {
-              setIsDirty(true)
-            }
+            scheduleAutoSave(updatedLayout, updatedRest, 300)
           }
         }
       }
@@ -1888,7 +1950,7 @@ export default function TableManager() {
       window.removeEventListener('mouseup', handleGlobalMouseUp)
       window.removeEventListener('pointerup', handleGlobalMouseUp)
     }
-  }, [dragState, gridWidth, gridHeight, layoutTables, areTablesAdjacent, cellSize, isEditMode, activePresetId, restaurantTables, syncRestaurantTablesWithLayout, selectedTableNums, activePresetMaxPax, baseCapacitiesMap])
+  }, [dragState, gridWidth, gridHeight, layoutTables, areTablesAdjacent, cellSize, isEditMode, activePresetId, restaurantTables, syncRestaurantTablesWithLayout, selectedTableNums, activePresetMaxPax, baseCapacitiesMap, scheduleAutoSave])
 
 
   // ── 18. Dynamic Visuals for Merged Groups (Box or Smart Nearest-Neighbor Chain) ──
@@ -2148,30 +2210,6 @@ export default function TableManager() {
     [],
   )
 
-  const handleToggleEditMode = () => {
-    if (isEditMode && isDirty) {
-      setConfirmModal({
-        isOpen: true,
-        title: 'Discard Changes & Exit',
-        message: 'You have unsaved changes. Exit edit mode and discard them?',
-        confirmLabel: 'Discard & Exit',
-        variant: 'warning',
-        onConfirm: async () => {
-          setConfirmModal((prev) => ({ ...prev, isOpen: false }))
-          if (activePresetId) {
-            const layoutData = await fetchPresetLayout(activePresetId)
-            setLayoutTables(layoutData)
-          }
-          setIsDirty(false)
-          setIsEditMode(false)
-          setSelectedTableNum(null)
-        },
-      })
-      return
-    }
-    setIsEditMode((prev) => !prev)
-    setSelectedTableNum(null)
-  }
 
   return (
     <div className="table-manager-page-container staff-page flex flex-row h-full w-full overflow-hidden bg-[#F1F6F9] p-0 select-none">
@@ -2222,8 +2260,8 @@ export default function TableManager() {
             }
             setActiveAdminTab(tab)
           }}
-          onOpenAutoAlloc={() => setAutoAllocModalOpen(true)}
           onOpenRemoveAll={() => setRemoveAllModalOpen(true)}
+          onOpenLabelsModal={() => setLabelsModalOpen(true)}
           onOpenNewPresetModal={() => {
             if (isEventActive) {
               showToast(
@@ -2249,10 +2287,7 @@ export default function TableManager() {
             }
             setNewPresetModalOpen(true)
           }}
-          isEditMode={isEditMode}
-          onToggleEditMode={handleToggleEditMode}
-          onSaveLayout={handleSaveLayout}
-          onDiscardChanges={handleDiscardChanges}
+          isEditMode={true}
           isSaving={isSaving}
           isQrPrintMode={isQrPrintMode}
           selectedPrintCount={selectedForPrintTableNums.size}
@@ -2273,7 +2308,6 @@ export default function TableManager() {
               onUpdateSeatCount={handleUpdateSeatCount}
               onOpenQrModal={handleOpenQrModal}
               onOpenRemoveAll={() => setRemoveAllModalOpen(true)}
-              onOpenAutoAlloc={() => setAutoAllocModalOpen(true)}
               onLabelAssigned={handleLabelAssigned}
             />
           </div>
@@ -2585,8 +2619,8 @@ export default function TableManager() {
       {/* Automatic Table Allocation Modal */}
       <AutomaticAllocationModal
         isOpen={autoAllocModalOpen}
-        gridWidth={gridWidth}
-        gridHeight={gridHeight}
+        gridWidth={activePreset?.PRESET_GRID_WIDTH ?? DEFAULT_GRID_WIDTH}
+        gridHeight={activePreset?.PRESET_GRID_HEIGHT ?? DEFAULT_GRID_HEIGHT}
         maxVenuePax={activePresetMaxPax}
         presetId={activePresetId ?? 0}
         onClose={() => setAutoAllocModalOpen(false)}
@@ -2606,6 +2640,8 @@ export default function TableManager() {
       {/* New Preset Modal */}
       <NewPresetModal
         isOpen={newPresetModalOpen}
+        gridWidth={DEFAULT_GRID_WIDTH}
+        gridHeight={DEFAULT_GRID_HEIGHT}
         onClose={() => setNewPresetModalOpen(false)}
         onCreate={handleCreatePreset}
       />
@@ -2655,6 +2691,15 @@ export default function TableManager() {
           onClose={() => setQrModalTable(null)}
         />
       )}
+
+      {/* Label Management In-App Modal */}
+      <LabelManagementModal
+        isOpen={labelsModalOpen}
+        onClose={() => {
+          setLabelsModalOpen(false)
+          void fetchActiveLabels().then(setActiveLabels)
+        }}
+      />
     </div>
   )
 }
