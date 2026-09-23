@@ -4,7 +4,6 @@ import {
   ClockFilledIcon,
   ChefHatFilledIcon,
   CheckCircleFilledIcon,
-  CheckmarkFilledIcon,
   FlagFilledIcon,
   XCircleFilledIcon,
 } from '@/components/icons/FilledIcons'
@@ -45,11 +44,18 @@ export default function DispatcherInterface() {
     }
   }, [])
 
+  // Optimistic tracking refs to guard against stale database fetch overrides during rapid clicking
+  const OPTIMISTIC_TTL_MS = 6000
+  const optimisticOrderStatusesRef = useRef<Map<number, { status: string; expiresAt: number }>>(new Map())
+  const optimisticItemStatusesRef = useRef<Map<number, { status: string; expiresAt: number }>>(new Map())
+  const optimisticFlagsRef = useRef<Map<string, { isFlagged: boolean; expiresAt: number }>>(new Map())
+  const currentlyRejectedRef = useRef<Map<number, number>>(new Map())
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+
   // Tables mode data & state
   const [orders, setOrders] = useState<DispatcherOrder[]>([])
   const ordersRef = useRef<DispatcherOrder[]>([])
   const [activeTableStage, setActiveTableStage] = useState<TableStage>('preparing')
-  const currentlyRejectedRef = useRef(new Set<number>())
   const [rejectingOrder, setRejectingOrder] = useState<DispatcherOrder | null>(null)
 
   const [isLoading, setIsLoading] = useState(false)
@@ -67,18 +73,72 @@ export default function DispatcherInterface() {
     setTimeout(() => setToastMessage(null), 3000)
   }
 
+  // Helper to merge and apply active optimistic overrides onto raw database order data
+  const applyOptimisticOverrides = useCallback((orderList: DispatcherOrder[]): DispatcherOrder[] => {
+    const now = Date.now()
+
+    // Clean up expired entries
+    for (const [orderId, expiresAt] of currentlyRejectedRef.current.entries()) {
+      if (expiresAt < now) currentlyRejectedRef.current.delete(orderId)
+    }
+    for (const [orderId, data] of optimisticOrderStatusesRef.current.entries()) {
+      if (data.expiresAt < now) optimisticOrderStatusesRef.current.delete(orderId)
+    }
+    for (const [orderItemId, data] of optimisticItemStatusesRef.current.entries()) {
+      if (data.expiresAt < now) optimisticItemStatusesRef.current.delete(orderItemId)
+    }
+    for (const [flagKey, data] of optimisticFlagsRef.current.entries()) {
+      if (data.expiresAt < now) optimisticFlagsRef.current.delete(flagKey)
+    }
+
+    // Filter out rejected orders
+    const nonRejected = orderList.filter((order) => !currentlyRejectedRef.current.has(order.orderId))
+
+    // Apply active overrides
+    return nonRejected.map((order) => {
+      let orderStatus = order.orderStatus
+      const orderOverride = optimisticOrderStatusesRef.current.get(order.orderId)
+      if (orderOverride) {
+        orderStatus = orderOverride.status
+      }
+
+      const items = order.items.map((item) => {
+        let status = item.status
+        let isFlagged = item.isFlagged
+
+        const itemStatusOverride = optimisticItemStatusesRef.current.get(item.orderItemId)
+        if (itemStatusOverride) {
+          status = itemStatusOverride.status
+        }
+
+        const flagKey = `${order.orderId}_${item.itemId}`
+        const flagOverride = optimisticFlagsRef.current.get(flagKey)
+        if (flagOverride) {
+          isFlagged = flagOverride.isFlagged
+        }
+
+        return {
+          ...item,
+          status,
+          isFlagged,
+        }
+      })
+
+      return {
+        ...order,
+        orderStatus,
+        items,
+      }
+    })
+  }, [])
+
   // ── 1. Fetch Table Orders ──
   const loadOrders = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true)
     try {
       const data = await fetchDispatcherOrders()
       if (isMounted.current) {
-        const returnedOrderIds = new Set(data.map((order) => order.orderId))
-        const nextRejected = new Set(currentlyRejectedRef.current)
-        nextRejected.forEach((orderId) => {
-          if (!returnedOrderIds.has(orderId)) nextRejected.delete(orderId)
-        })
-        const nextOrders = data.filter((order) => !nextRejected.has(order.orderId))
+        const nextOrders = applyOptimisticOverrides(data)
         setOrders((currentOrders) => {
           const nextById = new Map(nextOrders.map((order) => [order.orderId, order]))
           const keptCurrent = currentOrders
@@ -90,11 +150,21 @@ export default function DispatcherInterface() {
       }
     } catch (err) {
       console.error('Failed to load dispatcher table orders:', err)
-      if (isMounted.current) showToast('Failed to load orders', 'error')
+      if (isMounted.current && !silent) showToast('Failed to load orders', 'error')
     } finally {
       if (isMounted.current && !silent) setIsLoading(false)
     }
-  }, [])
+  }, [applyOptimisticOverrides])
+
+  // Debounced loadOrders for Realtime and external event triggers to avoid race-conditions on fast clicks
+  const debouncedLoadOrders = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      void loadOrders(true)
+    }, 400)
+  }, [loadOrders])
 
   // Initial loads and Realtime
   useEffect(() => {
@@ -104,7 +174,7 @@ export default function DispatcherInterface() {
     // Event bus listener for same-tab and cross-tab triggers
     const unsubscribeBus = subscribeToOrderUpdates((detail) => {
       if (!detail?.type || detail.type === 'tables' || detail.type === 'all' || detail.type === 'table_label_changed') {
-        void loadOrders(true)
+        debouncedLoadOrders()
       }
     })
 
@@ -121,32 +191,33 @@ export default function DispatcherInterface() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'orders', table: 'Restaurant_Orders' },
-        () => loadOrders(true),
+        debouncedLoadOrders,
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'orders', table: 'Order_Items' },
-        () => loadOrders(true),
+        debouncedLoadOrders,
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
-        () => loadOrders(true),
+        debouncedLoadOrders,
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'tables', table: 'Table_Labels' },
-        () => loadOrders(true),
+        debouncedLoadOrders,
       )
       .subscribe()
 
     return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
       unsubscribeBus()
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus)
       window.removeEventListener('focus', handleVisibilityOrFocus)
       void supabase.removeChannel(ordersChannel)
     }
-  }, [loadOrders])
+  }, [loadOrders, debouncedLoadOrders])
 
   // ── Table Item Grouping Helper with Cooking Stepper Counts ──
   function groupOrderItems(order: DispatcherOrder): GroupedItem[] {
@@ -228,72 +299,90 @@ export default function DispatcherInterface() {
       })
   }, [orders, activeTableStage])
 
-  // ── Toggle Individual Item Done Handler ──
+  // ── Toggle Individual Item Done Handler (Optimistic & Resilient) ──
   // ── Mark 1 Piece of an Item Group as Done ──
   async function handleMarkOnePieceDone(orderId: number, itemId: string) {
-    const order = orders.find((o) => o.orderId === orderId)
-    if (!order) return
+    const now = Date.now()
+    let affectedOrderItemId: number | null = null
+    let itemName = ''
+    let isAllDoneNow = false
 
-    // Find the first active undone item matching this itemId
-    const undoneItem = order.items.find(
-      (it) => it.itemId === itemId && it.status !== 'DONE' && it.status !== 'CANCELLED',
-    )
-    if (!undoneItem) return
+    setOrders((currentOrders) => {
+      const order = currentOrders.find((o) => o.orderId === orderId)
+      if (!order) return currentOrders
 
-    const orderItemId = undoneItem.orderItemId
+      // Find the first active undone item matching this itemId
+      const undoneItem = order.items.find(
+        (it) => it.itemId === itemId && it.status !== 'DONE' && it.status !== 'CANCELLED',
+      )
+      if (!undoneItem) return currentOrders
 
-    // Optimistically update item status to 'DONE'
-    const nextOrders = orders.map((ord) => {
-      if (ord.orderId !== orderId) return ord
-      return {
-        ...ord,
-        items: ord.items.map((it) =>
-          it.orderItemId === orderItemId ? { ...it, status: 'DONE' } : it,
-        ),
+      affectedOrderItemId = undoneItem.orderItemId
+      itemName = undoneItem.name
+
+      // Record optimistic item status
+      optimisticItemStatusesRef.current.set(affectedOrderItemId, {
+        status: 'DONE',
+        expiresAt: now + OPTIMISTIC_TTL_MS,
+      })
+
+      const updatedItems = order.items.map((it) =>
+        it.orderItemId === affectedOrderItemId ? { ...it, status: 'DONE' } : it,
+      )
+
+      // Check if ALL active items in this order are now marked DONE
+      const activeItems = updatedItems.filter((i) => i.status !== 'CANCELLED')
+      isAllDoneNow = activeItems.length > 0 && activeItems.every((i) => i.status === 'DONE')
+
+      let nextOrderStatus = order.orderStatus
+      if (isAllDoneNow) {
+        nextOrderStatus = 'READY'
+        optimisticOrderStatusesRef.current.set(orderId, {
+          status: 'READY',
+          expiresAt: now + OPTIMISTIC_TTL_MS,
+        })
       }
+
+      return currentOrders.map((ord) =>
+        ord.orderId === orderId
+          ? {
+              ...ord,
+              orderStatus: nextOrderStatus,
+              items: updatedItems,
+            }
+          : ord,
+      )
     })
+
+    if (!affectedOrderItemId) return
+
+    const finalItemId = affectedOrderItemId as number
 
     // Track in undoHistory
     setUndoHistory((prev) => [
-      ...prev.filter((h) => h.orderItemId !== orderItemId),
-      { orderId, orderItemId, itemId, itemName: undoneItem.name, timestamp: Date.now() },
+      ...prev.filter((h) => h.orderItemId !== finalItemId),
+      { orderId, orderItemId: finalItemId, itemId, itemName, timestamp: now },
     ])
 
-    // Check if ALL active items in this order are now marked DONE
-    const targetOrder = nextOrders.find((o) => o.orderId === orderId)
-    const activeItems = targetOrder?.items.filter((i) => i.status !== 'CANCELLED') ?? []
-    const allMarked = activeItems.length > 0 && activeItems.every((i) => i.status === 'DONE')
-
-    if (allMarked) {
-      setOrders(
-        nextOrders.map((ord) =>
-          ord.orderId === orderId
-            ? {
-                ...ord,
-                orderStatus: 'READY',
-                items: ord.items.map((it) => (it.status === 'CANCELLED' ? it : { ...it, status: 'DONE' })),
-              }
-            : ord,
-        ),
-      )
+    if (isAllDoneNow) {
       showToast(`Order #${orderId} completed → Moved to Done tab!`, 'success')
-
       try {
-        await updateOrderItemStatus(orderItemId, 'DONE')
+        await updateOrderItemStatus(finalItemId, 'DONE')
         await moveOrderToReady(orderId)
-        void loadOrders(true)
       } catch (err) {
         console.error('Failed to auto-move order to ready:', err)
+        optimisticItemStatusesRef.current.delete(finalItemId)
+        optimisticOrderStatusesRef.current.delete(orderId)
         showToast('Failed to move order to Done', 'error')
         void loadOrders(true)
       }
     } else {
-      setOrders(nextOrders)
-      showToast(`Marked 1 ${undoneItem.name} as done`, 'info')
+      showToast(`Marked 1 ${itemName} as done`, 'info')
       try {
-        await updateOrderItemStatus(orderItemId, 'DONE')
+        await updateOrderItemStatus(finalItemId, 'DONE')
       } catch (err) {
         console.error('Failed to update item status:', err)
+        optimisticItemStatusesRef.current.delete(finalItemId)
         showToast('Failed to update item', 'error')
         void loadOrders(true)
       }
@@ -302,40 +391,48 @@ export default function DispatcherInterface() {
 
   // ── Undo Last Marked Done Item for Order ──
   async function handleUndoLastDone(orderId: number) {
-    const order = orders.find((o) => o.orderId === orderId)
-    if (!order) return
+    const now = Date.now()
+    let itemToRevert: number | null = null
+    let itemName = 'item'
 
-    // 1. Check if there is an entry in undoHistory for this order
-    let targetOrderItemId: number | null = null
-    const historyForOrder = undoHistory.filter((h) => h.orderId === orderId)
-    if (historyForOrder.length > 0) {
-      const lastAction = historyForOrder[historyForOrder.length - 1]
-      const it = order.items.find((i) => i.orderItemId === lastAction.orderItemId)
-      if (it && it.status === 'DONE') {
-        targetOrderItemId = lastAction.orderItemId
+    setOrders((currentOrders) => {
+      const order = currentOrders.find((o) => o.orderId === orderId)
+      if (!order) return currentOrders
+
+      // 1. Check if there is an entry in undoHistory for this order
+      const historyForOrder = undoHistory.filter((h) => h.orderId === orderId)
+      if (historyForOrder.length > 0) {
+        const lastAction = historyForOrder[historyForOrder.length - 1]
+        const it = order.items.find((i) => i.orderItemId === lastAction.orderItemId)
+        if (it && it.status === 'DONE') {
+          itemToRevert = lastAction.orderItemId
+        }
       }
-    }
 
-    // 2. Fallback: find the last active item with status === 'DONE'
-    if (!targetOrderItemId) {
-      const doneItems = order.items.filter((i) => i.status === 'DONE' && i.status !== 'CANCELLED')
-      if (doneItems.length === 0) {
-        showToast('No items to undo', 'info')
-        return
+      // 2. Fallback: find the last active item with status === 'DONE'
+      if (!itemToRevert) {
+        const doneItems = order.items.filter((i) => i.status === 'DONE' && i.status !== 'CANCELLED')
+        if (doneItems.length > 0) {
+          itemToRevert = doneItems[doneItems.length - 1].orderItemId
+        }
       }
-      targetOrderItemId = doneItems[doneItems.length - 1].orderItemId
-    }
 
-    const itemToRevert = targetOrderItemId
-    const itemObj = order.items.find((i) => i.orderItemId === itemToRevert)
-    const itemName = itemObj?.name || 'item'
+      if (!itemToRevert) return currentOrders
 
-    // Remove from undoHistory
-    setUndoHistory((prev) => prev.filter((h) => h.orderItemId !== itemToRevert))
+      const itemObj = order.items.find((i) => i.orderItemId === itemToRevert)
+      itemName = itemObj?.name || 'item'
 
-    // Optimistically revert item to 'COOKING' and order to 'PREPARING'
-    setOrders((currentOrders) =>
-      currentOrders.map((ord) => {
+      // Record optimistic status overrides
+      optimisticItemStatusesRef.current.set(itemToRevert, {
+        status: 'COOKING',
+        expiresAt: now + OPTIMISTIC_TTL_MS,
+      })
+      optimisticOrderStatusesRef.current.set(orderId, {
+        status: 'PREPARING',
+        expiresAt: now + OPTIMISTIC_TTL_MS,
+      })
+
+      return currentOrders.map((ord) => {
         if (ord.orderId !== orderId) return ord
         return {
           ...ord,
@@ -344,22 +441,33 @@ export default function DispatcherInterface() {
             it.orderItemId === itemToRevert ? { ...it, status: 'COOKING' } : it,
           ),
         }
-      }),
-    )
+      })
+    })
 
+    if (!itemToRevert) {
+      showToast('No items to undo', 'info')
+      return
+    }
+
+    const finalRevertId = itemToRevert as number
+
+    // Remove from undoHistory
+    setUndoHistory((prev) => prev.filter((h) => h.orderItemId !== finalRevertId))
     showToast(`Reverted 1 ${itemName} to cooking`, 'info')
 
     try {
-      await updateOrderItemStatus(itemToRevert, 'COOKING')
-      if (order.orderStatus === 'READY') {
+      await updateOrderItemStatus(finalRevertId, 'COOKING')
+      const targetOrder = ordersRef.current.find((o) => o.orderId === orderId)
+      if (targetOrder?.orderStatus === 'READY') {
         await supabase
           .from('Restaurant_Orders')
           .update({ ORDER_STATUS: 'PREPARING' })
           .eq('ORDER_ID', orderId)
       }
-      void loadOrders(true)
     } catch (err) {
       console.error('Failed to undo item:', err)
+      optimisticItemStatusesRef.current.delete(finalRevertId)
+      optimisticOrderStatusesRef.current.delete(orderId)
       showToast('Failed to undo item', 'error')
       void loadOrders(true)
     }
@@ -367,9 +475,24 @@ export default function DispatcherInterface() {
 
   // ── Return Order from Done Back to Cooking ──
   async function handleUndoOrderToCooking(orderId: number) {
+    const now = Date.now()
+
+    optimisticOrderStatusesRef.current.set(orderId, {
+      status: 'PREPARING',
+      expiresAt: now + OPTIMISTIC_TTL_MS,
+    })
+
     setOrders((currentOrders) =>
       currentOrders.map((ord) => {
         if (ord.orderId !== orderId) return ord
+        ord.items.forEach((it) => {
+          if (it.status !== 'CANCELLED') {
+            optimisticItemStatusesRef.current.set(it.orderItemId, {
+              status: 'COOKING',
+              expiresAt: now + OPTIMISTIC_TTL_MS,
+            })
+          }
+        })
         return {
           ...ord,
           orderStatus: 'PREPARING',
@@ -390,9 +513,9 @@ export default function DispatcherInterface() {
         .update({ ORDER_ITEM_STATUS: 'COOKING' })
         .eq('ORDER_ID', orderId)
         .neq('ORDER_ITEM_STATUS', 'CANCELLED')
-      void loadOrders(true)
     } catch (err) {
       console.error('Failed to return order to cooking:', err)
+      optimisticOrderStatusesRef.current.delete(orderId)
       showToast('Failed to return order', 'error')
       void loadOrders(true)
     }
@@ -407,128 +530,190 @@ export default function DispatcherInterface() {
 
   // ── Mark All Items in Order as Done Handler ──
   async function handleMarkAllDone(orderId: number) {
-    const order = orders.find((o) => o.orderId === orderId)
-    if (!order) return
+    const now = Date.now()
+
+    optimisticOrderStatusesRef.current.set(orderId, {
+      status: 'READY',
+      expiresAt: now + OPTIMISTIC_TTL_MS,
+    })
 
     setOrders((prev) =>
-      prev.map((o) =>
-        o.orderId === orderId
-          ? {
-              ...o,
-              orderStatus: 'READY',
-              items: o.items.map((it) => (it.status === 'CANCELLED' ? it : { ...it, status: 'DONE' })),
-            }
-          : o,
-      ),
+      prev.map((o) => {
+        if (o.orderId !== orderId) return o
+        o.items.forEach((it) => {
+          if (it.status !== 'CANCELLED') {
+            optimisticItemStatusesRef.current.set(it.orderItemId, {
+              status: 'DONE',
+              expiresAt: now + OPTIMISTIC_TTL_MS,
+            })
+          }
+        })
+        return {
+          ...o,
+          orderStatus: 'READY',
+          items: o.items.map((it) => (it.status === 'CANCELLED' ? it : { ...it, status: 'DONE' })),
+        }
+      }),
     )
     showToast(`Order #${orderId} completed → Moved to Done tab!`, 'success')
 
     try {
       await moveOrderToReady(orderId)
-      void loadOrders(true)
     } catch (err) {
       console.error('Failed to move order to ready:', err)
+      optimisticOrderStatusesRef.current.delete(orderId)
       showToast('Failed to move order to Done', 'error')
       void loadOrders(true)
     }
   }
 
   function handleMoveToCooking(orderId: number) {
-    const previousOrders = orders
+    const now = Date.now()
+    optimisticOrderStatusesRef.current.set(orderId, {
+      status: 'PREPARING',
+      expiresAt: now + OPTIMISTIC_TTL_MS,
+    })
+
     setOrders((currentOrders) =>
-      currentOrders.map((order) =>
-        order.orderId === orderId
-          ? {
-            ...order,
-            orderStatus: 'PREPARING',
-            items: order.items.map((item) => (item.status === 'PENDING' ? { ...item, status: 'COOKING' } : item)),
+      currentOrders.map((order) => {
+        if (order.orderId !== orderId) return order
+        order.items.forEach((item) => {
+          if (item.status === 'PENDING') {
+            optimisticItemStatusesRef.current.set(item.orderItemId, {
+              status: 'COOKING',
+              expiresAt: now + OPTIMISTIC_TTL_MS,
+            })
           }
-          : order,
-      ),
+        })
+        return {
+          ...order,
+          orderStatus: 'PREPARING',
+          items: order.items.map((item) => (item.status === 'PENDING' ? { ...item, status: 'COOKING' } : item)),
+        }
+      }),
     )
     showToast('Order moved to cooking', 'success')
 
-    void moveOrderToCooking(orderId)
-      .then(() => loadOrders(true))
-      .catch((err) => {
-        console.error('Failed to persist cooking status:', err)
-        setOrders(previousOrders)
-        showToast('Failed to move order', 'error')
-      })
+    void moveOrderToCooking(orderId).catch((err) => {
+      console.error('Failed to persist cooking status:', err)
+      optimisticOrderStatusesRef.current.delete(orderId)
+      showToast('Failed to move order', 'error')
+      void loadOrders(true)
+    })
   }
 
   function handleMoveToCompleted(orderId: number) {
-    const previousOrders = orders
+    const now = Date.now()
+    optimisticOrderStatusesRef.current.set(orderId, {
+      status: 'COMPLETED',
+      expiresAt: now + OPTIMISTIC_TTL_MS,
+    })
+
     setOrders((currentOrders) =>
-      currentOrders.map((order) =>
-        order.orderId === orderId
-          ? {
-            ...order,
-            orderStatus: 'COMPLETED',
-            items: order.items.map((item) => (item.status === 'CANCELLED' ? item : { ...item, status: 'DONE' })),
+      currentOrders.map((order) => {
+        if (order.orderId !== orderId) return order
+        order.items.forEach((item) => {
+          if (item.status !== 'CANCELLED') {
+            optimisticItemStatusesRef.current.set(item.orderItemId, {
+              status: 'DONE',
+              expiresAt: now + OPTIMISTIC_TTL_MS,
+            })
           }
-          : order,
-      ),
+        })
+        return {
+          ...order,
+          orderStatus: 'COMPLETED',
+          items: order.items.map((item) => (item.status === 'CANCELLED' ? item : { ...item, status: 'DONE' })),
+        }
+      }),
     )
     showToast('Order marked as complete → Sent to Cashier', 'success')
 
-    void moveOrderToCompleted(orderId)
-      .then(() => loadOrders(true))
-      .catch((err) => {
-        console.error('Failed to persist completed status:', err)
-        setOrders(previousOrders)
-        showToast('Failed to complete order', 'error')
-      })
-  }
-
-  // ── Fast Item Flag Handler ──
-  async function handleToggleItemFlag(orderId: number, itemId: string, flag: boolean) {
-    try {
-      await flagOrderItems(orderId, [itemId], flag)
-      showToast(flag ? 'Item flagged as unavailable' : 'Item unflagged', 'info')
+    void moveOrderToCompleted(orderId).catch((err) => {
+      console.error('Failed to persist completed status:', err)
+      optimisticOrderStatusesRef.current.delete(orderId)
+      showToast('Failed to complete order', 'error')
       void loadOrders(true)
-    } catch (err) {
-      console.error('[Dispatcher] toggleItemFlag error:', err)
-      showToast('Failed to update item flag', 'error')
-    }
+    })
   }
 
-  // ── Reject / Flag Handler ──
-  async function handleRejectOrder(note: string, flaggedItemIds: string[]) {
+  // ── Fast Optimistic Item Flag Handler ──
+  function handleToggleItemFlag(orderId: number, itemId: string, flag: boolean) {
+    const now = Date.now()
+    const flagKey = `${orderId}_${itemId}`
+
+    optimisticFlagsRef.current.set(flagKey, {
+      isFlagged: flag,
+      expiresAt: now + OPTIMISTIC_TTL_MS,
+    })
+
+    setOrders((currentOrders) =>
+      currentOrders.map((ord) => {
+        if (ord.orderId !== orderId) return ord
+        return {
+          ...ord,
+          items: ord.items.map((it) =>
+            it.itemId === itemId ? { ...it, isFlagged: flag } : it,
+          ),
+        }
+      }),
+    )
+    showToast(flag ? 'Item flagged as unavailable' : 'Item unflagged', 'info')
+
+    void flagOrderItems(orderId, [itemId], flag).catch((err) => {
+      console.error('[Dispatcher] toggleItemFlag error:', err)
+      optimisticFlagsRef.current.delete(flagKey)
+      showToast('Failed to update item flag', 'error')
+      void loadOrders(true)
+    })
+  }
+
+  // ── Fast Optimistic Reject Handler ──
+  function handleRejectOrder(note: string, flaggedItemIds: string[]) {
     if (!rejectingOrder) return
 
     const orderId = rejectingOrder.orderId
+    const targetOrder = rejectingOrder
+    const now = Date.now()
 
-    if (note?.trim()) {
-      try {
-        await saveDispatcherNote(orderId, note.trim())
-      } catch {
-        // Ignore note error
-      }
-    }
-
-    // Flag the selected items
-    if (flaggedItemIds.length > 0) {
-      await flagOrderItems(orderId, flaggedItemIds, true)
-    }
-
-    // Build rejection list from all active items (the modal is a bulk-reject flow)
-    const activeItems = rejectingOrder.items.filter((i) => i.status !== 'CANCELLED')
-    const rejections = activeItems.map((item) => ({
-      orderItemId: item.orderItemId,
-      itemId: item.itemId,
-      reason: flaggedItemIds.includes(item.itemId) ? 'unavailable' : 'unavailable',
-    }))
-
-    if (rejections.length > 0) {
-      await rejectOrderItems(orderId, rejections)
-    }
-
-    // Optimistically remove from UI
-    currentlyRejectedRef.current.add(orderId)
+    // Optimistically remove from UI right away without waiting for database queries
+    currentlyRejectedRef.current.set(orderId, now + OPTIMISTIC_TTL_MS)
     setOrders((prev) => prev.filter((o) => o.orderId !== orderId))
+    setRejectingOrder(null)
     showToast('Order rejected & items flagged', 'success')
-    void loadOrders(true)
+
+    // Run backend mutations asynchronously in the background
+    void (async () => {
+      try {
+        if (note?.trim()) {
+          try {
+            await saveDispatcherNote(orderId, note.trim())
+          } catch {
+            // Ignore note error
+          }
+        }
+
+        if (flaggedItemIds.length > 0) {
+          await flagOrderItems(orderId, flaggedItemIds, true)
+        }
+
+        const activeItems = targetOrder.items.filter((i) => i.status !== 'CANCELLED')
+        const rejections = activeItems.map((item) => ({
+          orderItemId: item.orderItemId,
+          itemId: item.itemId,
+          reason: 'unavailable',
+        }))
+
+        if (rejections.length > 0) {
+          await rejectOrderItems(orderId, rejections)
+        }
+      } catch (err) {
+        console.error('Failed to reject order in background:', err)
+        currentlyRejectedRef.current.delete(orderId)
+        showToast('Failed to reject order', 'error')
+        void loadOrders(true)
+      }
+    })()
   }
 
   // Counts for Tabs
@@ -664,41 +849,39 @@ export default function DispatcherInterface() {
                 <div
                   key={order.orderId}
                   className="dispatcher-order-card"
-                  style={{
-                    border: order.labelColor ? `2.5px solid ${order.labelColor}` : '1px solid #e2e8f0',
-                    boxShadow: order.labelColor
-                      ? `0 4px 16px ${order.labelColor}25, 0 0 0 1px ${order.labelColor}30`
-                      : undefined,
-                  }}
+                  style={
+                    order.labelColor
+                      ? {
+                          borderColor: order.labelColor,
+                        }
+                      : undefined
+                  }
                 >
-                  {/* Top Color Accent Strip for VIP/Priority tiers */}
-                  {order.labelColor && (
+                  {/* Overlapping Floating Hierarchy Label on Card Border */}
+                  {order.labelName && order.labelColor && (
                     <div
-                      className="h-1.5 w-full shrink-0"
+                      className="dispatcher-card-floating-badge"
                       style={{ backgroundColor: order.labelColor }}
-                    />
+                    >
+                      <span>{order.labelName}</span>
+                    </div>
                   )}
 
                   {/* Card Header */}
                   <div
                     className="dispatcher-order-header"
-                    style={{
-                      backgroundColor: order.labelColor ? `${order.labelColor}0d` : undefined,
-                    }}
+                    style={
+                      order.labelColor
+                        ? {
+                            borderBottomColor: order.labelColor,
+                          }
+                        : undefined
+                    }
                   >
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="dispatcher-order-table">{order.tableDisplay}</h3>
-                        {order.labelName && order.labelColor && (
-                          <TableLabelBadge
-                            name={order.labelName}
-                            color={order.labelColor}
-                            size="sm"
-                            showDot
-                          />
-                        )}
                       </div>
-                      <span className="dispatcher-order-id">Order #{order.orderId}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       {activeTableStage === 'cooking' && doneCount > 0 && (
@@ -726,7 +909,7 @@ export default function DispatcherInterface() {
                   {/* Items List */}
                   <div className="dispatcher-order-items">
                     {activeTableStage === 'cooking' ? (
-                      /* ── Cooking Stage: Categorized Containers with Aggregated Items & +1 Done Stepper ── */
+                      /* ── Cooking Stage: Clean Categorized Sections with +1 Done Stepper ── */
                       (() => {
                         const catGroups = new Map<string, GroupedItem[]>()
                         groupedItems.forEach((group) => {
@@ -735,7 +918,11 @@ export default function DispatcherInterface() {
                           catGroups.get(cat)!.push(group)
                         })
 
-                        return Array.from(catGroups.entries()).map(([category, items]) => {
+                        const sortedCategories = Array.from(catGroups.entries()).sort((a, b) =>
+                          a[0].localeCompare(b[0]),
+                        )
+
+                        return sortedCategories.map(([category, items]) => {
                           // Inside each category, completed items (doneCount === totalQuantity) sink to bottom
                           const sortedItems = [...items].sort((a, b) => {
                             const aDone = a.doneCount === a.totalQuantity ? 1 : 0
@@ -744,99 +931,51 @@ export default function DispatcherInterface() {
                             return a.name.localeCompare(b.name)
                           })
 
-                          const catTotalQty = sortedItems.reduce((sum, g) => sum + g.totalQuantity, 0)
-                          const catDoneQty = sortedItems.reduce((sum, g) => sum + g.doneCount, 0)
-
                           return (
-                            <div key={category} className="dispatcher-category-container">
+                            <div key={category} className="dispatcher-category-section">
                               <div className="dispatcher-category-header">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="dispatcher-category-badge">{category}</span>
-                                  {catDoneQty > 0 && (
-                                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-md border border-emerald-300">
-                                      {catDoneQty}/{catTotalQty} cooked
-                                    </span>
-                                  )}
-                                </div>
-                                <span className="dispatcher-category-count">
-                                  {catTotalQty} item{catTotalQty !== 1 ? 's' : ''}
-                                </span>
+                                <span className="dispatcher-category-badge">{category}</span>
                               </div>
 
                               <div className="dispatcher-category-items">
-                                {sortedItems.map((group, idx) => {
-                                  const isAllDone = group.doneCount >= group.totalQuantity
-                                  const isPartiallyDone = group.doneCount > 0 && !isAllDone
-
-                                  const zebraClass = isAllDone
-                                    ? 'item-row-done bg-emerald-50/50 border-emerald-200'
-                                    : isPartiallyDone
-                                      ? 'bg-amber-50/40 border-amber-200'
-                                      : idx % 2 === 0
-                                        ? 'item-row-even bg-white border-slate-200/90'
-                                        : 'item-row-odd bg-slate-100/75 border-slate-200'
+                                {sortedItems.map((group) => {
+                                  const remainingQuantity = Math.max(0, group.totalQuantity - group.doneCount)
+                                  const isAllDone = remainingQuantity === 0
 
                                   return (
                                     <div
                                       key={group.itemId}
-                                      className={`dispatcher-order-item transition-all duration-200 ${zebraClass}`}
+                                      className={`dispatcher-order-item ${isAllDone ? 'item-row-done' : ''}`}
                                     >
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="flex flex-col gap-1 min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-2 w-full">
+                                        <div className="flex flex-col min-w-0 flex-1">
                                           <span
                                             className={`dispatcher-item-name ${
-                                              isAllDone ? 'line-through text-slate-400 font-medium' : 'text-[#0f1d3a] font-extrabold'
+                                              isAllDone
+                                                ? 'line-through text-slate-400 font-medium'
+                                                : 'text-[#0f1d3a]'
                                             }`}
                                           >
                                             {group.name}
                                           </span>
-                                          {(group.isFlagged || group.totalQuantity > 1) && (
-                                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                                              {group.isFlagged && (
-                                                <span className="dispatcher-flag-badge shrink-0">
-                                                  <FlagFilledIcon className="h-2.5 w-2.5" />
-                                                  Flagged
-                                                </span>
-                                              )}
-                                              {group.totalQuantity > 1 && (
-                                                <span
-                                                  className={`text-[11px] font-extrabold px-2 py-0.5 rounded-md shrink-0 border ${
-                                                    isAllDone
-                                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                                                      : isPartiallyDone
-                                                        ? 'bg-amber-100 text-amber-800 border-amber-300'
-                                                        : 'bg-slate-100 text-slate-600 border-slate-200'
-                                                  }`}
-                                                >
-                                                  {group.doneCount}/{group.totalQuantity} ready
-                                                </span>
-                                              )}
-                                            </div>
-                                          )}
                                         </div>
 
-                                        <div className="flex items-center gap-2 shrink-0 pt-0.5">
-                                          <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          <span className="dispatcher-item-qty">
+                                            ×{isAllDone ? 0 : remainingQuantity}
+                                          </span>
                                           {isAllDone ? (
-                                            <div className="px-2.5 py-1.5 rounded-xl text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shadow-2xs">
-                                              <CheckCircleFilledIcon className="w-3.5 h-3.5 text-emerald-600" />
+                                            <div className="px-2.5 py-1 rounded-lg text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center justify-center">
                                               <span>Done</span>
                                             </div>
                                           ) : (
                                             <button
                                               type="button"
                                               onClick={() => handleMarkOnePieceDone(order.orderId, group.itemId)}
-                                              className="px-2.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1 cursor-pointer bg-white hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 text-slate-700 border border-slate-200 shadow-2xs active:scale-95"
-                                              title={
-                                                group.totalQuantity > 1
-                                                  ? `Mark 1 ${group.name} as done (${group.doneCount + 1}/${group.totalQuantity})`
-                                                  : `Mark ${group.name} as done`
-                                              }
+                                              className="px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center justify-center cursor-pointer bg-white hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 text-slate-700 border border-slate-200 shadow-2xs active:scale-95"
+                                              title={`Mark 1 ${group.name} as done`}
                                             >
-                                              <CheckmarkFilledIcon className="w-3.5 h-3.5 text-slate-400" />
-                                              <span>
-                                                {group.totalQuantity > 1 ? `+1 Done` : 'Mark Done'}
-                                              </span>
+                                              <span>Done</span>
                                             </button>
                                           )}
                                         </div>
@@ -850,7 +989,7 @@ export default function DispatcherInterface() {
                         })
                       })()
                     ) : (
-                      /* ── Requested & Done Stages: Categorized Containers with Grouped Items ── */
+                      /* ── Requested & Done Stages: Clean Categorized Sections ── */
                       (() => {
                         const catGroups = new Map<string, GroupedItem[]>()
                         groupedItems.forEach((group) => {
@@ -859,42 +998,29 @@ export default function DispatcherInterface() {
                           catGroups.get(cat)!.push(group)
                         })
 
-                        return Array.from(catGroups.entries()).map(([category, items]) => {
-                          const totalQty = items.reduce((sum, g) => sum + g.totalQuantity, 0)
+                        const sortedCategories = Array.from(catGroups.entries()).sort((a, b) =>
+                          a[0].localeCompare(b[0]),
+                        )
+
+                        return sortedCategories.map(([category, items]) => {
+                          const sortedItems = [...items].sort((a, b) => a.name.localeCompare(b.name))
+
                           return (
-                            <div key={category} className="dispatcher-category-container">
+                            <div key={category} className="dispatcher-category-section">
                               <div className="dispatcher-category-header">
                                 <span className="dispatcher-category-badge">{category}</span>
-                                <span className="dispatcher-category-count">
-                                  {totalQty} item{totalQty !== 1 ? 's' : ''}
-                                </span>
                               </div>
 
                               <div className="dispatcher-category-items">
-                                {items.map((group, idx) => {
-                                  const zebraClass =
-                                    idx % 2 === 0
-                                      ? 'item-row-even bg-white border-slate-200/90'
-                                      : 'item-row-odd bg-slate-100/75 border-slate-200'
-
+                                {sortedItems.map((group) => {
                                   return (
-                                    <div key={group.itemId} className={`dispatcher-order-item ${zebraClass}`}>
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="flex flex-col gap-1 min-w-0 flex-1">
-                                          <span className="dispatcher-item-name text-[#0f1d3a] font-extrabold">
-                                            {group.name}
-                                          </span>
-                                          {group.isFlagged && (
-                                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                                              <span className="dispatcher-flag-badge shrink-0">
-                                                <FlagFilledIcon className="h-2.5 w-2.5" />
-                                                Flagged
-                                              </span>
-                                            </div>
-                                          )}
-                                        </div>
+                                    <div key={group.itemId} className="dispatcher-order-item">
+                                      <div className="flex items-center justify-between gap-2 w-full">
+                                        <span className="dispatcher-item-name">
+                                          {group.name}
+                                        </span>
 
-                                        <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                                        <div className="flex items-center gap-1.5 shrink-0">
                                           {activeTableStage === 'preparing' && (
                                             <button
                                               type="button"
@@ -902,10 +1028,10 @@ export default function DispatcherInterface() {
                                                 handleToggleItemFlag(order.orderId, group.itemId, !group.isFlagged)
                                               }
                                               className={[
-                                                'px-2.5 py-1 text-[11px] font-extrabold rounded-lg flex items-center gap-1 transition-all cursor-pointer border',
+                                                'w-7 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer border',
                                                 group.isFlagged
                                                   ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 shadow-2xs'
-                                                  : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:text-amber-600',
+                                                  : 'bg-white text-slate-400 border-slate-200 hover:border-amber-300 hover:text-amber-600',
                                               ].join(' ')}
                                               title={
                                                 group.isFlagged
@@ -913,8 +1039,7 @@ export default function DispatcherInterface() {
                                                   : 'Flag item as unavailable / out of stock'
                                               }
                                             >
-                                              <FlagFilledIcon className="w-3 h-3" />
-                                              <span>{group.isFlagged ? 'Flagged' : 'Flag'}</span>
+                                              <FlagFilledIcon className="w-3.5 h-3.5" />
                                             </button>
                                           )}
                                           <span className="dispatcher-item-qty">×{group.totalQuantity}</span>
@@ -934,22 +1059,38 @@ export default function DispatcherInterface() {
                   {/* Card Actions / State Transitions */}
                   <div className="dispatcher-order-actions">
                     {activeTableStage === 'preparing' && (
-                      <>
-                        <button
-                          onClick={() => setRejectingOrder(order)}
-                          className="dispatcher-reject-action-btn"
-                        >
-                          <XCircleFilledIcon className="w-4 h-4" />
-                          <span>Flag / Reject</span>
-                        </button>
-                        <button
-                          onClick={() => handleMoveToCooking(order.orderId)}
-                          className="w-full py-2.5 rounded-xl bg-[#14274E] hover:bg-[#203c73] text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
-                        >
-                          <ChefHatFilledIcon className="w-4 h-4 text-[#E9C46A]" />
-                          <span>Start Cooking →</span>
-                        </button>
-                      </>
+                      (() => {
+                        const hasFlaggedItems = order.items.some(
+                          (item) => item.status !== 'CANCELLED' && item.isFlagged,
+                        )
+
+                        return (
+                          <>
+                            <button
+                              onClick={() => setRejectingOrder(order)}
+                              className="dispatcher-reject-action-btn"
+                            >
+                              <XCircleFilledIcon className="w-4 h-4" />
+                              <span>Reject Order</span>
+                            </button>
+                            <button
+                              onClick={() => handleMoveToCooking(order.orderId)}
+                              disabled={hasFlaggedItems}
+                              className="flex-1 py-2.5 px-3 rounded-xl bg-[#14274E] hover:bg-[#203c73] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed disabled:shadow-none text-white text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs whitespace-nowrap active:scale-98"
+                              title={
+                                hasFlaggedItems
+                                  ? 'Resolve or reject flagged items before cooking'
+                                  : 'Start Cooking'
+                              }
+                            >
+                              <ChefHatFilledIcon
+                                className={`w-4 h-4 ${hasFlaggedItems ? 'text-slate-400' : 'text-[#E9C46A]'}`}
+                              />
+                              <span>Start Cooking</span>
+                            </button>
+                          </>
+                        )
+                      })()
                     )}
 
                     {activeTableStage === 'cooking' && (

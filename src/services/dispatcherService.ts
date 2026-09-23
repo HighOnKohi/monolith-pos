@@ -15,6 +15,9 @@ export type DispatcherOrderItem = Omit<OrderItem, 'quantity'> & {
 export interface DispatcherOrder extends Omit<Order, 'items'> {
   tableNum?: number
   tableDisplay?: string
+  isMerged?: boolean
+  groupId?: number | null
+  memberTableNums?: number[]
   labelId?: number | null
   labelName?: string | null
   labelColor?: string | null
@@ -145,17 +148,63 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
       if (!hasActiveItems) return null
 
       const tableId = Number(row.TABLE_ID)
+      const targetTable = allTables.find((t) => t.TABLE_ID === tableId || t.TABLE_NUM === tableId)
       const group = resolveTableGroupByList(tableId, allTables, labelMap)
+
+      // If the target table itself has a label, separate it from the group card:
+      const targetLabelId = targetTable?.LABEL_ID != null ? Number(targetTable.LABEL_ID) : null
+      const targetLabel = targetLabelId ? labelMap.get(targetLabelId) : null
+
+      let tableDisplay = `Table #${targetTable?.TABLE_NUM || tableId}`
+      let isMerged = false
+      let groupId: number | null = null
+      let labelId: number | null = null
+      let labelName: string | null = null
+      let labelColor: string | null = null
+      let labelPriority: number | null = null
+
+      if (targetLabel) {
+        // Table has an individual label -> separated from the group
+        tableDisplay = `Table ${targetTable?.TABLE_NUM || tableId}`
+        isMerged = false
+        groupId = null
+        labelId = targetLabel.LABEL_ID
+        labelName = targetLabel.NAME
+        labelColor = targetLabel.COLOR
+        labelPriority = targetLabel.PRIORITY
+      } else if (group.isMerged || targetTable?.MERGE_GROUP_ID != null) {
+        // Part of a merge group without individual label override -> display as Group N
+        const resolvedGroupId = targetTable?.MERGE_GROUP_ID ?? group.groupId ?? group.anchorTableNum
+        tableDisplay = `Group ${resolvedGroupId}`
+        isMerged = true
+        groupId = resolvedGroupId
+        labelId = group.labelId ?? null
+        labelName = group.labelName ?? null
+        labelColor = group.labelColor ?? null
+        labelPriority = group.labelPriority ?? null
+      } else {
+        // Normal single table
+        tableDisplay = `Table ${group.anchorTableNum}`
+        isMerged = false
+        groupId = null
+        labelId = group.labelId ?? null
+        labelName = group.labelName ?? null
+        labelColor = group.labelColor ?? null
+        labelPriority = group.labelPriority ?? null
+      }
 
       return {
         orderId,
         tableId,
-        tableNum: group.anchorTableNum,
-        tableDisplay: group.displayLabel,
-        labelId: group.labelId ?? null,
-        labelName: group.labelName ?? null,
-        labelColor: group.labelColor ?? null,
-        labelPriority: group.labelPriority ?? null,
+        tableNum: targetTable?.TABLE_NUM ?? group.anchorTableNum,
+        tableDisplay,
+        isMerged,
+        groupId,
+        memberTableNums: group.memberTableNums,
+        labelId,
+        labelName,
+        labelColor,
+        labelPriority,
         orderStatus: String(row.ORDER_STATUS ?? '').toUpperCase() as OrderStatus,
         orderType: row.ORDER_TYPE as Order['orderType'],
         totalBill: Number(row.TOTAL_BILL ?? 0),
