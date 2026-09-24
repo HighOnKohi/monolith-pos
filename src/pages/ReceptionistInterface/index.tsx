@@ -1102,9 +1102,6 @@ export default function ReceptionistInterface() {
                     </div>
                     <span className="text-xs font-semibold text-slate-500">
                       Max {selectedTable.GUEST_CAPACITY ?? 4} Pax
-                      {selectedGroup?.isMerged && selectedGroup.capacity > (selectedTable.GUEST_CAPACITY ?? 4)
-                        ? ` (${selectedGroup.capacity} Group)`
-                        : ''}
                     </span>
                   </div>
 
@@ -1138,7 +1135,7 @@ export default function ReceptionistInterface() {
                         handleSeatedPaxChange(
                           selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
                           Math.min(
-                            Math.max(selectedTable.GUEST_CAPACITY ?? 4, selectedGroup?.capacity ?? 0),
+                            selectedTable.GUEST_CAPACITY ?? 4,
                             (selectedTable.CURRENT_GUEST_COUNT ?? 0) + 1,
                           ),
                         )

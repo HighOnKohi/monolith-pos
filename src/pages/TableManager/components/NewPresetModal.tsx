@@ -13,7 +13,7 @@ import {
   fetchAllTypeConfigs,
   type TableTypeConfig,
 } from '@/services/tableTypeConfigService'
-import { type TablePosition, detectHardCollision } from '@/utils/floorPlan/collision'
+import { type TablePosition, detectCollision, detectHardCollision } from '@/utils/floorPlan/collision'
 import { TableShapeIcon } from './TableVisual'
 
 interface NewPresetModalProps {
@@ -263,9 +263,9 @@ export const NewPresetModal: React.FC<NewPresetModalProps> = ({
           let placedX = -1
           let placedY = -1
 
-          // 1. Spacing pass
-          for (let y = 1; y <= gridHeight - height - 1; y += 2) {
-            for (let x = 1; x <= gridWidth - width - 1; x += 2) {
+          // 1. Primary pass: Spaced grid layout (with 1-cell aisle spacing around tables)
+          for (let y = 1; y <= gridHeight - height; y += (height + 1)) {
+            for (let x = 1; x <= gridWidth - width; x += (width + 1)) {
               const candidate: TablePosition = {
                 tableId: tableNum,
                 x,
@@ -273,7 +273,7 @@ export const NewPresetModal: React.FC<NewPresetModalProps> = ({
                 widthBlocks: width,
                 heightBlocks: height,
               }
-              if (!detectHardCollision(candidate, 1, existingPositions)) {
+              if (!detectCollision(candidate, 1, existingPositions, 1)) {
                 placedX = x
                 placedY = y
                 break
@@ -282,7 +282,28 @@ export const NewPresetModal: React.FC<NewPresetModalProps> = ({
             if (placedX !== -1) break
           }
 
-          // 2. Fallback dense pass
+          // 2. Secondary pass: Fine coordinate search with 1-cell spacing
+          if (placedX === -1) {
+            for (let y = 0; y <= gridHeight - height; y++) {
+              for (let x = 0; x <= gridWidth - width; x++) {
+                const candidate: TablePosition = {
+                  tableId: tableNum,
+                  x,
+                  y,
+                  widthBlocks: width,
+                  heightBlocks: height,
+                }
+                if (!detectCollision(candidate, 1, existingPositions, 1)) {
+                  placedX = x
+                  placedY = y
+                  break
+                }
+              }
+              if (placedX !== -1) break
+            }
+          }
+
+          // 3. Fallback dense pass (pure overlap prevention)
           if (placedX === -1) {
             for (let y = 0; y <= gridHeight - height; y++) {
               for (let x = 0; x <= gridWidth - width; x++) {

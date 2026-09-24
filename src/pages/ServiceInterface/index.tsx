@@ -425,8 +425,10 @@ export default function CashierPage() {
   // Bill Settlement Handler
   const handleCompletePayment = async (discountInfo: DiscountInfo) => {
     if (!selectedTable) return
+    const isMerged = selectedGroup.isMerged
+    const mergeGroupId = isMerged ? (selectedGroup.anchorTableNum || selectedGroup.groupId) : null
     const tableId = selectedGroup.anchorTableId
-    const tableNum = selectedGroup.displayLabel
+    const tableNum = isMerged && mergeGroupId != null ? `Group ${mergeGroupId}` : selectedGroup.displayLabel
 
     // ── STEP 1: Snapshot receipt BEFORE any DB operations clear the table ──
     // This is critical: once the bill-out runs, tableOrders will be cleared.
@@ -437,6 +439,8 @@ export default function CashierPage() {
       activeBillRequest,
       tableId,
       tableNum,
+      isMerged,
+      mergeGroupId,
     })
 
     const previousOrders = tableOrders

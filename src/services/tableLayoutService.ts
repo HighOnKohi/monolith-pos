@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { sequentializeLayoutTables } from '@/utils/floorPlan/adjacency'
 
 export type TableType = 1 | 2 | 3 | 4 | 5
 
@@ -545,7 +546,7 @@ export async function fetchPresetLayout(presetId: number): Promise<TableLayoutIn
     return []
   }
 
-  return (data ?? []).map((row: Record<string, unknown>) => ({
+  const rawTables: TableLayoutInfo[] = (data ?? []).map((row: Record<string, unknown>) => ({
     INFO_ID: String(row.INFO_ID),
     LAYOUT_PRESET_ID: Number(row.LAYOUT_PRESET_ID),
     TABLE_NUM: Number(row.TABLE_NUM),
@@ -556,6 +557,8 @@ export async function fetchPresetLayout(presetId: number): Promise<TableLayoutIn
     TABLE_CAPACITY: row.TABLE_CAPACITY != null ? Number(row.TABLE_CAPACITY) : null,
     LABEL_ID: row.LABEL_ID != null ? Number(row.LABEL_ID) : null,
   }))
+
+  return sequentializeLayoutTables(rawTables)
 }
 
 export async function fetchLiveRestaurantTables(): Promise<RestaurantTableData[]> {
@@ -593,6 +596,8 @@ export async function savePresetLayout(
   tableCapacities?: Map<number, number>,
   maxPax?: number,
 ): Promise<void> {
+  const sanitizedTables = sequentializeLayoutTables(tables)
+
   // 1. Clear existing layout info for this preset
   try {
     await supabase
@@ -605,8 +610,8 @@ export async function savePresetLayout(
   }
 
   // 2. Insert new layout info if any
-  if (tables.length > 0) {
-    const rowsToInsert = tables.map((t, idx) => ({
+  if (sanitizedTables.length > 0) {
+    const rowsToInsert = sanitizedTables.map((t, idx) => ({
       INFO_ID: t.INFO_ID || `layout-info-${presetId}-${t.TABLE_NUM}-${Date.now()}-${idx}`,
       LAYOUT_PRESET_ID: presetId,
       TABLE_NUM: t.TABLE_NUM,
@@ -656,8 +661,34 @@ export async function savePresetLayout(
   // 4. Synchronize Restaurant_Tables in tables schema so Cashier & Service Interface reflect active tables
   try {
     const existingRestaurantTables = await fetchLiveRestaurantTables()
-    const existingByNum = new Map(existingRestaurantTables.map((t) => [t.TABLE_NUM, t]))
-    const newTableNums = new Set(tables.map((t) => t.TABLE_NUM))
+    
+    // Group by TABLE_NUM to find and remove any duplicates
+    const byTableNum = new Map<number, RestaurantTableData[]>()
+    for (const rt of existingRestaurantTables) {
+      const list = byTableNum.get(rt.TABLE_NUM) || []
+      list.push(rt)
+      byTableNum.set(rt.TABLE_NUM, list)
+    }
+
+    // Clean duplicate rows in DB
+    for (const [tNum, rows] of byTableNum.entries()) {
+      if (rows.length > 1) {
+        for (const duplicateRow of rows.slice(1)) {
+          try {
+            await supabase.schema('tables').from('Restaurant_Tables').delete().eq('TABLE_ID', duplicateRow.TABLE_ID)
+          } catch {
+            // Ignore
+          }
+        }
+        byTableNum.set(tNum, [rows[0]])
+      }
+    }
+
+    const existingByNum = new Map<number, RestaurantTableData>()
+    for (const [tNum, rows] of byTableNum.entries()) {
+      existingByNum.set(tNum, rows[0])
+    }
+    const newTableNums = new Set(sanitizedTables.map((t) => t.TABLE_NUM))
 
     // Determine effective venue cap
     let effectiveVenueCap = maxPax
@@ -680,7 +711,7 @@ export async function savePresetLayout(
 
     // A. Pass 1: Calculate target capacities & clamp strictly to dynamic VENUE_CAP
     const targetCapacities = new Map<number, number>()
-    for (const t of tables) {
+    for (const t of sanitizedTables) {
       const typeConfig = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
       const existing = existingByNum.get(t.TABLE_NUM)
       const cap = t.TABLE_CAPACITY ?? tableCapacities?.get(t.TABLE_NUM) ?? existing?.GUEST_CAPACITY ?? typeConfig.defaultCapacity
@@ -705,7 +736,7 @@ export async function savePresetLayout(
     }
 
     // Upsert / update active tables (capacities & layout coordinates)
-    for (const t of tables) {
+    for (const t of sanitizedTables) {
       const capacity = targetCapacities.get(t.TABLE_NUM) ?? 4
       const existing = existingByNum.get(t.TABLE_NUM)
 
@@ -744,7 +775,7 @@ export async function savePresetLayout(
     const updatedLiveTables = await fetchLiveRestaurantTables()
     const liveByNum = new Map(updatedLiveTables.map((t) => [t.TABLE_NUM, t]))
 
-    for (const t of tables) {
+    for (const t of sanitizedTables) {
       const liveCurrent = liveByNum.get(t.TABLE_NUM)
       if (!liveCurrent) continue
 
