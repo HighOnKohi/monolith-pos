@@ -20,8 +20,8 @@ import {
   subscribeToOrderUpdates,
   type DispatcherOrder,
 } from '@/services/dispatcherService'
+import type { OrderStatus } from '@/types/order'
 import { CancelOrderModal } from '@/components/dispatcher/CancelOrderModal'
-import { TableLabelBadge } from '@/components/common/TableLabelBadge'
 
 type TableStage = 'preparing' | 'cooking' | 'done'
 
@@ -46,7 +46,7 @@ export default function DispatcherInterface() {
 
   // Optimistic tracking refs to guard against stale database fetch overrides during rapid clicking
   const OPTIMISTIC_TTL_MS = 6000
-  const optimisticOrderStatusesRef = useRef<Map<number, { status: string; expiresAt: number }>>(new Map())
+  const optimisticOrderStatusesRef = useRef<Map<number, { status: OrderStatus; expiresAt: number }>>(new Map())
   const optimisticItemStatusesRef = useRef<Map<number, { status: string; expiresAt: number }>>(new Map())
   const optimisticFlagsRef = useRef<Map<string, { isFlagged: boolean; expiresAt: number }>>(new Map())
   const currentlyRejectedRef = useRef<Map<number, number>>(new Map())
@@ -284,17 +284,7 @@ export default function DispatcherInterface() {
           return aPrio - bPrio
         }
 
-        // 2. Existing cooking stage marked items ordering
-        if (activeTableStage === 'cooking') {
-          // In cooking tab, marked orders (orders with 1+ items marked DONE) go to the bottom
-          const aHasMarked = a.items.some((i) => i.status === 'DONE')
-          const bHasMarked = b.items.some((i) => i.status === 'DONE')
-          if (aHasMarked !== bHasMarked) {
-            return aHasMarked ? 1 : -1
-          }
-        }
-
-        // 3. Chronological / ID ordering
+        // 2. Chronological / ID ordering
         return b.orderId - a.orderId
       })
   }, [orders, activeTableStage])
@@ -318,7 +308,7 @@ export default function DispatcherInterface() {
       if (!undoneItem) return currentOrders
 
       affectedOrderItemId = undoneItem.orderItemId
-      itemName = undoneItem.name
+      itemName = undoneItem.name ?? ''
 
       // Record optimistic item status
       optimisticItemStatusesRef.current.set(affectedOrderItemId, {
@@ -411,7 +401,7 @@ export default function DispatcherInterface() {
 
       // 2. Fallback: find the last active item with status === 'DONE'
       if (!itemToRevert) {
-        const doneItems = order.items.filter((i) => i.status === 'DONE' && i.status !== 'CANCELLED')
+        const doneItems = order.items.filter((i) => i.status === 'DONE')
         if (doneItems.length > 0) {
           itemToRevert = doneItems[doneItems.length - 1].orderItemId
         }
@@ -669,7 +659,7 @@ export default function DispatcherInterface() {
   }
 
   // ── Fast Optimistic Reject Handler ──
-  function handleRejectOrder(note: string, flaggedItemIds: string[]) {
+  async function handleRejectOrder(note: string, flaggedItemIds: string[]) {
     if (!rejectingOrder) return
 
     const orderId = rejectingOrder.orderId
@@ -923,13 +913,8 @@ export default function DispatcherInterface() {
                         )
 
                         return sortedCategories.map(([category, items]) => {
-                          // Inside each category, completed items (doneCount === totalQuantity) sink to bottom
-                          const sortedItems = [...items].sort((a, b) => {
-                            const aDone = a.doneCount === a.totalQuantity ? 1 : 0
-                            const bDone = b.doneCount === b.totalQuantity ? 1 : 0
-                            if (aDone !== bDone) return aDone - bDone
-                            return a.name.localeCompare(b.name)
-                          })
+                          // Inside each category, keep stable alphabetical sorting without moving completed items down
+                          const sortedItems = [...items].sort((a, b) => a.name.localeCompare(b.name))
 
                           return (
                             <div key={category} className="dispatcher-category-section">
@@ -1109,28 +1094,15 @@ export default function DispatcherInterface() {
                             }}
                           />
                         </div>
-                        <div className="flex items-center gap-2">
-                          {doneCount > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => handleUndoLastDone(order.orderId)}
-                              className="py-2 px-3 rounded-xl text-xs font-black border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95 shrink-0"
-                              title="Undo last completed piece"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                              <span>Undo</span>
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleMarkAllDone(order.orderId)}
-                            className="flex-1 py-2 rounded-xl text-xs font-bold border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800 flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
-                            title="Mark all remaining items as done and move order to Done"
-                          >
-                            <CheckCircleFilledIcon className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Mark All Done →</span>
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleMarkAllDone(order.orderId)}
+                          className="w-full py-2 rounded-xl text-xs font-bold border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 text-emerald-800 flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
+                          title="Mark all remaining items as done and move order to Done"
+                        >
+                          <CheckCircleFilledIcon className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Mark All Done</span>
+                        </button>
                       </div>
                     )}
 

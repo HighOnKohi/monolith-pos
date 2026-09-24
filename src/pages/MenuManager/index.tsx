@@ -166,6 +166,10 @@ export default function MenuManagerPage() {
       ...editingItem,
       name: form.name,
       price: form.price,
+      originalPrice: form.originalPrice,
+      discountPercent: form.discountPercent,
+      discountAmount: form.discountAmount,
+      isBestSeller: form.isBestSeller,
       categoryId: form.categoryId,
       dietaryType: form.dietaryType,
       isAvailable: form.isAvailable,
@@ -177,15 +181,19 @@ export default function MenuManagerPage() {
     setSelectedItem((current) => current?.id === editingItem.id ? updated : current)
     try {
       await updateMenuItem(editingItem.id, {
-        name:        form.name,
-        price:       form.price,
-        categoryId:  form.categoryId,
-        dietaryType: form.dietaryType,
-        isAvailable: form.isAvailable,
-        imageUrl:    form.imageUrl,
-        description:    form.description,
-        orderLimit:     form.orderLimit,
-        itemIds:        form.itemIds,
+        name:            form.name,
+        price:           form.price,
+        originalPrice:   form.originalPrice,
+        discountPercent: form.discountPercent,
+        discountAmount:  form.discountAmount,
+        isBestSeller:    form.isBestSeller,
+        categoryId:      form.categoryId,
+        dietaryType:     form.dietaryType,
+        isAvailable:     form.isAvailable,
+        imageUrl:        form.imageUrl,
+        description:     form.description,
+        orderLimit:      form.orderLimit,
+        itemIds:         form.itemIds,
       })
       reload()
       void fetchMenuItemGroups().then(setGroups).catch(() => {})
@@ -552,6 +560,22 @@ export default function MenuManagerPage() {
                     </div>
                   )}
 
+                  {/* Promo Badges (Best Seller, Discount) */}
+                  {!item.isSoldOut && (item.isBestSeller || (item.discountPercent && item.discountPercent > 0)) && (
+                    <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-1 max-w-[85%]">
+                      {item.isBestSeller && (
+                        <span className="rounded-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-xs">
+                          ★ Best Seller
+                        </span>
+                      )}
+                      {item.discountPercent && item.discountPercent > 0 && (
+                        <span className="rounded-md bg-[#E9C46A] px-1.5 py-0.5 text-[10px] font-bold text-[#14274E] shadow-xs">
+                          {item.discountPercent}% OFF
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   {/* Image */}
                   <div className="menu-item-image-container h-32 w-full overflow-hidden">
                     <img
@@ -565,7 +589,14 @@ export default function MenuManagerPage() {
                   <div className="flex flex-col gap-1 pt-2">
                     <p className="menu-item-name text-sm font-semibold text-[#14274E] line-clamp-2">{item.name}</p>
                     <div className="flex items-center justify-between">
-                      <span className="menu-item-price text-sm font-bold text-[#14274E]">₱{item.price.toFixed(2)}</span>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="menu-item-price text-sm font-bold text-[#14274E]">₱{item.price.toFixed(2)}</span>
+                        {item.originalPrice && item.originalPrice > item.price && (
+                          <span className="text-[11px] text-[#9BA4B4] line-through font-semibold">
+                            ₱{item.originalPrice.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
                       <span className={[
                         ' gap-1 text-[10px] font-semibold',
                         item.dietaryType === 'veg' ? 'text-yellow-600' : 'text-[#C94A4A]',
@@ -694,12 +725,31 @@ export default function MenuManagerPage() {
               <img className="menu-manager-sidebar-image" src={selectedItem.imageUrl} alt={selectedItem.name} />
               <div className="menu-manager-sidebar-title">
                 <div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    {selectedItem.isBestSeller && (
+                      <span className="rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-xs">
+                        ★ Best Seller
+                      </span>
+                    )}
+                    {selectedItem.discountPercent && selectedItem.discountPercent > 0 && (
+                      <span className="rounded bg-[#E9C46A] px-1.5 py-0.5 text-[10px] font-bold text-[#14274E] shadow-xs">
+                        {selectedItem.discountPercent}% OFF
+                      </span>
+                    )}
+                  </div>
                   <h3>{selectedItem.name}</h3>
                   <p className="menu-manager-sidebar-category">
                     {categories.find(category => category.id === selectedItem.categoryId)?.name ?? 'Uncategorized'}
                   </p>
                 </div>
-                <strong>₱{selectedItem.price.toFixed(2)}</strong>
+                <div className="text-right">
+                  <strong>₱{selectedItem.price.toFixed(2)}</strong>
+                  {selectedItem.originalPrice && selectedItem.originalPrice > selectedItem.price && (
+                    <div className="text-xs text-[#9BA4B4] line-through font-semibold">
+                      ₱{selectedItem.originalPrice.toFixed(2)}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             <div className="menu-manager-sidebar-summary">

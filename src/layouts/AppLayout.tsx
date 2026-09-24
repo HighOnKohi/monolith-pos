@@ -18,7 +18,7 @@ export default function AppLayout() {
     if (p.startsWith('service')) return 'Service Interface'
     if (p.startsWith('cashier')) return 'Cashier Interface'
     if (p.startsWith('reception')) return 'Receptionist Interface'
-    if (p.startsWith('tables')) return 'Table Manager'
+    if (p.startsWith('tables')) return 'Layout Manager'
     if (p.startsWith('menu')) return 'Menu Manager'
     if (p.startsWith('analytics')) return 'Analytics'
     if (p.startsWith('events')) return 'Events'

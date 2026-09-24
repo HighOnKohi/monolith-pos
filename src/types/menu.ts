@@ -16,6 +16,8 @@ export interface MenuItem {
   code: string
   price: number
   originalPrice?: number
+  discountPercent?: number
+  discountAmount?: number
   /** category ID — matches Category.id */
   categoryId: string
   presetId?: number

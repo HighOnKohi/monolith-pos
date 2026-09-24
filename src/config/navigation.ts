@@ -42,7 +42,14 @@ export interface NavSection {
 export const navigation: NavSection[] = [
   {
     section: 'Front Ops',
-    items: [],
+    items: [
+      {
+        title: 'Receptionist Interface',
+        description: 'Floor view, seating, and table status.',
+        path: '/reception',
+        icon: ConciergeBell,
+      },
+    ],
     groups: [
       {
         title: 'Kitchen Interfaces',
@@ -60,20 +67,13 @@ export const navigation: NavSection[] = [
           { title: 'Cashier Interface', description: 'Cashier tools.', path: '/cashier', icon: Receipt },
         ],
       },
-      {
-        title: 'Floor Interfaces',
-        icon: ConciergeBell,
-        children: [
-          { title: 'Receptionist Interface', description: 'Floor view, seating, and table status.', path: '/reception', icon: ConciergeBell },
-        ],
-      },
     ],
   },
   {
     section: 'Management',
     items: [
       {
-        title: 'Table Manager',
+        title: 'Layout Manager',
         description: 'Restaurant layout, tables & QR code generator.',
         path: '/tables',
         icon: LayoutGrid,
