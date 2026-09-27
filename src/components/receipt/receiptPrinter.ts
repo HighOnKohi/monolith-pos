@@ -83,7 +83,7 @@ function buildReceiptHtml(receipt: ReceiptSnapshot): string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Receipt - Table ${esc(receipt.tableNum)}</title>
+  <title>Receipt - ${receipt.isMerged && receipt.mergeGroupId != null ? `Group ${esc(receipt.mergeGroupId)}` : `Table ${esc(receipt.tableNum)}`}</title>
   <style>
     @page {
       size: 80mm auto;
@@ -265,8 +265,8 @@ function buildReceiptHtml(receipt: ReceiptSnapshot): string {
 
   <!-- Transaction Metadata -->
   <div class="meta-row">
-    <span class="meta-label">Table:</span>
-    <span class="meta-value">#${esc(receipt.tableNum)}</span>
+    <span class="meta-label">${receipt.isMerged ? 'Group:' : 'Table:'}</span>
+    <span class="meta-value">${receipt.isMerged && receipt.mergeGroupId != null ? `Group ${esc(receipt.mergeGroupId)}` : `#${esc(receipt.tableNum)}`}</span>
   </div>
   <div class="meta-row">
     <span class="meta-label">Receipt #:</span>

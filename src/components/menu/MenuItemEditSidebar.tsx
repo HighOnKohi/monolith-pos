@@ -39,6 +39,10 @@ export function MenuItemEditSidebar({
   const [imageUrl, setImageUrl] = useState('')
   const [isAvailable, setIsAvailable] = useState(true)
   const [dietaryType, setDietaryType] = useState<DietaryType>('non-veg')
+  const [hasDiscount, setHasDiscount] = useState(false)
+  const [originalPrice, setOriginalPrice] = useState('')
+  const [discountPercent, setDiscountPercent] = useState('')
+  const [isBestSeller, setIsBestSeller] = useState(false)
 
   // ── UI States ──
   const [isSaving, setIsSaving] = useState(false)
@@ -59,6 +63,14 @@ export function MenuItemEditSidebar({
       setImageUrl(item.imageUrl || '')
       setIsAvailable(item.isAvailable)
       setDietaryType(item.dietaryType || 'non-veg')
+      const hasItemDiscount = Boolean(
+        (item.discountPercent && item.discountPercent > 0) ||
+        (item.originalPrice && item.originalPrice > (item.price ?? 0))
+      )
+      setHasDiscount(hasItemDiscount)
+      setOriginalPrice(item.originalPrice ? String(item.originalPrice) : '')
+      setDiscountPercent(item.discountPercent ? String(item.discountPercent) : '')
+      setIsBestSeller(Boolean(item.isBestSeller))
       setErrorMessage(null)
       setValidationErrors({})
     }
@@ -81,6 +93,32 @@ export function MenuItemEditSidebar({
   const selectableCategories = categories.filter(
     (cat) => cat.id !== 'all' && cat.id !== 'best_sellers'
   )
+
+  function handleDiscountPercentChange(pctStr: string) {
+    const clean = pctStr.replace(/[^\d.]/g, '')
+    const pct = parseFloat(clean)
+    const orig = parseFloat(originalPrice.replace(/,/g, ''))
+    if (!isNaN(pct) && pct >= 0 && pct <= 100 && !isNaN(orig) && orig > 0) {
+      const discounted = orig * (1 - pct / 100)
+      setDiscountPercent(clean)
+      setPrice(discounted.toFixed(2))
+    } else {
+      setDiscountPercent(clean)
+    }
+  }
+
+  function handleOriginalPriceChange(origStr: string) {
+    const clean = origStr.replace(/[^\d.]/g, '')
+    const orig = parseFloat(clean)
+    const pct = parseFloat(discountPercent)
+    if (!isNaN(pct) && pct >= 0 && pct <= 100 && !isNaN(orig) && orig > 0) {
+      const discounted = orig * (1 - pct / 100)
+      setOriginalPrice(clean)
+      setPrice(discounted.toFixed(2))
+    } else {
+      setOriginalPrice(clean)
+    }
+  }
 
   // ── Form Validation ──
   function validateForm(): boolean {
@@ -118,10 +156,27 @@ export function MenuItemEditSidebar({
 
     try {
       const numPrice = parseFloat(price)
+      let finalOrigPrice: number | undefined = undefined
+      let finalDiscountPct: number | undefined = undefined
+
+      if (hasDiscount) {
+        const orig = parseFloat(originalPrice.replace(/,/g, ''))
+        const pct = parseFloat(discountPercent)
+        if (Number.isFinite(orig) && orig > numPrice) {
+          finalOrigPrice = orig
+          finalDiscountPct = Number.isFinite(pct) && pct > 0 ? pct : Math.round(((orig - numPrice) / orig) * 100)
+        } else if (Number.isFinite(pct) && pct > 0 && pct < 100) {
+          finalDiscountPct = pct
+          finalOrigPrice = Number((numPrice / (1 - pct / 100)).toFixed(2))
+        }
+      }
 
       await updateMenuItem(item.id, {
         name: name.trim(),
         price: numPrice,
+        originalPrice: finalOrigPrice,
+        discountPercent: finalDiscountPct,
+        isBestSeller,
         categoryId,
         description: description.trim(),
         imageUrl: imageUrl.trim() || undefined,
@@ -296,6 +351,73 @@ export function MenuItemEditSidebar({
               />
               {validationErrors.price && (
                 <span className="menu-edit-error-text">{validationErrors.price}</span>
+              )}
+            </div>
+          </div>
+
+          {/* Promotions & Badges */}
+          <div className="rounded-xl border border-[#9BA4B4]/20 bg-[#F8FAFC] p-3.5 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#14274E]">Promotions & Tags</span>
+              <label className="flex items-center gap-2 text-xs font-semibold text-[#14274E] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isBestSeller}
+                  onChange={(e) => setIsBestSeller(e.target.checked)}
+                  disabled={isSaving}
+                  className="h-4 w-4 rounded text-amber-500 focus:ring-amber-400"
+                />
+                <span className="inline-flex items-center gap-1">
+                  <span className="text-amber-500 font-bold">★</span> Best Seller
+                </span>
+              </label>
+            </div>
+
+            {/* Discount Section */}
+            <div className="flex flex-col gap-2 pt-2 border-t border-[#9BA4B4]/15">
+              <label className="flex items-center gap-2 text-xs font-semibold text-[#14274E] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={hasDiscount}
+                  onChange={(e) => setHasDiscount(e.target.checked)}
+                  disabled={isSaving}
+                  className="h-4 w-4 rounded text-[#14274E] focus:ring-[#14274E]"
+                />
+                <span>Apply Discount Tag</span>
+              </label>
+
+              {hasDiscount && (
+                <div className="grid grid-cols-2 gap-3 pt-1.5">
+                  <div>
+                    <label className="text-[11px] font-semibold text-[#394867] block mb-1">
+                      Original Price (₱)
+                    </label>
+                    <input
+                      type="text"
+                      value={originalPrice}
+                      onChange={(e) => handleOriginalPriceChange(e.target.value)}
+                      placeholder="e.g. 250.00"
+                      className="menu-edit-input text-xs"
+                      disabled={isSaving}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-[#394867] block mb-1">
+                      Discount (%)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="99"
+                      value={discountPercent}
+                      onChange={(e) => handleDiscountPercentChange(e.target.value)}
+                      placeholder="e.g. 20"
+                      className="menu-edit-input text-xs"
+                      disabled={isSaving}
+                    />
+                  </div>
+                </div>
               )}
             </div>
           </div>

@@ -14,6 +14,7 @@ import {
   Check,
   RefreshCw,
   Tag,
+  Sparkles,
 } from 'lucide-react'
 import type { TableLayoutPreset } from '@/services/tableLayoutService'
 
@@ -24,6 +25,7 @@ interface TableManagerHeaderProps {
   activePresetId: number | null
   isEventActive?: boolean
   activeEventTitle?: string
+  isBusinessDayOpen?: boolean
   totalCapacity?: number
   maxVenueCapacity?: number
   isDirty?: boolean
@@ -31,6 +33,7 @@ interface TableManagerHeaderProps {
   onRenamePreset: (presetId: number, currentName: string) => void
   onDeletePreset: (presetId: number) => void
   onOpenNewPresetModal: () => void
+  onOpenAutoAllocate?: () => void
   isEditMode?: boolean
   isSaving?: boolean
   isQrPrintMode?: boolean
@@ -51,6 +54,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   activePresetId,
   isEventActive = false,
   activeEventTitle,
+  isBusinessDayOpen = false,
   totalCapacity = 0,
   maxVenueCapacity = 50,
   isDirty = false,
@@ -58,6 +62,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   onRenamePreset,
   onDeletePreset,
   onOpenNewPresetModal,
+  onOpenAutoAllocate,
   isEditMode = true,
   isSaving = false,
   isQrPrintMode = false,
@@ -103,32 +108,42 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
           <button
             type="button"
             onClick={() => {
-              if (isEventActive || isQrPrintMode) return
+              if (isQrPrintMode) return
               setIsDropdownOpen((prev) => !prev)
             }}
             aria-expanded={isDropdownOpen}
-            title={isEventActive ? `Locked: Event "${activeEventTitle ?? 'Active Event'}" is active` : undefined}
+            title={
+              isEventActive
+                ? `Locked: Event "${activeEventTitle ?? 'Active Event'}" is active`
+                : isBusinessDayOpen
+                ? 'Preset switching locked while Business Day is active'
+                : undefined
+            }
             className={`w-full min-w-[220px] px-3.5 py-2.5 bg-white border text-xs font-bold text-[#14274E] flex items-center justify-between gap-2 shadow-xs transition-colors ${
-              isEventActive || isQrPrintMode
-                ? 'opacity-85 border-amber-300 cursor-not-allowed'
+              isEventActive || isBusinessDayOpen || isQrPrintMode
+                ? 'opacity-85 border-amber-300 cursor-pointer'
                 : 'hover:bg-slate-50 border-slate-300 cursor-pointer'
             } ${
               isDropdownOpen ? 'rounded-t-xl rounded-b-none border-b-0 shadow-none' : 'rounded-xl'
             }`}
           >
             <div className="flex items-center gap-1.5 truncate">
-              {isEventActive && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+              {(isEventActive || isBusinessDayOpen) && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
               <span className="text-slate-400 font-semibold">Preset:</span>
               <span className="font-black text-[#14274E] truncate">
                 {activePreset?.PRESET_NAME ?? 'Select Preset'}
               </span>
-              {isEventActive && (
+              {isEventActive ? (
                 <span className="ml-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
                   Event Active
                 </span>
-              )}
+              ) : isBusinessDayOpen ? (
+                <span className="ml-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                  Day Active
+                </span>
+              ) : null}
             </div>
-            {!isEventActive && !isQrPrintMode && (
+            {!isQrPrintMode && (
               <ChevronDown
                 className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${
                   isDropdownOpen ? 'rotate-180' : ''
@@ -147,7 +162,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
                   <div
                     key={preset.LAYOUT_PRESET_ID}
                     onClick={() => {
-                      if (isEventActive || isQrPrintMode) return
+                      if (isQrPrintMode) return
                       onSelectPreset(preset.LAYOUT_PRESET_ID)
                       setIsDropdownOpen(false)
                     }}
@@ -165,7 +180,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
                     </span>
 
                     {/* Hover Action Buttons (Rename & Delete) */}
-                    {!isEventActive && !isQrPrintMode && (
+                    {!isEventActive && !isBusinessDayOpen && !isQrPrintMode && (
                       <div
                         className={`flex items-center gap-1 transition-opacity ${
                           isSelected ? 'opacity-90' : 'opacity-0 group-hover:opacity-100'
@@ -213,7 +228,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
             </div>
 
             {/* Dropdown Footer: Create New Preset */}
-            {!isEventActive && !isQrPrintMode && (
+            {!isEventActive && !isBusinessDayOpen && !isQrPrintMode && (
               <button
                 type="button"
                 onClick={() => {
@@ -409,6 +424,18 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {onOpenAutoAllocate && activeTab === 'layout' && (
+            <button
+              type="button"
+              onClick={onOpenAutoAllocate}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-black transition-all shadow-2xs cursor-pointer"
+              title="Automatically distribute and place tables to fill venue layout"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              <span>Auto Allocate</span>
+            </button>
+          )}
+
           {onOpenRemoveAll && (
             <button
               type="button"

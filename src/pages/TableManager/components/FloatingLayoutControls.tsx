@@ -1,16 +1,18 @@
 import React, { useState, useRef, useEffect, memo } from 'react'
-import { Plus, ChevronDown } from 'lucide-react'
+import { Plus, ChevronDown, Sparkles } from 'lucide-react'
 import { TABLE_TYPES, type TableType } from '@/services/tableLayoutService'
 import { TableShapeIcon } from './TableVisual'
 
 interface FloatingLayoutControlsProps {
   onAddTable: (type: TableType) => void
+  onOpenAutoAllocate?: () => void
   totalCapacity?: number
   maxVenueCapacity?: number
 }
 
 export const FloatingLayoutControls: React.FC<FloatingLayoutControlsProps> = memo(({
   onAddTable,
+  onOpenAutoAllocate,
   totalCapacity = 0,
   maxVenueCapacity = 50,
 }) => {
@@ -38,28 +40,43 @@ export const FloatingLayoutControls: React.FC<FloatingLayoutControlsProps> = mem
   const tableTypeOptions: TableType[] = [1, 2, 3, 4, 5]
 
   return (
-    <div className="relative select-none" ref={dropdownRef}>
-      <div className={`relative inline-flex items-stretch rounded-xl shadow-xs border transition-opacity ${
-        isVenueFull ? 'border-slate-400/50 bg-slate-700 text-slate-300 opacity-60' : 'border-slate-700/50 bg-[#14274E] text-white'
-      }`}>
-        {/* Main Action Button */}
+    <div className="flex items-center gap-2 select-none">
+      {/* Auto Allocate Button */}
+      {onOpenAutoAllocate && (
         <button
           type="button"
-          disabled={isVenueFull}
-          onClick={() => onAddTable(selectedType)}
-          className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs font-black whitespace-nowrap rounded-l-xl transition-colors ${
-            isVenueFull ? 'cursor-not-allowed opacity-75' : 'hover:bg-[#0f1f40] cursor-pointer active:scale-98'
-          }`}
-          title={isVenueFull ? `Maximum venue capacity (${maxVenueCapacity} seats) reached` : 'Add Table'}
+          onClick={onOpenAutoAllocate}
+          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-black rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/30 shadow-xs hover:border-[#E9C46A]/60 hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+          title="Automatically distribute tables to fit venue seating capacity"
         >
-          <div className="flex items-center gap-1.5 text-[#E9C46A]">
-            <Plus className="w-3.5 h-3.5 stroke-[3]" />
-            <TableShapeIcon tableType={selectedType} size={15} />
-          </div>
-          <span className="whitespace-nowrap font-black">
-            {isVenueFull ? `Venue Full (${totalCapacity}/${maxVenueCapacity})` : 'Add Table'}
-          </span>
+          <Sparkles className="w-3.5 h-3.5 text-[#E9C46A]" />
+          <span>Auto Allocate</span>
         </button>
+      )}
+
+      {/* Add Table Controls */}
+      <div className="relative" ref={dropdownRef}>
+        <div className={`relative inline-flex items-stretch rounded-xl shadow-xs border transition-opacity ${
+          isVenueFull ? 'border-slate-400/50 bg-slate-700 text-slate-300 opacity-60' : 'border-slate-700/50 bg-[#14274E] text-white'
+        }`}>
+          {/* Main Action Button */}
+          <button
+            type="button"
+            disabled={isVenueFull}
+            onClick={() => onAddTable(selectedType)}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs font-black whitespace-nowrap rounded-l-xl transition-colors ${
+              isVenueFull ? 'cursor-not-allowed opacity-75' : 'hover:bg-[#0f1f40] cursor-pointer active:scale-98'
+            }`}
+            title={isVenueFull ? `Maximum venue capacity (${maxVenueCapacity} seats) reached` : 'Add Table'}
+          >
+            <div className="flex items-center gap-1.5 text-[#E9C46A]">
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              <TableShapeIcon tableType={selectedType} size={15} />
+            </div>
+            <span className="whitespace-nowrap font-black">
+              {isVenueFull ? `Venue Full (${totalCapacity}/${maxVenueCapacity})` : 'Add Table'}
+            </span>
+          </button>
 
         {/* Dropdown Chevron Trigger */}
         <button
@@ -123,7 +140,8 @@ export const FloatingLayoutControls: React.FC<FloatingLayoutControlsProps> = mem
         </div>
       )}
     </div>
-  )
+  </div>
+)
 })
 
 FloatingLayoutControls.displayName = 'FloatingLayoutControls'

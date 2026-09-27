@@ -1,0 +1,92 @@
+/* Receptionist Interface Page Styles — Follows standard POS interface layout with gaps & rounded cards */
+.staff-shell main > .staff-page.receptionist-interface-page,
+.receptionist-interface-page {
+  height: 100%;
+  width: 100%;
+  padding: 1rem !important;
+  overflow: hidden;
+  background: var(--interface-background, #dae2ef);
+  color: #14274e;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  box-sizing: border-box;
+}
+
+.receptionist-interface-layout {
+  display: flex;
+  gap: 1rem;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.inner-receptionist-container {
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow: hidden;
+}
+
+.receptionist-top-header {
+  flex-shrink: 0;
+}
+
+.receptionist-interface-page .layout-container {
+  flex: 1 1 0%;
+  min-height: 0;
+  border-radius: 1.5rem;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 8px 24px rgba(20, 39, 78, 0.08);
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.receptionist-sidebar {
+  flex: 0 0 340px;
+  width: 340px;
+  min-width: 320px;
+  max-width: 360px;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 1.5rem;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 8px 24px rgba(20, 39, 78, 0.1);
+}
+
+@media (max-width: 1024px) {
+  .receptionist-sidebar {
+    flex: 0 0 320px;
+    width: 320px;
+    min-width: 300px;
+  }
+}
+
+/* Custom scrollbars */
+.receptionist-interface-page ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.receptionist-interface-page ::-webkit-scrollbar-track {
+  background: rgba(20, 39, 78, 0.04);
+}
+
+.receptionist-interface-page ::-webkit-scrollbar-thumb {
+  background: rgba(20, 39, 78, 0.2);
+  border-radius: 9999px;
+}
+
+.receptionist-interface-page ::-webkit-scrollbar-thumb:hover {
+  background: rgba(20, 39, 78, 0.35);
+}

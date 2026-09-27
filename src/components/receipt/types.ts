@@ -28,6 +28,12 @@ export interface ReceiptSnapshot {
   /** Table number shown on receipt (e.g. 5) */
   tableNum: number | string
   tableId: number
+  /** Whether this bill is under a merged table group */
+  isMerged?: boolean
+  /** Merge Group ID (canonical anchor table number or group ID) */
+  mergeGroupId?: number | string | null
+  /** Formatted title for display, e.g. "Group 4" or "Table #5" */
+  displayName?: string
   /** Formatted date: "September 6, 2026" */
   transactionDate: string
   /** Formatted time: "12:45:31 PM" */

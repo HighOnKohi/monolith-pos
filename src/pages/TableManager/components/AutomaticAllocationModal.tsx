@@ -12,7 +12,7 @@ import {
   fetchAllTypeConfigs,
   type TableTypeConfig,
 } from '@/services/tableTypeConfigService'
-import { type TablePosition, detectHardCollision } from '@/utils/floorPlan/collision'
+import { type TablePosition, detectCollision, detectHardCollision } from '@/utils/floorPlan/collision'
 import { TableShapeIcon } from './TableVisual'
 import { Sparkles, X, AlertTriangle, Layers } from 'lucide-react'
 
@@ -45,7 +45,7 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
   onClose,
   onApply,
 }) => {
-  const [targetPax, setTargetPax] = useState(Math.min(50, maxVenuePax))
+  const [targetPax, setTargetPax] = useState(Math.max(1, Math.min(50, maxVenuePax || 50)))
   const [typeWeights, setTypeWeights] = useState<Record<TableType, number>>(DEFAULT_WEIGHTS)
   const [typeConfigs, setTypeConfigs] = useState<TableTypeConfig[]>([])
   const [isAllocating, setIsAllocating] = useState(false)
@@ -55,13 +55,16 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
   useEffect(() => {
     if (isOpen) {
       setPlacementNotice(null)
+      if (maxVenuePax && maxVenuePax > 0) {
+        setTargetPax(Math.min(50, maxVenuePax))
+      }
       void fetchAllTypeConfigs().then((configs) => {
         setTypeConfigs(configs)
       }).catch((err) => {
         console.warn('Notice loading type configs:', err)
       })
     }
-  }, [isOpen])
+  }, [isOpen, maxVenuePax])
 
   // Map each table type to its effective capacity, name, and max count
   const typeDetails = useMemo(() => {
@@ -235,11 +238,11 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
         let placedX = -1
         let placedY = -1
 
-        // 1. Primary pass: Scan grid with 1-cell spacing gap between tables
-        for (let y = 1; y <= gridHeight - height - 1; y += 2) {
-          for (let x = 1; x <= gridWidth - width - 1; x += 2) {
+        // 1. Primary pass: Spaced grid layout (with 1-cell aisle spacing around tables)
+        for (let y = 1; y <= gridHeight - height; y += (height + 1)) {
+          for (let x = 1; x <= gridWidth - width; x += (width + 1)) {
             const candidate: TablePosition = { tableId: tableNum, x, y, widthBlocks: width, heightBlocks: height }
-            if (!detectHardCollision(candidate, 1, existingPositions)) {
+            if (!detectCollision(candidate, 1, existingPositions, 1)) {
               placedX = x
               placedY = y
               break
@@ -248,7 +251,22 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
           if (placedX !== -1) break
         }
 
-        // 2. Fallback pass: Dense scan if spacing scan couldn't place
+        // 2. Secondary pass: Fine coordinate search with 1-cell spacing
+        if (placedX === -1) {
+          for (let y = 0; y <= gridHeight - height; y++) {
+            for (let x = 0; x <= gridWidth - width; x++) {
+              const candidate: TablePosition = { tableId: tableNum, x, y, widthBlocks: width, heightBlocks: height }
+              if (!detectCollision(candidate, 1, existingPositions, 1)) {
+                placedX = x
+                placedY = y
+                break
+              }
+            }
+            if (placedX !== -1) break
+          }
+        }
+
+        // 3. Fallback pass: Dense packing (no spacing, pure overlap prevention)
         if (placedX === -1) {
           for (let y = 0; y <= gridHeight - height; y++) {
             for (let x = 0; x <= gridWidth - width; x++) {
@@ -278,6 +296,11 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
           tableNum++
           placedCount++
         }
+      }
+
+      if (layoutTables.length === 0) {
+        setPlacementNotice('Could not place any tables. Please check grid dimensions and table type inventory.')
+        return
       }
 
       if (placedCount < placementQueue.length) {

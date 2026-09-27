@@ -22,6 +22,8 @@ export interface ReceiptBuildParams {
   activeBillRequest: BillRequest | null
   tableId: number
   tableNum: number | string
+  isMerged?: boolean
+  mergeGroupId?: number | string | null
 }
 
 /**
@@ -52,7 +54,20 @@ function formatReceiptTime(d: Date): string {
  * Call this BEFORE bill-out DB operations.
  */
 export function buildReceiptSnapshot(params: ReceiptBuildParams): ReceiptSnapshot {
-  const { tableOrders, discountType, customPercent, activeBillRequest, tableId, tableNum } = params
+  const {
+    tableOrders,
+    discountType,
+    customPercent,
+    activeBillRequest,
+    tableId,
+    tableNum,
+    isMerged = false,
+    mergeGroupId = null,
+  } = params
+
+  const displayName = isMerged && mergeGroupId != null
+    ? `Group ${mergeGroupId}`
+    : `Table #${tableNum}`
 
   // ── 1. Aggregate line items across all orders for this table ──
   const itemAggMap: Record<
@@ -124,6 +139,9 @@ export function buildReceiptSnapshot(params: ReceiptBuildParams): ReceiptSnapsho
     receiptId: `RCPT-${tableId}-${Date.now()}`,
     tableNum,
     tableId,
+    isMerged,
+    mergeGroupId,
+    displayName,
     transactionDate: formatReceiptDate(now),
     transactionTime: formatReceiptTime(now),
     paymentMethod,

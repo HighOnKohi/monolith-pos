@@ -18,11 +18,13 @@ interface PresetsManagerViewProps {
   activePresetId: number | null
   isEventActive?: boolean
   activeEventTitle?: string
+  isBusinessDayOpen?: boolean
   onSelectPreset: (presetId: number) => void
   onSetDefaultPreset: (presetId: number) => void
   onRenamePreset: (presetId: number, currentName: string) => void
   onDeletePreset: (presetId: number) => void
   onOpenNewPresetModal: () => void
+  onOpenAutoAllocate?: () => void
 }
 
 export const PresetsManagerView: React.FC<PresetsManagerViewProps> = ({
@@ -30,12 +32,16 @@ export const PresetsManagerView: React.FC<PresetsManagerViewProps> = ({
   activePresetId,
   isEventActive = false,
   activeEventTitle,
+  isBusinessDayOpen = false,
   onSelectPreset,
   onSetDefaultPreset,
   onRenamePreset,
   onDeletePreset,
   onOpenNewPresetModal,
+  onOpenAutoAllocate: _onOpenAutoAllocate,
 }) => {
+  const isLocked = isEventActive || isBusinessDayOpen
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
       {/* Header */}
@@ -50,8 +56,9 @@ export const PresetsManagerView: React.FC<PresetsManagerViewProps> = ({
         <button
           type="button"
           onClick={onOpenNewPresetModal}
-          disabled={isEventActive}
+          disabled={isLocked}
           className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#14274E] hover:bg-[#0f1f40] text-white text-xs font-black transition-all cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+          title={isBusinessDayOpen ? 'Cannot create presets while Business Day is active' : undefined}
         >
           <Plus className="w-3.5 h-3.5 text-[#E9C46A]" />
           <span>New Preset</span>
@@ -63,6 +70,15 @@ export const PresetsManagerView: React.FC<PresetsManagerViewProps> = ({
           <Lock className="w-4 h-4 text-amber-600 shrink-0" />
           <span>
             Layout changes and switching are locked while event &ldquo;{activeEventTitle}&rdquo; is active.
+          </span>
+        </div>
+      )}
+
+      {isBusinessDayOpen && !isEventActive && (
+        <div className="flex items-center gap-2.5 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs font-bold text-amber-800">
+          <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+          <span>
+            Layout preset switching and modifications are locked while Business Day is active. Please end the business day in Cashier to manage presets.
           </span>
         </div>
       )}
@@ -139,8 +155,8 @@ export const PresetsManagerView: React.FC<PresetsManagerViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onSelectPreset(preset.LAYOUT_PRESET_ID)}
-                      disabled={isEventActive}
-                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer disabled:opacity-40"
+                      disabled={isLocked}
+                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       Load Layout →
                     </button>
@@ -155,7 +171,8 @@ export const PresetsManagerView: React.FC<PresetsManagerViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onSetDefaultPreset(preset.LAYOUT_PRESET_ID)}
-                      className="text-[11px] font-bold text-slate-500 hover:text-[#14274E] transition-colors cursor-pointer"
+                      disabled={isLocked}
+                      className="text-[11px] font-bold text-slate-500 hover:text-[#14274E] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       Set as Default
                     </button>
@@ -177,8 +194,9 @@ export const PresetsManagerView: React.FC<PresetsManagerViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onDeletePreset(preset.LAYOUT_PRESET_ID)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                      title="Delete preset"
+                      disabled={isLocked}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={isBusinessDayOpen ? 'Cannot delete preset while Business Day is active' : 'Delete preset'}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>

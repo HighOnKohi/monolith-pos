@@ -15,13 +15,15 @@ import {
   Package,
   Layers,
 } from 'lucide-react'
-import type { ItemSalesStat } from '@/services/analyticsService'
+import type { ItemSalesStat, DayOfWeekItemStats } from '@/services/analyticsService'
+import { Calendar } from 'lucide-react'
 
 interface TopItemsChartProps {
   items?: ItemSalesStat[]
   topItems?: ItemSalesStat[]
   leastItems?: ItemSalesStat[]
   allItems?: ItemSalesStat[]
+  dayOfWeekItemStats?: Record<string, DayOfWeekItemStats>
   totalRevenue?: number
   totalItemsSold?: number
 }
@@ -35,8 +37,10 @@ export function TopItemsChart({
   topItems,
   leastItems,
   allItems,
+  dayOfWeekItemStats,
 }: TopItemsChartProps) {
   const [activeTab, setActiveTab] = useState<TabType>('top')
+  const [selectedDay, setSelectedDay] = useState<string>('all')
   const [isExpanded, setIsExpanded] = useState(false)
   const [expandedRowIds, setExpandedRowIds] = useState<Set<number>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
@@ -46,16 +50,29 @@ export function TopItemsChart({
   const [modalSortCol, setModalSortCol] = useState<SortColumn>('qty')
   const [modalSortDir, setModalSortDir] = useState<SortDirection>('desc')
 
-  // Resolve datasets with fallbacks
-  const topList = useMemo(() => topItems ?? items ?? [], [topItems, items])
+  // Resolve datasets with day-of-week filter and fallbacks
+  const topList = useMemo(() => {
+    if (selectedDay !== 'all' && dayOfWeekItemStats?.[selectedDay]) {
+      return dayOfWeekItemStats[selectedDay].topItems
+    }
+    return topItems ?? items ?? []
+  }, [selectedDay, dayOfWeekItemStats, topItems, items])
+
   const leastList = useMemo(() => {
+    if (selectedDay !== 'all' && dayOfWeekItemStats?.[selectedDay]) {
+      return dayOfWeekItemStats[selectedDay].leastItems
+    }
     if (leastItems && leastItems.length > 0) return leastItems
     return [...topList].reverse()
-  }, [leastItems, topList])
+  }, [selectedDay, dayOfWeekItemStats, leastItems, topList])
+
   const fullList = useMemo(() => {
+    if (selectedDay !== 'all' && dayOfWeekItemStats?.[selectedDay]) {
+      return dayOfWeekItemStats[selectedDay].allItems
+    }
     if (allItems && allItems.length > 0) return allItems
     return topList
-  }, [allItems, topList])
+  }, [selectedDay, dayOfWeekItemStats, allItems, topList])
 
   // Current active dataset based on tab
   const currentDataset = useMemo(() => {
@@ -263,8 +280,29 @@ export function TopItemsChart({
           </button>
         </div>
 
-        {/* Right side controls: Search & Full Table Modal button */}
-        <div className="flex items-center gap-2 justify-end">
+        {/* Right side controls: Day-of-Week filter, Search & Full Table Modal button */}
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          {/* Day of Week Selector */}
+          <div className="relative inline-flex items-center">
+            <select
+              value={selectedDay}
+              onChange={(e) => setSelectedDay(e.target.value)}
+              className="appearance-none pl-7 pr-7 py-1 text-xs font-bold text-[#14274E] bg-slate-100 hover:bg-slate-200/80 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-[#14274E] transition-all cursor-pointer"
+              title="Filter by Day of the Week"
+            >
+              <option value="all">All Days</option>
+              <option value="Monday">Mondays</option>
+              <option value="Tuesday">Tuesdays</option>
+              <option value="Wednesday">Wednesdays</option>
+              <option value="Thursday">Thursdays</option>
+              <option value="Friday">Fridays</option>
+              <option value="Saturday">Saturdays</option>
+              <option value="Sunday">Sundays</option>
+            </select>
+            <Calendar className="w-3.5 h-3.5 text-slate-500 absolute left-2 pointer-events-none" />
+            <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 pointer-events-none" />
+          </div>
+
           {/* Quick Search */}
           <div className="relative flex-1 sm:w-36">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />

@@ -32,17 +32,26 @@ export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecre
         isSoldOut ? 'opacity-70 grayscale-[30%]' : '',
       ].join(' ')}
     >
-      {/* Badge */}
-      {(item.badge || item.isBestSeller) && !isSoldOut && (
-        <div className="absolute top-2.5 left-2.5 z-10 animate-fade-in">
-          <span className={[
-            'text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 shadow-xs transition-transform hover:scale-105',
-            item.isBestSeller
-              ? 'bg-amber-500 text-white shadow-amber-500/20'
-              : badgeStyles[item.badge?.type || 'popular'],
-          ].join(' ')}>
-            {item.isBestSeller ? '★ Best Seller' : item.badge?.label}
-          </span>
+      {/* Promo Badges */}
+      {!isSoldOut && (item.isBestSeller || (item.discountPercent && item.discountPercent > 0) || item.badge) && (
+        <div className="absolute top-2.5 left-2.5 right-2.5 z-10 flex flex-wrap items-center gap-1.5 pointer-events-none animate-fade-in">
+          {item.isBestSeller && (
+            <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 bg-amber-500 text-white shadow-xs shadow-amber-500/20">
+              ★ Best Seller
+            </span>
+          )}
+          {item.discountPercent && item.discountPercent > 0 ? (
+            <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 bg-[#E9C46A] text-[#14274E] shadow-xs">
+              {item.discountPercent}% OFF
+            </span>
+          ) : !item.isBestSeller && item.badge ? (
+            <span className={[
+              'text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 shadow-xs',
+              badgeStyles[item.badge.type || 'popular'],
+            ].join(' ')}>
+              {item.badge.label}
+            </span>
+          ) : null}
         </div>
       )}
 

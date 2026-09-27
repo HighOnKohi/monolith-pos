@@ -53,6 +53,8 @@ export default function AnalyticsPage() {
   const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
   const [activeKpiMetric, setActiveKpiMetric] = useState<KpiMetricType | null>(null)
   const [activeCustomerInsightTab, setActiveCustomerInsightTab] = useState<CustomerInsightTab | null>(null)
+  const [diningViewMode, setDiningViewMode] = useState<'timeline' | 'weekly'>('timeline')
+  const [revenueViewMode, setRevenueViewMode] = useState<'timeline' | 'weekly'>('timeline')
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMsg({ text, type })
@@ -451,18 +453,46 @@ export default function AnalyticsPage() {
 
             {/* Customer Dining (Seated Pax) & Item Order Count Unified Graph */}
             <div className="mt-5 pt-4 border-t border-slate-100">
-              <div className="mb-2">
-                <h3 className="text-xs font-black text-[#14274E] uppercase tracking-wider">
-                  Customer Dining (Seated Pax) vs. Item Order Count
-                </h3>
-                <p className="text-[11px] text-slate-400 font-medium">
-                  {dateRange.preset === 'today' || dateRange.preset === 'yesterday'
-                    ? 'Hourly comparison of seated guest count (pax) against total items ordered'
-                    : 'Daily comparison of seated guest count (pax) against total items ordered'}
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                <div>
+                  <h3 className="text-xs font-black text-[#14274E] uppercase tracking-wider">
+                    Customer Dining (Seated Pax) vs. Item Order Count
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    {diningViewMode === 'weekly'
+                      ? 'Monday to Sunday aggregate summary across the selected range'
+                      : dateRange.preset === 'today' || dateRange.preset === 'yesterday'
+                        ? 'Hourly comparison of seated guest count (pax) against total items ordered'
+                        : 'Daily comparison of seated guest count (pax) against total items ordered'}
+                  </p>
+                </div>
+
+                <div className="inline-flex items-center p-0.5 rounded-lg bg-slate-100 text-[11px] font-bold text-slate-600 no-print self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setDiningViewMode('timeline')}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      diningViewMode === 'timeline' ? 'bg-white text-[#14274E] shadow-xs' : 'hover:text-slate-900'
+                    }`}
+                  >
+                    Timeline
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiningViewMode('weekly')}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      diningViewMode === 'weekly' ? 'bg-white text-[#14274E] shadow-xs' : 'hover:text-slate-900'
+                    }`}
+                  >
+                    Weekly Summary
+                  </button>
+                </div>
               </div>
 
-              <CustomerDiningItemChart data={summary.timeSeries} height={250} />
+              <CustomerDiningItemChart
+                data={diningViewMode === 'weekly' ? summary.dayOfWeekSeries : summary.timeSeries}
+                height={250}
+              />
             </div>
           </div>
 
@@ -475,18 +505,45 @@ export default function AnalyticsPage() {
                   <h2 className="text-sm font-black text-[#14274E] uppercase tracking-wider">
                     Revenue Over Time
                   </h2>
-                  <span className="text-xs font-black text-[#14274E]">
-                    ₱{summary.revenue.toLocaleString('en-PH', { minimumFractionDigits: 0 })}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <div className="inline-flex items-center p-0.5 rounded-lg bg-slate-100 text-[11px] font-bold text-slate-600 no-print">
+                      <button
+                        type="button"
+                        onClick={() => setRevenueViewMode('timeline')}
+                        className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                          revenueViewMode === 'timeline' ? 'bg-white text-[#14274E] shadow-xs' : 'hover:text-slate-900'
+                        }`}
+                      >
+                        Timeline
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRevenueViewMode('weekly')}
+                        className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                          revenueViewMode === 'weekly' ? 'bg-white text-[#14274E] shadow-xs' : 'hover:text-slate-900'
+                        }`}
+                      >
+                        Weekly Summary
+                      </button>
+                    </div>
+                    <span className="text-xs font-black text-[#14274E]">
+                      ₱{summary.revenue.toLocaleString('en-PH', { minimumFractionDigits: 0 })}
+                    </span>
+                  </div>
                 </div>
                 <p className="text-xs text-slate-400 font-medium mb-3">
-                  {dateRange.preset === 'today' || dateRange.preset === 'yesterday'
-                    ? 'Hourly revenue aggregation'
-                    : 'Daily revenue aggregation'}
+                  {revenueViewMode === 'weekly'
+                    ? 'Monday to Sunday aggregate revenue across the selected range'
+                    : dateRange.preset === 'today' || dateRange.preset === 'yesterday'
+                      ? 'Hourly revenue aggregation'
+                      : 'Daily revenue aggregation'}
                 </p>
               </div>
 
-              <AreaChart data={summary.timeSeries} height={220} />
+              <AreaChart
+                data={revenueViewMode === 'weekly' ? summary.dayOfWeekSeries : summary.timeSeries}
+                height={220}
+              />
             </div>
 
             {/* Order Volume */}
@@ -501,11 +558,16 @@ export default function AnalyticsPage() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 font-medium mb-3">
-                  Completed order volume trend
+                  {revenueViewMode === 'weekly'
+                    ? 'Monday to Sunday completed orders breakdown'
+                    : 'Completed order volume trend'}
                 </p>
               </div>
 
-              <BarChart data={summary.timeSeries} height={220} />
+              <BarChart
+                data={revenueViewMode === 'weekly' ? summary.dayOfWeekSeries : summary.timeSeries}
+                height={220}
+              />
             </div>
           </div>
 
@@ -693,6 +755,7 @@ export default function AnalyticsPage() {
                 topItems={summary.topItems}
                 leastItems={summary.leastItems}
                 allItems={summary.allItems}
+                dayOfWeekItemStats={summary.dayOfWeekItemStats}
                 totalRevenue={summary.revenue}
                 totalItemsSold={summary.itemsSold}
               />

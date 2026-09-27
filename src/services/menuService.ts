@@ -99,6 +99,40 @@ export async function deleteMenuPreset(presetId: number): Promise<void> {
   if (error) throw error
 }
 
+export interface MenuItemMetadata {
+  originalPrice?: number
+  discountPercent?: number
+  discountAmount?: number
+  isBestSeller?: boolean
+}
+
+export function parseItemDescription(rawDesc?: string | null): { description: string; meta: MenuItemMetadata } {
+  if (!rawDesc) return { description: '', meta: {} }
+  const match = rawDesc.match(/<!--META:(.*?)-->/)
+  if (match) {
+    try {
+      const meta = JSON.parse(match[1]) as MenuItemMetadata
+      const cleanDesc = rawDesc.replace(/<!--META:.*?-->/, '').trim()
+      return { description: cleanDesc, meta }
+    } catch {
+      // ignore JSON parse error
+    }
+  }
+  return { description: rawDesc.trim(), meta: {} }
+}
+
+export function formatItemDescription(desc?: string | null, meta?: MenuItemMetadata): string {
+  const clean = (desc || '').replace(/<!--META:.*?-->/, '').trim()
+  if (!meta) return clean
+  const hasMeta =
+    meta.originalPrice != null ||
+    meta.discountPercent != null ||
+    meta.discountAmount != null ||
+    meta.isBestSeller != null
+  if (!hasMeta) return clean
+  return `${clean} <!--META:${JSON.stringify(meta)}-->`.trim()
+}
+
 function mapDietaryType(value: unknown): MenuItem['dietaryType'] {
   return String(value).toUpperCase() === 'VEGETARIAN' || String(value).toLowerCase() === 'veg' ? 'veg' : 'non-veg'
 }
@@ -108,11 +142,27 @@ function toDatabaseDietaryType(value: string): 'VEGETARIAN' | 'NON-VEGETARIAN' {
 }
 
 function mapItem(row: Record<string, unknown>): MenuItem {
+  const { description, meta } = parseItemDescription(row['ITEM_DESCRIPTION'] as string | undefined)
+  const isDirectBestSeller = row['IS_BEST_SELLER'] === true || meta.isBestSeller === true
+  const originalPrice = meta.originalPrice ?? (row['ORIGINAL_PRICE'] != null ? Number(row['ORIGINAL_PRICE']) : undefined)
+  const discountPercent = meta.discountPercent ?? (row['DISCOUNT_PERCENT'] != null ? Number(row['DISCOUNT_PERCENT']) : undefined)
+  const discountAmount = meta.discountAmount
+
+  let badge = undefined
+  if (discountPercent && discountPercent > 0) {
+    badge = { label: `${discountPercent}% OFF`, type: 'discount' as const }
+  } else if (isDirectBestSeller) {
+    badge = { label: 'Best Seller', type: 'best-seller' as const }
+  }
+
   return {
     id: String(row['ITEM_ID']),
     name: String(row['ITEM_NAME']),
     code: String(row['ITEM_ID']),
     price: Number(row['ITEM_PRICE']),
+    originalPrice,
+    discountPercent,
+    discountAmount,
     categoryId: String(row['CATEGORY_ID']),
     presetId: row['PRESET_ID'] == null ? undefined : Number(row['PRESET_ID']),
     dietaryType: mapDietaryType(row['MENU_ITEM_DIETARY']),
@@ -120,7 +170,9 @@ function mapItem(row: Record<string, unknown>): MenuItem {
     isAvailable: String(row['ITEM_STATUS'] ?? 'AVAILABLE') !== 'OUT_OF_STOCK',
     isSoldOut: String(row['ITEM_STATUS'] ?? 'AVAILABLE') === 'OUT_OF_STOCK',
     isItemGroup: row['IS_ITEM_GROUP'] === true,
-    description: (row['ITEM_DESCRIPTION'] as string | undefined) ?? undefined,
+    description: description || undefined,
+    isBestSeller: isDirectBestSeller,
+    badge,
   }
 }
 
@@ -198,13 +250,17 @@ export async function fetchMenuItems(): Promise<MenuItem[]> {
     }
 
     return rawItems.map((item) => {
-      const isBest = bestSellerIds?.has(item.id) ?? false
+      const isBest = item.isBestSeller || (bestSellerIds?.has(item.id) ?? false)
+      let badge = item.badge
+      if (item.discountPercent && item.discountPercent > 0) {
+        badge = { label: `${item.discountPercent}% OFF`, type: 'discount' }
+      } else if (isBest) {
+        badge = { label: 'Best Seller', type: 'best-seller' }
+      }
       return {
         ...item,
         isBestSeller: isBest,
-        badge: isBest
-          ? { label: 'Best Seller', type: 'best-seller' }
-          : item.badge,
+        badge,
       }
     })
   } catch (err) {
@@ -212,14 +268,18 @@ export async function fetchMenuItems(): Promise<MenuItem[]> {
     // Fallback: mark first item of each category
     const seenCategories = new Set<string>()
     return rawItems.map((item) => {
-      const isBest = !seenCategories.has(item.categoryId)
+      const isBest = item.isBestSeller || !seenCategories.has(item.categoryId)
       if (isBest) seenCategories.add(item.categoryId)
+      let badge = item.badge
+      if (item.discountPercent && item.discountPercent > 0) {
+        badge = { label: `${item.discountPercent}% OFF`, type: 'discount' }
+      } else if (isBest) {
+        badge = { label: 'Best Seller', type: 'best-seller' }
+      }
       return {
         ...item,
         isBestSeller: isBest,
-        badge: isBest
-          ? { label: 'Best Seller', type: 'best-seller' }
-          : item.badge,
+        badge,
       }
     })
   }
@@ -255,6 +315,10 @@ export async function fetchCategories(items: MenuItem[], presetId?: number): Pro
 export async function createMenuItem(payload: {
   name: string
   price: number
+  originalPrice?: number
+  discountPercent?: number
+  discountAmount?: number
+  isBestSeller?: boolean
   categoryId: string
   dietaryType: string
   imageUrl?: string
@@ -264,6 +328,14 @@ export async function createMenuItem(payload: {
   itemIds?: string[]
   presetId?: number
 }): Promise<MenuItem> {
+  const meta: MenuItemMetadata = {}
+  if (payload.originalPrice !== undefined) meta.originalPrice = payload.originalPrice
+  if (payload.discountPercent !== undefined) meta.discountPercent = payload.discountPercent
+  if (payload.discountAmount !== undefined) meta.discountAmount = payload.discountAmount
+  if (payload.isBestSeller !== undefined) meta.isBestSeller = payload.isBestSeller
+
+  const formattedDesc = formatItemDescription(payload.description, meta)
+
   const { data, error } = await supabase
     .schema('menu')
     .from('Menu_Items')
@@ -274,7 +346,7 @@ export async function createMenuItem(payload: {
       ITEM_STATUS: payload.isAvailable === false ? 'OUT_OF_STOCK' : 'AVAILABLE',
       MENU_ITEM_DIETARY: toDatabaseDietaryType(payload.dietaryType),
       ITEM_IMAGE_URL: payload.imageUrl ?? null,
-      ITEM_DESCRIPTION: payload.description ?? null,
+      ITEM_DESCRIPTION: formattedDesc || null,
       ORDER_LIMIT: payload.orderLimit ?? 0,
       IS_ITEM_GROUP: (payload.itemIds?.length ?? 0) > 0,
       PRESET_ID: payload.presetId ?? null,
@@ -296,6 +368,10 @@ export async function createMenuItem(payload: {
 export async function updateMenuItem(id: string, patch: {
   name?: string
   price?: number
+  originalPrice?: number
+  discountPercent?: number
+  discountAmount?: number
+  isBestSeller?: boolean
   categoryId?: string
   dietaryType?: string
   isAvailable?: boolean
@@ -309,11 +385,27 @@ export async function updateMenuItem(id: string, patch: {
   if (patch.price !== undefined) update['ITEM_PRICE'] = patch.price
   if (patch.categoryId !== undefined) update['CATEGORY_ID'] = Number(patch.categoryId)
   if (patch.imageUrl !== undefined) update['ITEM_IMAGE_URL'] = patch.imageUrl
-  if (patch.description !== undefined) update['ITEM_DESCRIPTION'] = patch.description
   if (patch.dietaryType !== undefined) update['MENU_ITEM_DIETARY'] = toDatabaseDietaryType(patch.dietaryType)
   if (patch.isAvailable !== undefined) update['ITEM_STATUS'] = patch.isAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK'
   if (patch.orderLimit !== undefined) update['ORDER_LIMIT'] = patch.orderLimit
   if (patch.itemIds !== undefined) update['IS_ITEM_GROUP'] = patch.itemIds.length > 0
+
+  if (
+    patch.description !== undefined ||
+    patch.originalPrice !== undefined ||
+    patch.discountPercent !== undefined ||
+    patch.discountAmount !== undefined ||
+    patch.isBestSeller !== undefined
+  ) {
+    const baseDesc = patch.description ?? ''
+    const meta: MenuItemMetadata = {}
+    if (patch.originalPrice !== undefined) meta.originalPrice = patch.originalPrice
+    if (patch.discountPercent !== undefined) meta.discountPercent = patch.discountPercent
+    if (patch.discountAmount !== undefined) meta.discountAmount = patch.discountAmount
+    if (patch.isBestSeller !== undefined) meta.isBestSeller = patch.isBestSeller
+
+    update['ITEM_DESCRIPTION'] = formatItemDescription(baseDesc, meta)
+  }
 
   const { error } = await supabase
     .schema('menu')

@@ -33,6 +33,8 @@ import { TableQrPreview } from '@/components/table-qr/TableQrPreview'
 import { printBulkQrPdf } from '@/components/table-qr/tableQrPrinter'
 import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
 import { useActiveEvent } from '@/hooks/useActiveEvent'
+import { useBusinessDay } from '@/hooks/useBusinessDay'
+import { getActiveBusinessDay } from '@/services/businessDayService'
 import { GitMerge } from 'lucide-react'
 import { TableTypesManager } from './components/TableTypesManager'
 import { LabelHierarchyManager } from './components/LabelHierarchyManager'
@@ -69,6 +71,7 @@ import {
 } from '@/utils/floorPlan/capacity'
 import { getMergeGroupColor } from '@/utils/floorPlan/mergeGroupColors'
 import { findNearestValidPosition } from '@/utils/floorPlan/collision'
+import { sanitizeLayoutMergeGroups, sequentializeLayoutTables } from '@/utils/floorPlan/adjacency'
 
 export const calculateSuppressionForLayout = calculateLayoutSuppression
 export type { ChairSuppressionInfo }
@@ -152,38 +155,11 @@ export function resolveConnectedMergeGroups(
     }
   }
 
-  // 1. First record all existing assigned group IDs so they are NEVER stolen or reassigned
-  const usedGroupIds = new Set<number>()
   for (const comp of components) {
-    const existingGroupIds = comp
-      .map((idx) => tables[idx].MERGE_GROUP_ID)
-      .filter((gid): gid is number => gid != null && gid > 0)
-    if (existingGroupIds.length > 0) {
-      usedGroupIds.add(existingGroupIds[0])
-    }
-  }
-
-  let nextAvailableId = 1
-
-  for (const comp of components) {
-    const existingGroupIds = comp
-      .map((idx) => tables[idx].MERGE_GROUP_ID)
-      .filter((gid): gid is number => gid != null && gid > 0)
-
-    let assignedId: number | null = null
-    if (existingGroupIds.length > 0) {
-      assignedId = existingGroupIds[0]
-    } else {
-      while (usedGroupIds.has(nextAvailableId)) {
-        nextAvailableId++
-      }
-      assignedId = nextAvailableId
-      usedGroupIds.add(assignedId)
-      nextAvailableId++
-    }
-
+    // Canonical anchor is the lowest TABLE_NUM in the connected group
+    const anchorTableNum = Math.min(...comp.map((idx) => tables[idx].TABLE_NUM))
     for (const idx of comp) {
-      result[idx] = { ...result[idx], MERGE_GROUP_ID: assignedId }
+      result[idx] = { ...result[idx], MERGE_GROUP_ID: anchorTableNum }
     }
   }
 
@@ -259,6 +235,7 @@ export default function TableManager() {
   const [isLoading, setIsLoading] = useState(true)
   const lastMutationTimeRef = useRef<number>(0)
   const { activeEvent, isEventActive } = useActiveEvent()
+  const { isOpen: isBusinessDayOpen } = useBusinessDay()
 
   // Auto-Save & Egress Optimization Refs
   const lastSavedLayoutHashRef = useRef<string>('')
@@ -482,11 +459,12 @@ export default function TableManager() {
       const live = restaurantTables.find((rt) => rt.TABLE_NUM === lt.TABLE_NUM)
       let gid: number | string | null = lt.MERGE_GROUP_ID ?? null
       if (gid == null && live?.MERGE_GROUP_ID != null) {
-        gid = live.MERGE_GROUP_ID
+        const anchorTable = restaurantTables.find((rt) => rt.TABLE_ID === live.MERGE_GROUP_ID)
+        gid = anchorTable ? anchorTable.TABLE_NUM : live.MERGE_GROUP_ID
       }
       if (gid == null && live?.TABLE_ID != null) {
         const isCaptain = restaurantTables.some((rt) => rt.MERGE_GROUP_ID === live.TABLE_ID)
-        if (isCaptain) gid = live.TABLE_ID
+        if (isCaptain) gid = lt.TABLE_NUM
       }
       if (gid != null) {
         const lbl = (live?.LABEL_ID !== undefined && live.LABEL_ID !== null) ? live.LABEL_ID : (lt.LABEL_ID ?? null)
@@ -501,11 +479,12 @@ export default function TableManager() {
       const effCap = calculateTableEffectiveCapacity(lt, chairSuppressionMap, baseCapacitiesMap)
       let gid: number | null = lt.MERGE_GROUP_ID != null ? Number(lt.MERGE_GROUP_ID) : null
       if (gid == null && live?.MERGE_GROUP_ID != null) {
-        gid = Number(live.MERGE_GROUP_ID)
+        const anchorTable = restaurantTables.find((rt) => rt.TABLE_ID === live.MERGE_GROUP_ID)
+        gid = anchorTable ? anchorTable.TABLE_NUM : Number(live.MERGE_GROUP_ID)
       }
       if (gid == null && live?.TABLE_ID != null) {
         const isCaptain = restaurantTables.some((rt) => rt.MERGE_GROUP_ID === live.TABLE_ID)
-        if (isCaptain) gid = Number(live.TABLE_ID)
+        if (isCaptain) gid = lt.TABLE_NUM
       }
 
       const individualLabel = live?.LABEL_ID !== undefined ? live.LABEL_ID : (lt.LABEL_ID ?? null)
@@ -602,12 +581,14 @@ export default function TableManager() {
       if (allPresets.length > 0) {
         const defaultPreset = allPresets.find((p) => p.IS_DEFAULT) || allPresets[0]
         setActivePresetId(defaultPreset.LAYOUT_PRESET_ID)
-        const layoutData = await fetchPresetLayout(defaultPreset.LAYOUT_PRESET_ID)
+        const rawLayoutData = await fetchPresetLayout(defaultPreset.LAYOUT_PRESET_ID)
+        const layoutData = sanitizeLayoutMergeGroups(rawLayoutData)
         setLayoutTables(layoutData)
         lastSavedLayoutHashRef.current = serializeLayout(layoutData)
-        // If liveTables are missing tables from layoutData, sync them
+        // If liveTables are missing tables from layoutData or merge groups changed, sync them
         const missingTables = layoutData.some((lt) => !liveTables.some((rt) => rt.TABLE_NUM === lt.TABLE_NUM))
-        if (missingTables) {
+        const mergeGroupsChanged = serializeLayout(rawLayoutData) !== serializeLayout(layoutData)
+        if (missingTables || mergeGroupsChanged) {
           try {
             await savePresetLayout(defaultPreset.LAYOUT_PRESET_ID, layoutData, undefined, defaultPreset.MAX_PAX ?? 50)
             const refreshedLive = await fetchLiveRestaurantTables()
@@ -641,29 +622,19 @@ export default function TableManager() {
       const { data: orders } = await supabase
         .from('Restaurant_Orders')
         .select('TABLE_ID')
-        .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED'])
+        .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED'])
 
       const live = await fetchLiveRestaurantTables()
       const liveIdToNum = new Map(live.map((t) => [t.TABLE_ID, t.TABLE_NUM]))
-      const occupiedNums = new Set<number>()
-
-      for (const t of live) {
-        if (
-          t.STATUS === 'OCCUPIED' ||
-          t.STATUS === 'HAS_REQUEST' ||
-          (t.CURRENT_GUEST_COUNT && t.CURRENT_GUEST_COUNT > 0)
-        ) {
-          occupiedNums.add(t.TABLE_NUM)
-        }
-      }
+      const activeNums = new Set<number>()
 
       for (const o of orders ?? []) {
         const tableId = Number(o.TABLE_ID)
         const tableNum = liveIdToNum.get(tableId) ?? tableId
-        occupiedNums.add(tableNum)
+        activeNums.add(tableNum)
       }
 
-      setActiveOrderTableNums(occupiedNums)
+      setActiveOrderTableNums(activeNums)
     } catch (err) {
       console.warn('[TableManager] Failed to fetch active orders:', err)
     }
@@ -843,8 +814,19 @@ export default function TableManager() {
     }
   }
 
-  const handleSelectPreset = (presetId: number) => {
+  const handleSelectPreset = async (presetId: number) => {
     if (presetId === activePresetId) return
+
+    // Guard: Do not allow switching layout preset while a business day is active
+    const activeDay = await getActiveBusinessDay()
+    if (activeDay && activeDay.status === 'OPEN') {
+      showToast(
+        `Cannot switch layout preset while Business Day #${activeDay.businessDayId} is active. Please end the business day in Cashier before switching presets.`,
+        'error',
+      )
+      return
+    }
+
     if (isEventActive) {
       showToast(
         `Cannot switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active. Deactivate the event in Events first.`,
@@ -903,7 +885,17 @@ export default function TableManager() {
   }
 
   // ── 5. Delete Preset ──
-  const handleDeletePreset = (presetId: number) => {
+  const handleDeletePreset = async (presetId: number) => {
+    // Guard: Do not allow deleting presets during an active business day
+    const activeDay = await getActiveBusinessDay()
+    if (activeDay && activeDay.status === 'OPEN') {
+      showToast(
+        `Cannot delete layout preset while Business Day #${activeDay.businessDayId} is active. Please end the business day in Cashier first.`,
+        'error',
+      )
+      return
+    }
+
     if (isEventActive) {
       showToast(
         `Cannot delete or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
@@ -946,6 +938,16 @@ export default function TableManager() {
     isDef: boolean,
     customTables?: TableLayoutInfo[],
   ) => {
+    // Guard: Do not allow creating/switching presets during an active business day
+    const activeDay = await getActiveBusinessDay()
+    if (activeDay && activeDay.status === 'OPEN') {
+      showToast(
+        `Cannot create or switch layout preset while Business Day #${activeDay.businessDayId} is active. Please end the business day in Cashier first.`,
+        'error',
+      )
+      return
+    }
+
     if (isEventActive) {
       showToast(
         `Cannot create or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
@@ -995,6 +997,7 @@ export default function TableManager() {
     })
     setActivePresetId(created.LAYOUT_PRESET_ID)
     setLayoutTables(initialLayout)
+    lastSavedLayoutHashRef.current = serializeLayout(initialLayout)
     setRestaurantTables(liveTables)
     setIsDirty(false)
     void logTableAction('PRESET_CREATED', `Created layout preset "${name}" with ${validMaxPax} pax capacity.`, {
@@ -1026,9 +1029,8 @@ export default function TableManager() {
 
     const assignedCapacity = Math.min(typeConfig.defaultCapacity, remainingVenueCap)
 
-    // Find highest assigned TABLE_NUM
-    const existingNums = layoutTables.map((t) => t.TABLE_NUM)
-    const nextTableNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1
+    // Consecutive TABLE_NUM (1..N)
+    const nextTableNum = layoutTables.length + 1
 
     // Find first available cell on grid
     let placedX = 1
@@ -1343,18 +1345,7 @@ export default function TableManager() {
   // ── 10. Delete Selected Table ──
   const handleDeleteTable = async (tableNum: number) => {
     const remaining = layoutTables.filter((t) => t.TABLE_NUM !== tableNum)
-    const groupCounts = new Map<number, number>()
-    for (const t of remaining) {
-      if (t.MERGE_GROUP_ID != null) {
-        groupCounts.set(t.MERGE_GROUP_ID, (groupCounts.get(t.MERGE_GROUP_ID) || 0) + 1)
-      }
-    }
-    const result = remaining.map((t) => {
-      if (t.MERGE_GROUP_ID != null && (groupCounts.get(t.MERGE_GROUP_ID) || 0) < 2) {
-        return { ...t, MERGE_GROUP_ID: null }
-      }
-      return t
-    })
+    const result = sequentializeLayoutTables(remaining)
     const suppMap = calculateSuppressionForLayout(result)
 
     const updatedRest = syncRestaurantTablesWithLayout(
@@ -1408,19 +1399,30 @@ export default function TableManager() {
   // ── 11c. Apply Auto Layout ──
   const handleApplyAutoLayout = async (allocatedTables: TableLayoutInfo[]) => {
     try {
+      if (!activePresetId) {
+        showToast('No active layout preset found.', 'error')
+        return
+      }
+      if (allocatedTables.length === 0) {
+        showToast('No tables allocated.', 'info')
+        return
+      }
+
       setLayoutTables(allocatedTables)
       setSelectedTableNum(null)
       setSelectedTableNums(new Set())
+      lastSavedLayoutHashRef.current = serializeLayout(allocatedTables)
+
       const baseMap = new Map<number, number>()
       allocatedTables.forEach((t) => baseMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? 4))
-      if (activePresetId) {
-        await savePresetLayout(activePresetId, allocatedTables, baseMap, activePresetMaxPax)
-      }
+
+      await savePresetLayout(activePresetId, allocatedTables, baseMap, activePresetMaxPax)
+
       const refreshedLive = await fetchLiveRestaurantTables()
       setRestaurantTables(refreshedLive)
       setIsDirty(false)
       void logTableAction('LAYOUT_CHANGED', `Applied automatic table allocation (${allocatedTables.length} tables).`)
-      showToast(`Automatically allocated ${allocatedTables.length} tables.`, 'success')
+      showToast(`Successfully placed ${allocatedTables.length} tables on layout grid.`, 'success')
     } catch (err) {
       console.error('Error applying auto layout:', err)
       showToast('Failed to apply allocated layout.', 'error')
@@ -1437,7 +1439,17 @@ export default function TableManager() {
   }
 
   // ── 11e. Set Default Layout Preset (Protected Admin Operation) ──
-  const handleSetDefaultPreset = (presetId: number) => {
+  const handleSetDefaultPreset = async (presetId: number) => {
+    // Guard: Do not allow setting default preset during an active business day
+    const activeDay = await getActiveBusinessDay()
+    if (activeDay && activeDay.status === 'OPEN') {
+      showToast(
+        `Cannot change default layout preset while Business Day #${activeDay.businessDayId} is active. Please end the business day in Cashier first.`,
+        'error',
+      )
+      return
+    }
+
     const targetPreset = presets.find((p) => p.LAYOUT_PRESET_ID === presetId)
     setPendingAdminAction(() => async () => {
       try {
@@ -1530,17 +1542,11 @@ export default function TableManager() {
         .from('Restaurant_Orders')
         .select('ORDER_ID')
         .in('TABLE_ID', [...new Set([...memberIds, ...memberNums])])
-        .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED', 'COMPLETED'])
+        .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED'])
 
-      const hasOccupied = restaurantTables.some(
-        (r) =>
-          memberNums.includes(r.TABLE_NUM) &&
-          (r.STATUS === 'OCCUPIED' || r.STATUS === 'HAS_REQUEST' || (r.CURRENT_GUEST_COUNT && r.CURRENT_GUEST_COUNT > 0)),
-      )
-
-      if ((activeOrders && activeOrders.length > 0) || hasOccupied) {
+      if (activeOrders && activeOrders.length > 0) {
         showToast(
-          `Cannot unmerge Group #${currentMergeId}: Table has active order(s) or seated guests. Settle or void orders first.`,
+          `Cannot unmerge Group #${currentMergeId}: Table group has active uncompleted order(s). Settle or void orders first.`,
           'error',
         )
         return
@@ -1549,26 +1555,13 @@ export default function TableManager() {
       console.warn('Active orders check before unmerge:', err)
     }
 
-    const remainingMembers = groupMembers.filter((t) => t.TABLE_NUM !== tableNum)
-
-    let updatedLayout: TableLayoutInfo[]
-    if (remainingMembers.length <= 1) {
-      // If only 1 table remains in group, clear merge group for all members of this group
-      updatedLayout = layoutTables.map((t) => {
-        if (t.MERGE_GROUP_ID === currentMergeId) {
-          return { ...t, MERGE_GROUP_ID: null }
-        }
-        return t
-      })
-    } else {
-      // 2 or more remain in group, preserve existing currentMergeId for the group
-      updatedLayout = layoutTables.map((t) => {
-        if (t.TABLE_NUM === tableNum) {
-          return { ...t, MERGE_GROUP_ID: null }
-        }
-        return t
-      })
-    }
+    const updatedLayoutRaw = layoutTables.map((t) => {
+      if (t.TABLE_NUM === tableNum) {
+        return { ...t, MERGE_GROUP_ID: null }
+      }
+      return t
+    })
+    const updatedLayout = sanitizeLayoutMergeGroups(updatedLayoutRaw)
 
     const suppMap = calculateSuppressionForLayout(updatedLayout)
     const { updatedBaseCapacities, updatedLayout: finalLayout } = deductMovedTableOnOverflow(
@@ -1591,38 +1584,31 @@ export default function TableManager() {
     if (selectedTableNums.size < 2) return
     lastMutationTimeRef.current = Date.now()
 
-    const selectedList = Array.from(selectedTableNums)
-
-    // Collect all existing merge group IDs currently assigned across all tables
-    const existingGroupIds = new Set(
+    // Find all existing merge groups that selected tables belong to
+    const selectedExistingGroups = new Set(
       layoutTables
-        .map((t) => t.MERGE_GROUP_ID)
-        .filter((gid): gid is number => gid != null && gid > 0),
+        .filter((t) => selectedTableNums.has(t.TABLE_NUM) && t.MERGE_GROUP_ID != null)
+        .map((t) => t.MERGE_GROUP_ID!)
     )
 
-    // Check if any of the selected tables already belongs to an existing merge group
-    const selectedExisting = layoutTables
-      .filter((t) => selectedTableNums.has(t.TABLE_NUM) && t.MERGE_GROUP_ID != null)
-      .map((t) => t.MERGE_GROUP_ID!)
-
-    let targetMergeGroupId: number
-    if (selectedExisting.length > 0) {
-      targetMergeGroupId = selectedExisting[0]
-    } else {
-      targetMergeGroupId = 1
-      while (existingGroupIds.has(targetMergeGroupId)) {
-        targetMergeGroupId++
+    // All tables to be merged together: selected tables + any members of groups being combined
+    const allTableNumsToMerge = new Set<number>(selectedTableNums)
+    for (const t of layoutTables) {
+      if (t.MERGE_GROUP_ID != null && selectedExistingGroups.has(t.MERGE_GROUP_ID)) {
+        allTableNumsToMerge.add(t.TABLE_NUM)
       }
     }
 
-    // Collect any existing labels among the selected tables to share across the group
+    const targetMergeGroupId = Math.min(...Array.from(allTableNumsToMerge))
+
+    // Collect any existing labels among the merged tables to share across the group
     const existingLabels = layoutTables
-      .filter((t) => selectedTableNums.has(t.TABLE_NUM) && t.LABEL_ID != null)
+      .filter((t) => allTableNumsToMerge.has(t.TABLE_NUM) && t.LABEL_ID != null)
       .map((t) => t.LABEL_ID!)
     const sharedLabelId = existingLabels.length > 0 ? existingLabels[0] : null
 
-    const updatedLayout = layoutTables.map((t) => {
-      if (selectedTableNums.has(t.TABLE_NUM)) {
+    const updatedLayoutRaw = layoutTables.map((t) => {
+      if (allTableNumsToMerge.has(t.TABLE_NUM)) {
         return {
           ...t,
           MERGE_GROUP_ID: targetMergeGroupId,
@@ -1631,6 +1617,8 @@ export default function TableManager() {
       }
       return t
     })
+
+    const updatedLayout = sanitizeLayoutMergeGroups(updatedLayoutRaw)
 
     const suppMap = calculateSuppressionForLayout(updatedLayout)
     const rawRest = syncRestaurantTablesWithLayout(
@@ -1641,7 +1629,7 @@ export default function TableManager() {
       baseCapacitiesMap,
     )
     const updatedRest = rawRest.map((r) =>
-      selectedTableNums.has(r.TABLE_NUM) && sharedLabelId != null
+      allTableNumsToMerge.has(r.TABLE_NUM) && sharedLabelId != null
         ? { ...r, LABEL_ID: sharedLabelId }
         : r,
     )
@@ -1650,7 +1638,7 @@ export default function TableManager() {
     setRestaurantTables(updatedRest)
     setSelectedTableNums(new Set())
     scheduleAutoSave(updatedLayout, updatedRest, 100)
-    showToast(`Merged ${selectedList.length} tables into Group #${targetMergeGroupId}`, 'success')
+    showToast(`Merged ${allTableNumsToMerge.size} tables into Group #${targetMergeGroupId}`, 'success')
   }
 
 
@@ -2235,12 +2223,14 @@ export default function TableManager() {
           activePresetId={activePresetId}
           isEventActive={isEventActive}
           activeEventTitle={activeEvent?.title}
+          isBusinessDayOpen={isBusinessDayOpen}
           totalCapacity={totalAllocatedCapacity}
           maxVenueCapacity={activePresetMaxPax}
           isDirty={isDirty}
           onSelectPreset={handleSelectPreset}
           onRenamePreset={handleRenamePreset}
           onDeletePreset={handleDeletePreset}
+          onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
           activeTab={activeAdminTab}
           onTabChange={(tab) => {
             if (isDirty) {
@@ -2263,6 +2253,13 @@ export default function TableManager() {
           onOpenRemoveAll={() => setRemoveAllModalOpen(true)}
           onOpenLabelsModal={() => setLabelsModalOpen(true)}
           onOpenNewPresetModal={() => {
+            if (isBusinessDayOpen) {
+              showToast(
+                'Cannot create or switch layout presets while Business Day is active. Please end the business day in Cashier first.',
+                'error',
+              )
+              return
+            }
             if (isEventActive) {
               showToast(
                 `Cannot create or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
@@ -2321,11 +2318,22 @@ export default function TableManager() {
               activePresetId={activePresetId}
               isEventActive={isEventActive}
               activeEventTitle={activeEvent?.title}
+              isBusinessDayOpen={isBusinessDayOpen}
               onSelectPreset={handleSelectPreset}
               onSetDefaultPreset={handleSetDefaultPreset}
               onRenamePreset={handleRenamePreset}
               onDeletePreset={handleDeletePreset}
-              onOpenNewPresetModal={() => setNewPresetModalOpen(true)}
+              onOpenNewPresetModal={() => {
+                if (isBusinessDayOpen) {
+                  showToast(
+                    'Cannot create layout presets while Business Day is active. Please end the business day in Cashier first.',
+                    'error',
+                  )
+                  return
+                }
+                setNewPresetModalOpen(true)
+              }}
+              onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
             />
           </div>
         )}
@@ -2355,6 +2363,7 @@ export default function TableManager() {
             <div className="absolute top-3.5 right-3.5 z-30">
               <FloatingLayoutControls
                 onAddTable={handleAddTable}
+                onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
                 totalCapacity={totalAllocatedCapacity}
                 maxVenueCapacity={activePresetMaxPax}
               />

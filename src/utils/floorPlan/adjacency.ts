@@ -3,6 +3,167 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { TablePosition } from './collision'
+import { TABLE_TYPES, type TableType } from '@/services/tableLayoutService'
+
+/**
+ * Check if two layout tables are directly adjacent (sharing a horizontal or vertical edge).
+ */
+export function areLayoutTablesAdjacent(
+  t1: { TABLE_TYPE?: number; X_POS?: number; Y_POS?: number },
+  t2: { TABLE_TYPE?: number; X_POS?: number; Y_POS?: number },
+): boolean {
+  const cfg1 = TABLE_TYPES[(t1.TABLE_TYPE ?? 1) as TableType] || TABLE_TYPES[1]
+  const cfg2 = TABLE_TYPES[(t2.TABLE_TYPE ?? 1) as TableType] || TABLE_TYPES[1]
+
+  const aX = Number(t1.X_POS ?? 0)
+  const aY = Number(t1.Y_POS ?? 0)
+  const aW = cfg1.width
+  const aH = cfg1.height
+
+  const bX = Number(t2.X_POS ?? 0)
+  const bY = Number(t2.Y_POS ?? 0)
+  const bW = cfg2.width
+  const bH = cfg2.height
+
+  // Horizontal contact: touching along vertical seam with overlapping Y intervals
+  const hAdj =
+    (aX + aW === bX || bX + bW === aX) &&
+    Math.max(aY, bY) < Math.min(aY + aH, bY + bH)
+
+  // Vertical contact: touching along horizontal seam with overlapping X intervals
+  const vAdj =
+    (aY + aH === bY || bY + bH === aY) &&
+    Math.max(aX, bX) < Math.min(aX + aW, bX + bW)
+
+  return hAdj || vAdj
+}
+
+/**
+ * Ensures table numbers are strictly sequential from 1 to N with no skipped numbers.
+ * Re-maps any MERGE_GROUP_ID references to the newly assigned consecutive numbers.
+ */
+export function sequentializeLayoutTables<
+  T extends { TABLE_NUM: number; MERGE_GROUP_ID?: number | null; TABLE_TYPE?: number; X_POS?: number; Y_POS?: number },
+>(tables: T[]): T[] {
+  if (tables.length === 0) return []
+
+  // Check if tables are already consecutively numbered 1..N
+  const sorted = [...tables].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
+  const isAlreadySequential = sorted.every((t, idx) => t.TABLE_NUM === idx + 1)
+
+  if (isAlreadySequential) {
+    return sanitizeLayoutMergeGroups(tables)
+  }
+
+  // Create mapping from old TABLE_NUM to new 1..N index
+  const oldToNewMap = new Map<number, number>()
+  sorted.forEach((t, idx) => {
+    oldToNewMap.set(t.TABLE_NUM, idx + 1)
+  })
+
+  const renumbered = sorted.map((t, idx) => {
+    const newNum = idx + 1
+    let newMergeId = t.MERGE_GROUP_ID != null ? Number(t.MERGE_GROUP_ID) : null
+    if (newMergeId != null && oldToNewMap.has(newMergeId)) {
+      newMergeId = oldToNewMap.get(newMergeId)!
+    }
+    return {
+      ...t,
+      TABLE_NUM: newNum,
+      MERGE_GROUP_ID: newMergeId,
+    }
+  })
+
+  return sanitizeLayoutMergeGroups(renumbered)
+}
+
+/**
+ * Validates and canonicalizes all merge groups in a table layout.
+ * Ensures:
+ * 1. Merge groups with fewer than 2 members are dissolved (MERGE_GROUP_ID: null).
+ * 2. The MERGE_GROUP_ID for every member of a group is strictly set to the group's
+ *    canonical anchor table number (the minimum TABLE_NUM among connected members).
+ * 3. Disconnected / non-adjacent tables that had an accidental shared group ID
+ *    are partitioned into their own distinct connected merge groups or set to standalone.
+ */
+export function sanitizeLayoutMergeGroups<
+  T extends { TABLE_NUM: number; MERGE_GROUP_ID?: number | null; TABLE_TYPE?: number; X_POS?: number; Y_POS?: number },
+>(tables: T[]): T[] {
+  if (tables.length === 0) return []
+
+  // Group tables by their current MERGE_GROUP_ID
+  const rawGroupMap = new Map<number, T[]>()
+  for (const t of tables) {
+    if (t.MERGE_GROUP_ID != null && Number(t.MERGE_GROUP_ID) > 0) {
+      const gid = Number(t.MERGE_GROUP_ID)
+      const list = rawGroupMap.get(gid) || []
+      list.push(t)
+      rawGroupMap.set(gid, list)
+    }
+  }
+
+  const newMergeGroupIdByNum = new Map<number, number | null>()
+  for (const t of tables) {
+    newMergeGroupIdByNum.set(t.TABLE_NUM, null)
+  }
+
+  for (const [, members] of rawGroupMap.entries()) {
+    if (members.length < 2) continue
+
+    // Find connected components within this group based on spatial adjacency
+    const mCount = members.length
+    const adj: number[][] = Array.from({ length: mCount }, () => [])
+    for (let i = 0; i < mCount; i++) {
+      for (let j = i + 1; j < mCount; j++) {
+        if (areLayoutTablesAdjacent(members[i], members[j])) {
+          adj[i].push(j)
+          adj[j].push(i)
+        }
+      }
+    }
+
+    const hasAnyMultiNodeComp = adj.some((neighbors) => neighbors.length > 0)
+    const visited = new Array(mCount).fill(false)
+
+    for (let i = 0; i < mCount; i++) {
+      if (!visited[i]) {
+        const comp: T[] = []
+        const queue = [i]
+        visited[i] = true
+
+        while (queue.length > 0) {
+          const curr = queue.shift()!
+          comp.push(members[curr])
+          for (const neighbor of adj[curr]) {
+            if (!visited[neighbor]) {
+              visited[neighbor] = true
+              queue.push(neighbor)
+            }
+          }
+        }
+
+        if (comp.length >= 2) {
+          const anchor = Math.min(...comp.map((t) => t.TABLE_NUM))
+          for (const t of comp) {
+            newMergeGroupIdByNum.set(t.TABLE_NUM, anchor)
+          }
+        } else if (comp.length === 1 && !hasAnyMultiNodeComp) {
+          // Manual merge where none of the tables directly touch
+          const anchor = Math.min(...members.map((t) => t.TABLE_NUM))
+          for (const t of members) {
+            newMergeGroupIdByNum.set(t.TABLE_NUM, anchor)
+          }
+          break
+        }
+      }
+    }
+  }
+
+  return tables.map((t) => ({
+    ...t,
+    MERGE_GROUP_ID: newMergeGroupIdByNum.get(t.TABLE_NUM) ?? null,
+  }))
+}
 
 /**
  * Two tables are directly adjacent when they share a full edge

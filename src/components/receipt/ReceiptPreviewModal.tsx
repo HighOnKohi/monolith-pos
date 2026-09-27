@@ -41,7 +41,11 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({ receip
             </div>
             <div>
               <h2 className="text-sm font-black text-[#14274E]">Payment Complete</h2>
-              <p className="text-[11px] text-slate-500">Table #{receipt.tableNum} has been settled</p>
+              <p className="text-[11px] text-slate-500">
+                {receipt.isMerged && receipt.mergeGroupId != null
+                  ? `Group ${receipt.mergeGroupId} has been settled`
+                  : `Table #${receipt.tableNum} has been settled`}
+              </p>
             </div>
           </div>
           <button
@@ -69,8 +73,12 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({ receip
             {/* Transaction Metadata */}
             <div className="receipt-meta-section">
               <div className="receipt-meta-row">
-                <span className="receipt-meta-key">Table</span>
-                <span className="receipt-meta-val">#{receipt.tableNum}</span>
+                <span className="receipt-meta-key">{receipt.isMerged ? 'Group' : 'Table'}</span>
+                <span className="receipt-meta-val">
+                  {receipt.isMerged && receipt.mergeGroupId != null
+                    ? `Group ${receipt.mergeGroupId}`
+                    : `#${receipt.tableNum}`}
+                </span>
               </div>
               <div className="receipt-meta-row">
                 <span className="receipt-meta-key">Receipt #</span>

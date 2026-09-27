@@ -17,12 +17,26 @@ export interface DateRange {
 }
 
 export interface TimeSeriesPoint {
-  key: string // e.g. "14:00" or "Sep 07"
+  key: string // e.g. "14:00" or "Sep 07" or "Mon"
   timestamp: string
   revenue: number
   orderCount: number
   customerCount: number | null
   itemCount: number
+}
+
+export interface DayOfWeekPoint extends TimeSeriesPoint {
+  dayIndex: number
+  dayName: string
+  shortName: string
+}
+
+export interface DayOfWeekItemStats {
+  dayName: string
+  shortName: string
+  topItems: ItemSalesStat[]
+  leastItems: ItemSalesStat[]
+  allItems: ItemSalesStat[]
 }
 
 export interface ItemSalesStat {
@@ -111,6 +125,8 @@ export interface AnalyticsSummary {
 
   // Aggregated series & breakdowns
   timeSeries: TimeSeriesPoint[]
+  dayOfWeekSeries: DayOfWeekPoint[]
+  dayOfWeekItemStats: Record<string, DayOfWeekItemStats>
   topItems: ItemSalesStat[]
   leastItems: ItemSalesStat[]
   allItems: ItemSalesStat[]
@@ -720,6 +736,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
 
   // 5. Aggregate Menu Item Sales Performance (Top, Least, and Full Catalog)
   const orderMetaMap = new Map<number, { isDineIn: boolean; isCustomerApp: boolean }>()
+  const orderDateMap = new Map<number, Date>()
   for (const o of completedOrdersList) {
     const oId = Number(o['ORDER_ID'])
     const rawType = String(o['ORDER_TYPE'] || 'DINE-IN').toUpperCase()
@@ -727,6 +744,8 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     const rawChan = String(o['REQUESTED_FROM'] || 'Cashier').toLowerCase()
     const isCustomerApp = rawChan.includes('customer')
     orderMetaMap.set(oId, { isDineIn, isCustomerApp })
+    const d = parseDbTimestamp(o['TIME'])
+    if (d) orderDateMap.set(oId, d)
   }
 
   interface ItemAgg {
@@ -745,7 +764,21 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     ticketCount: number
   }
 
+  const DAYS_OF_WEEK_CONFIG = [
+    { key: 'Monday', dayIndex: 1, dayName: 'Monday', shortName: 'Mon' },
+    { key: 'Tuesday', dayIndex: 2, dayName: 'Tuesday', shortName: 'Tue' },
+    { key: 'Wednesday', dayIndex: 3, dayName: 'Wednesday', shortName: 'Wed' },
+    { key: 'Thursday', dayIndex: 4, dayName: 'Thursday', shortName: 'Thu' },
+    { key: 'Friday', dayIndex: 5, dayName: 'Friday', shortName: 'Fri' },
+    { key: 'Saturday', dayIndex: 6, dayName: 'Saturday', shortName: 'Sat' },
+    { key: 'Sunday', dayIndex: 0, dayName: 'Sunday', shortName: 'Sun' },
+  ]
+
   const itemAggMap = new Map<number, ItemAgg>()
+  const dayItemAggMaps = new Map<string, Map<number, ItemAgg>>()
+  for (const day of DAYS_OF_WEEK_CONFIG) {
+    dayItemAggMaps.set(day.dayName, new Map<number, ItemAgg>())
+  }
 
   // 5a. Seed with standalone catalog items
   if (catalogItemsData && catalogItemsData.length > 0) {
@@ -757,7 +790,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       const catObj = raw['Menu_Categories'] as Record<string, unknown> | null
       const catName = catObj ? String(catObj['CATEGORY_NAME']) : 'Uncategorized'
 
-      itemAggMap.set(id, {
+      const baseItem: ItemAgg = {
         id,
         name,
         category: catName,
@@ -771,7 +804,11 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         customerAppCount: 0,
         cashierCount: 0,
         ticketCount: 0,
-      })
+      }
+      itemAggMap.set(id, { ...baseItem, orderIds: new Set<number>() })
+      for (const day of DAYS_OF_WEEK_CONFIG) {
+        dayItemAggMaps.get(day.dayName)!.set(id, { ...baseItem, orderIds: new Set<number>() })
+      }
     }
   }
 
@@ -786,7 +823,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       const catObj = raw['Menu_Categories'] as Record<string, unknown> | null
       const catName = catObj ? String(catObj['CATEGORY_NAME']) : 'Meal Packages'
 
-      itemAggMap.set(id, {
+      const baseItem: ItemAgg = {
         id,
         name,
         category: catName,
@@ -800,7 +837,11 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         customerAppCount: 0,
         cashierCount: 0,
         ticketCount: 0,
-      })
+      }
+      itemAggMap.set(id, { ...baseItem, orderIds: new Set<number>() })
+      for (const day of DAYS_OF_WEEK_CONFIG) {
+        dayItemAggMaps.get(day.dayName)!.set(id, { ...baseItem, orderIds: new Set<number>() })
+      }
     }
   }
 
@@ -812,6 +853,8 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
 
     const orderId = Number(oi['ORDER_ID'] || 0)
     const orderMeta = orderMetaMap.get(orderId) ?? { isDineIn: true, isCustomerApp: false }
+    const orderDate = orderDateMap.get(orderId)
+    const dayName = orderDate ? orderDate.toLocaleDateString('en-US', { weekday: 'long' }) : undefined
 
     let existing = itemAggMap.get(itemId)
     if (!existing) {
@@ -838,17 +881,52 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       itemAggMap.set(itemId, existing)
     }
 
+    const priceToAdd = existing.unitPrice || (menuItem ? Number(menuItem['ITEM_PRICE'] || 0) : 0)
     existing.qty += 1
-    existing.revenue += existing.unitPrice || (menuItem ? Number(menuItem['ITEM_PRICE'] || 0) : 0)
+    existing.revenue += priceToAdd
     if (orderId) existing.orderIds.add(orderId)
     if (orderMeta.isDineIn) existing.dineInCount += 1
     else existing.takeoutCount += 1
     if (orderMeta.isCustomerApp) existing.customerAppCount += 1
     else existing.cashierCount += 1
+
+    // Day of week item accumulation
+    if (dayName && dayItemAggMaps.has(dayName)) {
+      const dayMap = dayItemAggMaps.get(dayName)!
+      let dayItem = dayMap.get(itemId)
+      if (!dayItem) {
+        dayItem = {
+          id: itemId,
+          name: existing.name,
+          category: existing.category,
+          unitPrice: existing.unitPrice,
+          isAvailable: true,
+          qty: 0,
+          revenue: 0,
+          orderIds: new Set<number>(),
+          dineInCount: 0,
+          takeoutCount: 0,
+          customerAppCount: 0,
+          cashierCount: 0,
+          ticketCount: 0,
+        }
+        dayMap.set(itemId, dayItem)
+      }
+      dayItem.qty += 1
+      dayItem.revenue += priceToAdd
+      if (orderId) dayItem.orderIds.add(orderId)
+      if (orderMeta.isDineIn) dayItem.dineInCount += 1
+      else dayItem.takeoutCount += 1
+      if (orderMeta.isCustomerApp) dayItem.customerAppCount += 1
+      else dayItem.cashierCount += 1
+    }
   }
 
   // 5d. Accumulate sold items and packages from completed ticket orders
   for (const t of completedTicketsList) {
+    const dayName = t.date.toLocaleDateString('en-US', { weekday: 'long' })
+    const dayMap = dayItemAggMaps.get(dayName)
+
     for (const item of t.items) {
       const isGroup = item.isGroup
       const aggId = isGroup ? (item.itemId || item.itemGroupId || 0) : (item.itemId || 0)
@@ -878,6 +956,32 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       existing.revenue += item.price
       if (t.ticketId) existing.orderIds.add(t.ticketId)
       existing.ticketCount += 1
+
+      if (dayMap) {
+        let dayItem = dayMap.get(aggId)
+        if (!dayItem) {
+          dayItem = {
+            id: aggId,
+            name: item.name,
+            category: item.categoryName,
+            unitPrice: item.price,
+            isAvailable: true,
+            qty: 0,
+            revenue: 0,
+            orderIds: new Set<number>(),
+            dineInCount: 0,
+            takeoutCount: 0,
+            customerAppCount: 0,
+            cashierCount: 0,
+            ticketCount: 0,
+          }
+          dayMap.set(aggId, dayItem)
+        }
+        dayItem.qty += 1
+        dayItem.revenue += item.price
+        if (t.ticketId) dayItem.orderIds.add(t.ticketId)
+        dayItem.ticketCount += 1
+      }
     }
   }
 
@@ -1147,6 +1251,105 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
 
   const timeSeries = Array.from(timeSeriesMap.values())
 
+  // Build Day of Week Series (Monday to Sunday) across the selected range
+  const dayOfWeekMap = new Map<string, DayOfWeekPoint>()
+  for (const day of DAYS_OF_WEEK_CONFIG) {
+    dayOfWeekMap.set(day.dayName, {
+      key: day.shortName,
+      timestamp: day.dayName,
+      dayIndex: day.dayIndex,
+      dayName: day.dayName,
+      shortName: day.shortName,
+      revenue: 0,
+      orderCount: 0,
+      customerCount: hasCustomerData ? 0 : null,
+      itemCount: 0,
+    })
+  }
+
+  for (const o of completedOrdersList) {
+    const orderDate = parseDbTimestamp(o['TIME'])
+    if (!orderDate) continue
+    const dayName = orderDate.toLocaleDateString('en-US', { weekday: 'long' })
+    const point = dayOfWeekMap.get(dayName)
+    if (point) {
+      point.revenue += Number(o['TOTAL_BILL']) || 0
+      point.orderCount += 1
+      if (hasCustomerData) {
+        point.customerCount = (point.customerCount || 0) + (Number(o['GUEST_COUNT']) || 1)
+      }
+      let orderItemCount = 0
+      if (o['ITEM_COUNT'] != null && Number(o['ITEM_COUNT']) > 0) {
+        orderItemCount = Number(o['ITEM_COUNT'])
+      } else if (Array.isArray(o['ORDER_ITEMS']) && o['ORDER_ITEMS'].length > 0) {
+        orderItemCount = (o['ORDER_ITEMS'] as any[]).reduce(
+          (sum: number, it: any) => sum + (Number(it.quantity) || 1),
+          0,
+        )
+      } else {
+        const oId = Number(o['ORDER_ID'])
+        orderItemCount = orderItemsData.filter((oi) => Number(oi['ORDER_ID']) === oId).length
+      }
+      point.itemCount += orderItemCount
+    }
+  }
+
+  for (const t of completedTicketsList) {
+    const dayName = t.date.toLocaleDateString('en-US', { weekday: 'long' })
+    const point = dayOfWeekMap.get(dayName)
+    if (point) {
+      point.revenue += t.totalBill
+      point.orderCount += 1
+      if (hasCustomerData) {
+        point.customerCount = (point.customerCount || 0) + 1
+      }
+      point.itemCount += t.items.length
+    }
+  }
+
+  const dayOfWeekSeries: DayOfWeekPoint[] = DAYS_OF_WEEK_CONFIG.map((d) => dayOfWeekMap.get(d.dayName)!)
+
+  // Build Day of Week Item Stats
+  const dayOfWeekItemStats: Record<string, DayOfWeekItemStats> = {}
+  for (const day of DAYS_OF_WEEK_CONFIG) {
+    const dayMap = dayItemAggMaps.get(day.dayName)
+    const dayPoint = dayOfWeekMap.get(day.dayName)
+    const dayRev = dayPoint?.revenue || 0
+    const daySold = dayPoint?.itemCount || 0
+
+    const dayRanked: ItemSalesStat[] = Array.from(dayMap?.values() ?? []).map((val) => ({
+      itemId: val.id,
+      itemName: val.name,
+      categoryName: val.category,
+      unitPrice: val.unitPrice,
+      quantity: val.qty,
+      revenue: val.revenue,
+      percentageOfSales: daySold > 0 ? Math.round((val.qty / daySold) * 1000) / 10 : 0,
+      percentageOfRevenue: dayRev > 0 ? Math.round((val.revenue / dayRev) * 1000) / 10 : 0,
+      orderCount: val.orderIds.size,
+      dineInCount: val.dineInCount,
+      takeoutCount: val.takeoutCount,
+      customerAppCount: val.customerAppCount,
+      cashierCount: val.cashierCount,
+      ticketCount: val.ticketCount,
+      isAvailable: val.isAvailable,
+    }))
+
+    const topItemsForDay = dayRanked
+      .filter((i) => i.quantity > 0)
+      .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
+    const leastItemsForDay = [...dayRanked].sort((a, b) => a.quantity - b.quantity || a.revenue - b.revenue)
+    const allItemsForDay = [...dayRanked].sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
+
+    dayOfWeekItemStats[day.dayName] = {
+      dayName: day.dayName,
+      shortName: day.shortName,
+      topItems: topItemsForDay,
+      leastItems: leastItemsForDay,
+      allItems: allItemsForDay,
+    }
+  }
+
   // Calculate Peak Customer Seating Period
   let peakCustomerPeriod: { period: string; count: number } | null = null
   if (hasCustomerData) {
@@ -1244,6 +1447,8 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     peakDay: peakDay ? `${peakDay} (${maxDayOrders} orders)` : null,
 
     timeSeries,
+    dayOfWeekSeries,
+    dayOfWeekItemStats,
     topItems,
     leastItems,
     allItems,

@@ -11,6 +11,10 @@ export interface NewMenuItemForm {
   categoryId: string
   dietaryType: DietaryType
   price: number
+  originalPrice?: number
+  discountPercent?: number
+  discountAmount?: number
+  isBestSeller?: boolean
   isAvailable: boolean
   description?: string
   orderLimit: number
@@ -61,6 +65,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
   const [form, setForm] = useState({
     imageUrl: '', name: '', categoryId: defaultCategoryId ?? '',
     dietaryType: 'veg' as DietaryType, priceRaw: '', isAvailable: true, description: '',
+    hasDiscount: false, originalPriceRaw: '', discountPercentRaw: '', isBestSeller: false,
     orderLimitRaw: '0', itemIds: [] as string[],
   })
   const [imageFile, setImageFile]     = useState<File | null>(null)
@@ -93,6 +98,10 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
     setUploadError(null)
 
     if (editItem || editGroup) {
+      const hasItemDiscount = Boolean(
+        (editItem?.discountPercent && editItem.discountPercent > 0) ||
+        (editItem?.originalPrice && editItem.originalPrice > (editItem?.price ?? 0))
+      )
       setForm({
         imageUrl: editItem?.imageUrl ?? editGroup?.imageUrl ?? '',
         name: editItem?.name ?? editGroup?.name ?? '',
@@ -101,6 +110,10 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         priceRaw: String(editItem?.price ?? editGroup?.price ?? ''),
         isAvailable: editItem?.isAvailable ?? editGroup?.status === 'AVAILABLE',
         description: editItem?.description ?? editGroup?.description ?? '',
+        hasDiscount: hasItemDiscount,
+        originalPriceRaw: editItem?.originalPrice ? String(editItem.originalPrice) : '',
+        discountPercentRaw: editItem?.discountPercent ? String(editItem.discountPercent) : '',
+        isBestSeller: Boolean(editItem?.isBestSeller),
         orderLimitRaw: String(editGroup?.orderLimit ?? 0),
         itemIds: editGroup?.itemIds ?? [],
       })
@@ -110,6 +123,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         imageUrl: '', name: '',
         categoryId:  defaultCategoryId ?? firstCategoryId,
         dietaryType: 'veg', priceRaw: '', isAvailable: true, description: '',
+        hasDiscount: false, originalPriceRaw: '', discountPercentRaw: '', isBestSeller: false,
         orderLimitRaw: '0', itemIds: [],
       })
       setImageFile(null)
@@ -148,6 +162,40 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
     if (field === 'priceRaw') setFieldErrors((e) => ({ ...e, price: undefined }))
   }
 
+  function handleDiscountPercentChange(percentStr: string) {
+    const clean = percentStr.replace(/[^\d.]/g, '')
+    const pct = parseFloat(clean)
+    const origPrice = parseFloat(form.originalPriceRaw.replace(/,/g, ''))
+
+    if (!isNaN(pct) && pct >= 0 && pct <= 100 && !isNaN(origPrice) && origPrice > 0) {
+      const discounted = origPrice * (1 - pct / 100)
+      setForm((cur) => ({
+        ...cur,
+        discountPercentRaw: clean,
+        priceRaw: discounted.toFixed(2),
+      }))
+    } else {
+      setForm((cur) => ({ ...cur, discountPercentRaw: clean }))
+    }
+  }
+
+  function handleOriginalPriceChange(origStr: string) {
+    const clean = origStr.replace(/[^\d.]/g, '')
+    const origPrice = parseFloat(clean)
+    const pct = parseFloat(form.discountPercentRaw)
+
+    if (!isNaN(pct) && pct >= 0 && pct <= 100 && !isNaN(origPrice) && origPrice > 0) {
+      const discounted = origPrice * (1 - pct / 100)
+      setForm((cur) => ({
+        ...cur,
+        originalPriceRaw: clean,
+        priceRaw: discounted.toFixed(2),
+      }))
+    } else {
+      setForm((cur) => ({ ...cur, originalPriceRaw: clean }))
+    }
+  }
+
   function readImage(file: File) {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       setUploadError('Choose a JPG, PNG, or WEBP image.')
@@ -181,6 +229,21 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
     if (!form.name.trim())                         errors.name  = 'Name is required.'
     if (!Number.isFinite(price) || price < 0 || form.priceRaw.trim() === '')
                                                    errors.price = 'Price is required.'
+
+    let originalPrice: number | undefined = undefined
+    let discountPercent: number | undefined = undefined
+    if (form.hasDiscount) {
+      const orig = Number(form.originalPriceRaw.replace(/,/g, ''))
+      const pct = Number(form.discountPercentRaw)
+      if (Number.isFinite(orig) && orig > price) {
+        originalPrice = orig
+        discountPercent = Number.isFinite(pct) && pct > 0 ? pct : Math.round(((orig - price) / orig) * 100)
+      } else if (Number.isFinite(pct) && pct > 0 && pct < 100) {
+        discountPercent = pct
+        originalPrice = Number((price / (1 - pct / 100)).toFixed(2))
+      }
+    }
+
     if (Object.keys(errors).length > 0) { setFieldErrors(errors); return }
 
     setIsSaving(true)
@@ -202,6 +265,9 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         categoryId:  form.categoryId,
         dietaryType: form.dietaryType,
         price,
+        originalPrice,
+        discountPercent,
+        isBestSeller: form.isBestSeller,
         isAvailable: form.isAvailable,
         description: form.description,
         orderLimit: Number.isFinite(orderLimit) && orderLimit >= 0 ? orderLimit : 0,
@@ -312,7 +378,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
           {/* Row 2 — price + availability */}
           <div className="menu-item-row menu-item-secondary-row" aria-label="Price and availability">
             <label className="menu-modal-field">
-              <span>Price {fieldErrors.price && <span className="menu-modal-inline-error">{fieldErrors.price}</span>}</span>
+              <span>{form.hasDiscount ? 'Discounted Selling Price' : 'Price'} {fieldErrors.price && <span className="menu-modal-inline-error">{fieldErrors.price}</span>}</span>
               <div className={`menu-modal-price-wrap ${fieldErrors.price ? 'has-error' : ''}`}>
                 <span className="menu-modal-price-symbol">₱</span>
                 <input
@@ -340,6 +406,77 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
                 <button type="button" onClick={() => update('isAvailable', false)} disabled={isSaving}>Out of stock</button>
               </div>
             </fieldset>
+          </div>
+
+          {/* Row 3 — Discount & Best Seller Promo Controls */}
+          <div className="rounded-xl border border-[#9BA4B4]/20 bg-[#F8FAFC] p-3.5 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-[#14274E]">Promotions & Tags</span>
+              </div>
+              <label className="flex items-center gap-2 text-xs font-semibold text-[#14274E] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.isBestSeller}
+                  onChange={(e) => update('isBestSeller', e.target.checked)}
+                  disabled={isSaving}
+                  className="h-4 w-4 rounded text-amber-500 focus:ring-amber-400"
+                />
+                <span className="inline-flex items-center gap-1">
+                  <span className="text-amber-500 font-bold">★</span> Mark as Best Seller
+                </span>
+              </label>
+            </div>
+
+            {/* Discount Toggle & Fields */}
+            <div className="flex flex-col gap-2 pt-1 border-t border-[#9BA4B4]/15">
+              <label className="flex items-center gap-2 text-xs font-semibold text-[#14274E] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.hasDiscount}
+                  onChange={(e) => update('hasDiscount', e.target.checked)}
+                  disabled={isSaving}
+                  className="h-4 w-4 rounded text-[#14274E] focus:ring-[#14274E]"
+                />
+                <span>Apply Item Discount & Promo Tag</span>
+              </label>
+
+              {form.hasDiscount && (
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <label className="menu-modal-field">
+                    <span className="text-[11px] font-semibold text-[#394867]">Original Price (₱)</span>
+                    <div className="menu-modal-price-wrap">
+                      <span className="menu-modal-price-symbol">₱</span>
+                      <input
+                        className="menu-modal-price-input"
+                        type="text"
+                        value={form.originalPriceRaw}
+                        onChange={(e) => handleOriginalPriceChange(e.target.value)}
+                        placeholder="e.g. 250.00"
+                        disabled={isSaving}
+                      />
+                    </div>
+                  </label>
+
+                  <label className="menu-modal-field">
+                    <span className="text-[11px] font-semibold text-[#394867]">Discount (%)</span>
+                    <div className="menu-modal-price-wrap">
+                      <span className="menu-modal-price-symbol">%</span>
+                      <input
+                        className="menu-modal-price-input"
+                        type="number"
+                        min="1"
+                        max="99"
+                        value={form.discountPercentRaw}
+                        onChange={(e) => handleDiscountPercentChange(e.target.value)}
+                        placeholder="e.g. 20"
+                        disabled={isSaving}
+                      />
+                    </div>
+                  </label>
+                </div>
+              )}
+            </div>
           </div>
 
           <label className="menu-modal-field">

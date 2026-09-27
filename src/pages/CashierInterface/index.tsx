@@ -600,13 +600,17 @@ export default function CashierInterface() {
     if (!selectedTableGroup || orders.length === 0) return
     setBusy(true)
     setError('')
+    const isMerged = selectedTableGroup.group.isMerged
+    const mergeGroupId = isMerged ? (selectedTableGroup.group.anchorTableNum || selectedTableGroup.group.groupId) : null
     const snapshot = buildReceiptSnapshot({
       tableOrders: orders.filter((order) => order.orderStatus !== 'CANCELLED'),
       discountType: 'none',
       customPercent: 0,
       activeBillRequest,
       tableId: selectedTableGroup.group.anchorTableId,
-      tableNum: selectedTableGroup.group.anchorTableNum,
+      tableNum: isMerged && mergeGroupId != null ? `Group ${mergeGroupId}` : selectedTableGroup.group.anchorTableNum,
+      isMerged,
+      mergeGroupId,
     })
     const previousTables = tables
     const previousSummaries = summaries
