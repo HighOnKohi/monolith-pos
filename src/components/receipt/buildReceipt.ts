@@ -97,8 +97,8 @@ export function buildReceiptSnapshot(params: ReceiptBuildParams): ReceiptSnapsho
     lineSubtotal: agg.total,
   }))
 
-  // ── 2. Calculate totals — exactly mirroring CashierRightPanel formulas ──
-  const rawOrdersTotal = tableOrders.reduce((sum, o) => sum + (o.totalBill || 0), 0)
+  // ── 2. Calculate totals — exactly mirroring Cashier formulas ──
+  const rawOrdersTotal = items.reduce((sum, it) => sum + it.lineSubtotal, 0)
 
   // Prices in DB include 5% VAT: strip VAT to get base subtotal
   const baseSubtotal = rawOrdersTotal > 0 ? rawOrdersTotal / 1.05 : 0

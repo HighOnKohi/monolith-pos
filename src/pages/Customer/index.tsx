@@ -127,6 +127,7 @@ export default function CustomerPage() {
     diningType,
     setDiningType,
     addItem,
+    setItemQuantity,
     updateNotes,
     removeItem,
     increaseQty,
@@ -364,8 +365,7 @@ export default function CustomerPage() {
             if (qty === 0) {
               removeItem(activeItem.id)
             } else {
-              if (getQuantity(activeItem.id) === 0) addItem(activeItem, notes)
-              else updateNotes(activeItem.id, notes)
+              setItemQuantity(activeItem, qty, notes)
             }
           }}
         />

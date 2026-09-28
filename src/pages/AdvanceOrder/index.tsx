@@ -64,6 +64,7 @@ export default function AdvanceOrderPage() {
   const [diningType, setDiningType] = useState<DiningType>('dine-in')
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
   const [selectedTableNum, setSelectedTableNum] = useState<number | null>(null)
+  const [guestCount, setGuestCount] = useState<number>(2)
   const [isTableModalOpen, setIsTableModalOpen] = useState(false)
 
   const [cartItems, setCartItems] = useState<CartItem[]>([])
@@ -110,6 +111,7 @@ export default function AdvanceOrderPage() {
         setDiningType(preOrder.diningType)
         setSelectedTableId(preOrder.tableId ?? null)
         setSelectedTableNum(preOrder.tableNum ?? null)
+        if (preOrder.guestCount) setGuestCount(preOrder.guestCount)
         setCartItems(preOrder.cart)
 
         // If no customer name is set, open the setup gate
@@ -260,6 +262,7 @@ export default function AdvanceOrderPage() {
     type: DiningType,
     tableId: number | null,
     tableNum: number | null,
+    guests?: number,
   ) => {
     const saved = saveCustomerName(name)
     const prevId = selectedTableId
@@ -267,15 +270,17 @@ export default function AdvanceOrderPage() {
     setDiningType(type)
     setSelectedTableId(tableId)
     setSelectedTableNum(tableNum)
-    savePreOrderTable(tableId, tableNum, prevId, saved)
+    if (guests) setGuestCount(guests)
+    savePreOrderTable(tableId, tableNum, prevId, saved, guests)
     setIsNameGateOpen(false)
   }
 
-  const handleSelectTable = (tableId: number, tableNum: number) => {
+  const handleSelectTable = (tableId: number, tableNum: number, guests?: number) => {
     const prevId = selectedTableId
     setSelectedTableId(tableId)
     setSelectedTableNum(tableNum)
-    savePreOrderTable(tableId, tableNum, prevId, customerName)
+    if (guests) setGuestCount(guests)
+    savePreOrderTable(tableId, tableNum, prevId, customerName, guests)
   }
 
   const handleResetSession = async () => {
@@ -339,6 +344,7 @@ export default function AdvanceOrderPage() {
         diningType,
         tableId: diningType === 'dine-in' ? selectedTableId : null,
         tableNum: diningType === 'dine-in' ? selectedTableNum : null,
+        guestCount: diningType === 'dine-in' ? guestCount : undefined,
         cartItems,
       })
 
@@ -406,6 +412,7 @@ export default function AdvanceOrderPage() {
         initialDiningType={diningType}
         initialTableId={selectedTableId}
         initialTableNum={selectedTableNum}
+        initialGuestCount={guestCount}
         onSaveSetup={handleSaveSetup}
         onCancel={customerName ? () => setIsNameGateOpen(false) : undefined}
       />
@@ -414,6 +421,7 @@ export default function AdvanceOrderPage() {
       <AdvanceOrderTableModal
         isOpen={isTableModalOpen}
         selectedTableId={selectedTableId}
+        initialGuestCount={guestCount}
         onSelectTable={handleSelectTable}
         onClose={() => setIsTableModalOpen(false)}
       />

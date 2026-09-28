@@ -56,7 +56,7 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
     if (isOpen) {
       setPlacementNotice(null)
       if (maxVenuePax && maxVenuePax > 0) {
-        setTargetPax(Math.min(50, maxVenuePax))
+        setTargetPax(Math.max(4, Math.min(maxVenuePax, 50)))
       }
       void fetchAllTypeConfigs().then((configs) => {
         setTypeConfigs(configs)
@@ -105,6 +105,72 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
     return map
   }, [typeConfigs])
 
+  // Total current weight allocated across all active table types
+  const currentTotalWeight = useMemo(() => {
+    return ALL_TABLE_TYPES.reduce((sum, t) => {
+      const details = typeDetails.get(t)
+      return details?.isActive ? sum + (typeWeights[t] ?? 0) : sum
+    }, 0)
+  }, [typeWeights, typeDetails])
+
+  // Dynamic slider weight change handler:
+  // Sliders ONLY move once the pax size / weights start overflowing the set pax (> 100%)
+  const handleWeightChange = (changedType: TableType, newVal: number) => {
+    const clampedVal = Math.max(0, Math.min(100, newVal))
+    const otherActiveTypes = ALL_TABLE_TYPES.filter(
+      (t) => t !== changedType && (typeDetails.get(t)?.isActive ?? true),
+    )
+
+    if (otherActiveTypes.length === 0) {
+      setTypeWeights({ [changedType]: clampedVal } as Record<TableType, number>)
+      return
+    }
+
+    const currentOtherSum = otherActiveTypes.reduce((sum, t) => sum + (typeWeights[t] ?? 0), 0)
+    const potentialTotalSum = clampedVal + currentOtherSum
+
+    // If the new value does NOT cause total weight to exceed 100% (pax size does not overflow set pax),
+    // other sliders DO NOT MOVE!
+    if (potentialTotalSum <= 100) {
+      setTypeWeights((prev) => ({
+        ...prev,
+        [changedType]: clampedVal,
+      }))
+      return
+    }
+
+    // Pax size starts overflowing the set pax (> 100%):
+    // Rebalance other active sliders so that total sum is capped at 100%
+    const targetOtherSum = 100 - clampedVal
+    const newWeights: Record<TableType, number> = { ...typeWeights, [changedType]: clampedVal }
+
+    if (currentOtherSum > 0) {
+      let allocated = 0
+      otherActiveTypes.forEach((t, idx) => {
+        if (idx === otherActiveTypes.length - 1) {
+          newWeights[t] = Math.max(0, targetOtherSum - allocated)
+        } else {
+          const share = Math.round(((typeWeights[t] ?? 0) / currentOtherSum) * targetOtherSum)
+          newWeights[t] = Math.max(0, share)
+          allocated += newWeights[t]
+        }
+      })
+    } else {
+      const equalShare = Math.floor(targetOtherSum / otherActiveTypes.length)
+      let allocated = 0
+      otherActiveTypes.forEach((t, idx) => {
+        if (idx === otherActiveTypes.length - 1) {
+          newWeights[t] = Math.max(0, targetOtherSum - allocated)
+        } else {
+          newWeights[t] = equalShare
+          allocated += equalShare
+        }
+      })
+    }
+
+    setTypeWeights(newWeights)
+  }
+
   // Calculate dynamic capacity cap based on max_count limits
   const maxPossibleCapacity = useMemo(() => {
     let total = 0
@@ -151,7 +217,7 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
         }
       })
 
-    if (targets.length === 0) {
+    if (targets.length === 0 || currentTotalWeight <= 0) {
       return {
         templateCounts: {} as Record<string, number>,
         totalPax: 0,
@@ -159,8 +225,11 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
       }
     }
 
+    const weightFraction = Math.min(1, Math.max(0, currentTotalWeight / 100))
+    const scaledPax = Math.max(1, Math.round(effectiveRequestedPax * weightFraction))
+
     const dist = calculateCustomTemplateDistribution(
-      effectiveRequestedPax,
+      scaledPax,
       targets,
       maxPossibleCapacity,
     )
@@ -192,7 +261,7 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
       totalPax,
       totalTables,
     }
-  }, [effectiveRequestedPax, typeWeights, maxPossibleCapacity, typeDetails])
+  }, [effectiveRequestedPax, currentTotalWeight, typeWeights, maxPossibleCapacity, typeDetails])
 
   if (!isOpen) return null
 
@@ -407,7 +476,9 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
                 Table Type Weight Distribution
               </h4>
               <span className="text-[10px] font-semibold text-slate-400">
-                Relative weights normalized automatically
+                {currentTotalWeight >= 100
+                  ? 'Capacity 100% · Sliders dynamically rebalance on overflow'
+                  : `Capacity allocated: ${currentTotalWeight}% · Sliders adjust when exceeding set pax`}
               </span>
             </div>
 
@@ -451,7 +522,7 @@ export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> =
                       value={currentWeight}
                       onChange={(e) => {
                         const val = parseInt(e.target.value, 10)
-                        setTypeWeights((prev) => ({ ...prev, [t]: val }))
+                        handleWeightChange(t, val)
                       }}
                       className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#14274E]"
                     />

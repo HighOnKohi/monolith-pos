@@ -73,7 +73,8 @@ export interface UseSharedCartReturn {
   items: CartItem[]
   diningType: DiningType
   setDiningType: (t: DiningType) => void
-  addItem: (item: MenuItem, notes?: string) => void
+  addItem: (item: MenuItem, notes?: string, quantity?: number) => void
+  setItemQuantity: (item: MenuItem, quantity: number, notes?: string) => void
   removeItem: (itemId: string) => void
   increaseQty: (itemId: string) => void
   decreaseQty: (itemId: string) => void
@@ -209,14 +210,25 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
   // ── Mutations ─────────────────────────────────────────────────────────────────
 
   const addItem = useCallback(
-    (item: MenuItem, notes?: string) => {
+    (item: MenuItem, notes?: string, quantity = 1) => {
       setCartState((prev) => {
+        const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit > 0
+        const limit = hasLimit ? item.orderLimit! : Infinity
         const existing = prev.items.find((ci) => ci.item.id === item.id)
+        const currentQty = existing?.quantity ?? 0
+
+        if (currentQty >= limit) {
+          return prev
+        }
+
+        const addAmount = Math.min(quantity, limit - currentQty)
+        if (addAmount <= 0) return prev
+
         const newItems = existing
           ? prev.items.map((ci) =>
-              ci.item.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci,
+              ci.item.id === item.id ? { ...ci, quantity: ci.quantity + addAmount, notes: notes !== undefined ? notes : ci.notes } : ci,
             )
-          : [...prev.items, { item, quantity: 1, notes }]
+          : [...prev.items, { item, quantity: addAmount, notes }]
         const next = { ...prev, items: newItems }
         persistStoredCart(tableId, next)
         channelRef.current?.send({
@@ -224,6 +236,38 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
           event: 'cart_update',
           payload: next,
         })
+        return next
+      })
+    },
+    [tableId],
+  )
+
+  const setItemQuantity = useCallback(
+    (item: MenuItem, quantity: number, notes?: string) => {
+      setCartState((prev) => {
+        const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit > 0
+        const limit = hasLimit ? item.orderLimit! : Infinity
+        const clampedQty = Math.min(quantity, limit)
+
+        let newItems: CartItem[]
+        if (clampedQty <= 0) {
+          newItems = prev.items.filter((ci) => ci.item.id !== item.id)
+        } else {
+          const existing = prev.items.find((ci) => ci.item.id === item.id)
+          if (existing) {
+            newItems = prev.items.map((ci) =>
+              ci.item.id === item.id
+                ? { ...ci, quantity: clampedQty, notes: notes !== undefined ? notes : ci.notes }
+                : ci,
+            )
+          } else {
+            newItems = [...prev.items, { item, quantity: clampedQty, notes }]
+          }
+        }
+
+        const next = { ...prev, items: newItems }
+        persistStoredCart(tableId, next)
+        channelRef.current?.send({ type: 'broadcast', event: 'cart_update', payload: next })
         return next
       })
     },
@@ -241,6 +285,15 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
 
   const increaseQty = useCallback((itemId: string) => {
     setCartState((prev) => {
+      const existing = prev.items.find((ci) => ci.item.id === itemId)
+      if (!existing) return prev
+
+      const hasLimit = typeof existing.item.orderLimit === 'number' && existing.item.orderLimit > 0
+      const limit = hasLimit ? existing.item.orderLimit! : Infinity
+      if (existing.quantity >= limit) {
+        return prev
+      }
+
       const next = {
         ...prev,
         items: prev.items.map((ci) =>
@@ -332,12 +385,12 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
 
   const { items } = cartState
 
-  const subtotal = useMemo(
+  const total = useMemo(
     () => items.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0),
     [items],
   )
-  const tax = useMemo(() => subtotal * TAX_RATE, [subtotal])
-  const total = useMemo(() => subtotal + tax, [subtotal, tax])
+  const subtotal = useMemo(() => total / (1 + TAX_RATE), [total])
+  const tax = useMemo(() => total - subtotal, [total, subtotal])
   const itemCount = useMemo(
     () => items.reduce((sum, ci) => sum + ci.quantity, 0),
     [items],
@@ -364,6 +417,7 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
     diningType,
     setDiningType,
     addItem,
+    setItemQuantity,
     removeItem,
     increaseQty,
     decreaseQty,

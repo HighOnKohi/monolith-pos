@@ -517,6 +517,38 @@ export async function updateTableGuestCount(
   tableNum: number,
   guestCount: number,
 ): Promise<void> {
+  const { data: current } = await supabase
+    .schema('tables')
+    .from('Restaurant_Tables')
+    .select('TABLE_ID, TABLE_NUM, MERGE_GROUP_ID')
+    .eq('TABLE_NUM', tableNum)
+    .maybeSingle()
+
+  if (current) {
+    const anchorId = current.MERGE_GROUP_ID ?? current.TABLE_ID
+    const { data: members } = await supabase
+      .schema('tables')
+      .from('Restaurant_Tables')
+      .select('TABLE_ID')
+      .or(`TABLE_ID.eq.${anchorId},MERGE_GROUP_ID.eq.${anchorId}`)
+
+    const targetIds = (members && members.length > 0)
+      ? members.map((m) => Number(m.TABLE_ID))
+      : [current.TABLE_ID]
+
+    const { error } = await supabase
+      .schema('tables')
+      .from('Restaurant_Tables')
+      .update({ CURRENT_GUEST_COUNT: guestCount })
+      .in('TABLE_ID', targetIds)
+
+    if (error) {
+      console.error('[tableLayoutService] Error updating table guest count:', error)
+      throw error
+    }
+    return
+  }
+
   const { error } = await supabase
     .schema('tables')
     .from('Restaurant_Tables')
@@ -879,5 +911,163 @@ export async function savePresetLayout(
     }
   } catch (err) {
     console.warn('[tableLayoutService] Notice when syncing Restaurant_Tables:', err)
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Table Setup Breakdown & Counts Per Type
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TableTypeCount {
+  type: TableType
+  name: string
+  count: number
+  totalSeats: number
+  shape: string
+}
+
+export interface TableSetupBreakdown {
+  presetId?: number | null
+  presetName?: string
+  totalTables: number
+  totalSeats: number
+  byType: TableTypeCount[]
+}
+
+export function computeTableSetupBreakdown(
+  tables: Array<{ TABLE_TYPE?: number; TABLE_CAPACITY?: number | null }>,
+  presetName?: string,
+  presetId?: number | null,
+): TableSetupBreakdown {
+  const map = new Map<number, { count: number; totalSeats: number }>()
+  let totalSeats = 0
+
+  for (const t of tables) {
+    const typeNum = Number(t.TABLE_TYPE || 1) as TableType
+    const cfg = TABLE_TYPES[typeNum] || TABLE_TYPES[1]
+    const cap = t.TABLE_CAPACITY ?? cfg.defaultCapacity ?? 4
+    totalSeats += cap
+
+    const entry = map.get(typeNum) || { count: 0, totalSeats: 0 }
+    entry.count += 1
+    entry.totalSeats += cap
+    map.set(typeNum, entry)
+  }
+
+  const byType: TableTypeCount[] = []
+  for (const [typeNum, data] of map.entries()) {
+    const cfg = TABLE_TYPES[typeNum as TableType] || TABLE_TYPES[1]
+    byType.push({
+      type: typeNum as TableType,
+      name: cfg.name,
+      count: data.count,
+      totalSeats: data.totalSeats,
+      shape: cfg.shape,
+    })
+  }
+
+  byType.sort((a, b) => a.type - b.type)
+
+  return {
+    presetId,
+    presetName,
+    totalTables: tables.length,
+    totalSeats,
+    byType,
+  }
+}
+
+/**
+ * Fetch the current operational tables setup with breakdown per table type.
+ * Uses the default/active layout preset or live restaurant tables.
+ */
+export async function fetchCurrentTableSetup(): Promise<TableSetupBreakdown> {
+  try {
+    const presets = await fetchAllLayoutPresets()
+    let activePreset = null
+
+    if (typeof window !== 'undefined') {
+      const activeId = localStorage.getItem('table-active-preset-id')
+      if (activeId) {
+        activePreset = presets.find((p) => p.LAYOUT_PRESET_ID === Number(activeId)) || null
+      }
+    }
+
+    if (!activePreset) {
+      activePreset = presets.find((p) => p.IS_DEFAULT) || presets[0] || null
+    }
+
+    if (activePreset) {
+      const layoutTables = await fetchPresetLayout(activePreset.LAYOUT_PRESET_ID)
+      if (layoutTables && layoutTables.length > 0) {
+        return computeTableSetupBreakdown(
+          layoutTables,
+          activePreset.PRESET_NAME,
+          activePreset.LAYOUT_PRESET_ID,
+        )
+      }
+    }
+  } catch (err) {
+    console.warn('[tableLayoutService] Could not load default layout preset:', err)
+  }
+
+  // Fallback to Table_Layout_Info directly
+  try {
+    const { data: infoRows } = await supabase
+      .schema('tables')
+      .from('Table_Layout_Info')
+      .select('TABLE_TYPE, TABLE_CAPACITY')
+      .limit(100)
+
+    if (infoRows && infoRows.length > 0) {
+      return computeTableSetupBreakdown(
+        infoRows.map((r) => ({
+          TABLE_TYPE: Number(r.TABLE_TYPE) as TableType,
+          TABLE_CAPACITY: r.TABLE_CAPACITY != null ? Number(r.TABLE_CAPACITY) : 4,
+        })),
+        'Active Setup',
+        null,
+      )
+    }
+  } catch (err) {
+    console.warn('[tableLayoutService] Could not query Table_Layout_Info fallback:', err)
+  }
+
+  // Fallback to live restaurant tables
+  try {
+    const liveTables = await fetchLiveRestaurantTables()
+    const mapped = liveTables.map((t) => ({
+      TABLE_TYPE: 1 as TableType,
+      TABLE_CAPACITY: t.GUEST_CAPACITY || 4,
+    }))
+    return computeTableSetupBreakdown(mapped, 'Default Setup', null)
+  } catch {
+    return {
+      totalTables: 0,
+      totalSeats: 0,
+      byType: [],
+    }
+  }
+}
+
+/**
+ * Fetch table setup breakdown for a specific preset ID.
+ */
+export async function fetchPresetTableSetup(
+  presetId: number,
+  presetName?: string,
+): Promise<TableSetupBreakdown> {
+  try {
+    const layoutTables = await fetchPresetLayout(presetId)
+    return computeTableSetupBreakdown(layoutTables, presetName, presetId)
+  } catch (err) {
+    console.warn(`[tableLayoutService] Could not load preset layout #${presetId}:`, err)
+    return {
+      presetId,
+      presetName,
+      totalTables: 0,
+      totalSeats: 0,
+      byType: [],
+    }
   }
 }

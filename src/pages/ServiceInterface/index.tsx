@@ -660,7 +660,7 @@ export default function CashierPage() {
 
     try {
       const subtotal = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
-      const total = subtotal * 1.05
+      const total = subtotal
       const optimisticOrderId = -Date.now()
       const optimisticOrder: Order = {
         orderId: optimisticOrderId,

@@ -425,10 +425,28 @@ export async function createEvent(
       res = await supabase.from('Restaurant_Events').insert(insertObj).select().single()
     }
 
-    if (res.error) throw res.error
-
     isUsingFallbackStorage = false
     const mapped = mapRow(res.data)
+
+    // Audit logging
+    try {
+      const { logTableAction } = await import('@/services/tableAuditService')
+      const { logCashierAction } = await import('@/services/cashierAuditService')
+      void logTableAction(
+        'TABLE_CREATED',
+        `Event "${mapped.title}" was created by ${userEmail ?? 'Staff'} (Scheduled: ${mapped.startAt} to ${mapped.endAt}).`,
+        { targetEntity: 'EVENT', targetId: String(mapped.eventId), metadata: { ...mapped } },
+      )
+      void logCashierAction({
+        action: 'EVENT_CREATED',
+        entityType: 'EVENT',
+        entityId: String(mapped.eventId),
+        description: `Event "${mapped.title}" created by ${userEmail ?? 'Staff'} (Starts: ${mapped.startAt})`,
+        metadata: { ...mapped, createdBy: userEmail },
+      })
+    } catch {
+      // non-blocking
+    }
 
     return mapped
   } catch (err) {
@@ -554,6 +572,26 @@ export async function updateEvent(
 
     isUsingFallbackStorage = false
     const mapped = mapRow(res.data)
+
+    // Audit logging
+    try {
+      const { logTableAction } = await import('@/services/tableAuditService')
+      const { logCashierAction } = await import('@/services/cashierAuditService')
+      void logTableAction(
+        'TABLE_STATUS_CHANGED',
+        `Event "${mapped.title}" (ID: ${mapped.eventId}) updated by ${userEmail ?? 'Staff'}.`,
+        { targetEntity: 'EVENT', targetId: String(mapped.eventId), metadata: { ...mapped } },
+      )
+      void logCashierAction({
+        action: 'EVENT_UPDATED',
+        entityType: 'EVENT',
+        entityId: String(mapped.eventId),
+        description: `Event "${mapped.title}" updated by ${userEmail ?? 'Staff'}`,
+        metadata: { ...mapped, updatedBy: userEmail },
+      })
+    } catch {
+      // non-blocking
+    }
 
     return mapped
   } catch (err) {
@@ -694,6 +732,20 @@ export async function activateEvent(event: RestaurantEvent): Promise<void> {
       // Ignore
     }
   }
+
+  // Audit logging
+  try {
+    const { logCashierAction } = await import('@/services/cashierAuditService')
+    void logCashierAction({
+      action: 'EVENT_ACTIVATED',
+      entityType: 'EVENT',
+      entityId: String(event.eventId),
+      description: `Event "${event.title}" was activated (Preset #${event.presetId ?? 'None'})`,
+      metadata: { eventId: event.eventId, presetId: event.presetId, menuPresetId: event.menuPresetId },
+    })
+  } catch {
+    // non-blocking
+  }
 }
 
 export async function deactivateEvent(eventId: number): Promise<void> {
@@ -780,6 +832,20 @@ export async function deactivateEvent(eventId: number): Promise<void> {
       // Ignore
     }
   }
+
+  // Audit logging
+  try {
+    const { logCashierAction } = await import('@/services/cashierAuditService')
+    void logCashierAction({
+      action: 'EVENT_DEACTIVATED',
+      entityType: 'EVENT',
+      entityId: String(eventId),
+      description: `Event #${eventId} was deactivated and reverted to default layout/menu`,
+      metadata: { eventId },
+    })
+  } catch {
+    // non-blocking
+  }
 }
 
 // ─── Cancel Event ──────────────────────────────────────────────────────────────
@@ -794,31 +860,51 @@ export async function cancelEvent(eventId: number, userEmail?: string | null): P
     }
   }
 
+  const now = new Date().toISOString()
   try {
+    const cancelPayload: Record<string, unknown> = {
+      IS_CANCELLED: true,
+      UPDATED_AT: now,
+      UPDATED_BY: userEmail ?? null,
+    }
     const { error } = await supabase
       .from('Restaurant_Events')
-      .update({
-        IS_CANCELLED: true,
-        IS_ACTIVE: false,
-        UPDATED_AT: new Date().toISOString(),
-        UPDATED_BY: userEmail ?? null,
-      })
+      .update(cancelPayload)
       .eq('EVENT_ID', eventId)
 
-    if (error) throw error
+    if (error) {
+      // Try events schema
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await supabase.schema('events' as any).from('Restaurant_Events').update(cancelPayload).eq('EVENT_ID', eventId)
+    }
     isUsingFallbackStorage = false
   } catch (err) {
     console.warn('[eventService] Supabase cancelEvent failed, cancelling in localStorage fallback:', err)
     isUsingFallbackStorage = true
-    const fallbackAll = getFallbackEvents()
-    const index = fallbackAll.findIndex((e) => e.eventId === eventId)
-    if (index !== -1) {
-      fallbackAll[index].isCancelled = true
-      fallbackAll[index].isActive = false
-      fallbackAll[index].updatedAt = new Date().toISOString()
-      fallbackAll[index].updatedBy = userEmail ?? null
-      saveFallbackEvents(fallbackAll)
-    }
+  }
+
+  const fallbackAll = getFallbackEvents()
+  const index = fallbackAll.findIndex((e) => e.eventId === eventId)
+  if (index !== -1) {
+    fallbackAll[index].isCancelled = true
+    fallbackAll[index].isActive = false
+    fallbackAll[index].updatedAt = now
+    fallbackAll[index].updatedBy = userEmail ?? null
+    saveFallbackEvents(fallbackAll)
+  }
+
+  // Audit logging
+  try {
+    const { logCashierAction } = await import('@/services/cashierAuditService')
+    void logCashierAction({
+      action: 'EVENT_CANCELLED',
+      entityType: 'EVENT',
+      entityId: String(eventId),
+      description: `Event #${eventId} was cancelled by ${userEmail ?? 'Staff'}`,
+      metadata: { eventId, cancelledBy: userEmail },
+    })
+  } catch {
+    // non-blocking
   }
 }
 
@@ -834,31 +920,80 @@ export async function deleteEvent(eventId: number, userEmail?: string | null): P
     }
   }
 
+  const now = new Date().toISOString()
+
   try {
-    const { error } = await supabase
+    const deletePayload: Record<string, unknown> = {
+      DELETED_AT: now,
+      UPDATED_AT: now,
+      UPDATED_BY: userEmail ?? null,
+    }
+
+    const { error: pubErr } = await supabase
       .from('Restaurant_Events')
-      .update({
-        DELETED_AT: new Date().toISOString(),
-        IS_ACTIVE: false,
-        UPDATED_AT: new Date().toISOString(),
-        UPDATED_BY: userEmail ?? null,
-      })
+      .update(deletePayload)
       .eq('EVENT_ID', eventId)
 
-    if (error) throw error
-    isUsingFallbackStorage = false
+    if (!pubErr) {
+      isUsingFallbackStorage = false
+    } else {
+      console.warn('[eventService] Public soft delete failed, trying fallback schema/hard delete:', pubErr)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: eventsErr } = await supabase
+        .schema('events' as any)
+        .from('Restaurant_Events')
+        .update(deletePayload)
+        .eq('EVENT_ID', eventId)
+
+      if (!eventsErr) {
+        isUsingFallbackStorage = false
+      } else {
+        // Fallback to hard delete if soft delete column is unavailable
+        const { error: hardErr } = await supabase
+          .from('Restaurant_Events')
+          .delete()
+          .eq('EVENT_ID', eventId)
+
+        if (!hardErr) {
+          isUsingFallbackStorage = false
+        }
+      }
+    }
   } catch (err) {
     console.warn('[eventService] Supabase deleteEvent failed, soft-deleting in localStorage fallback:', err)
-    isUsingFallbackStorage = true
-    const fallbackAll = getFallbackEvents()
-    const index = fallbackAll.findIndex((e) => e.eventId === eventId)
-    if (index !== -1) {
-      fallbackAll[index].deletedAt = new Date().toISOString()
-      fallbackAll[index].isActive = false
-      fallbackAll[index].updatedAt = new Date().toISOString()
-      fallbackAll[index].updatedBy = userEmail ?? null
-      saveFallbackEvents(fallbackAll)
-    }
+  }
+
+  // Also remove or soft-delete in local fallback storage
+  const fallbackAll = getFallbackEvents()
+  const index = fallbackAll.findIndex((e) => e.eventId === eventId)
+  if (index !== -1) {
+    fallbackAll[index].deletedAt = now
+    fallbackAll[index].isActive = false
+    fallbackAll[index].updatedAt = now
+    fallbackAll[index].updatedBy = userEmail ?? null
+    saveFallbackEvents(fallbackAll)
+  }
+
+  // Audit logging
+  try {
+    const { logTableAction } = await import('@/services/tableAuditService')
+    const { logCashierAction } = await import('@/services/cashierAuditService')
+
+    void logTableAction(
+      'EVENT_LAYOUT_RESET',
+      `Event #${eventId} was deleted by ${userEmail ?? 'Staff'}.`,
+      { targetEntity: 'EVENT', targetId: String(eventId), metadata: { deletedAt: now, userEmail } },
+    )
+
+    void logCashierAction({
+      action: 'EVENT_DELETED',
+      entityType: 'EVENT',
+      entityId: String(eventId),
+      description: `Event #${eventId} deleted by ${userEmail ?? 'Staff'}`,
+      metadata: { deletedAt: now, userEmail },
+    })
+  } catch (logErr) {
+    console.warn('[eventService] Audit logging failed for deleteEvent:', logErr)
   }
 }
 

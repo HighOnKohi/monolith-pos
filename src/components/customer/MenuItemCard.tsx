@@ -21,7 +21,9 @@ const FALLBACK_IMG = DEFAULT_FOOD_PLACEHOLDER
 
 export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecrease }: MenuItemCardProps) {
   const inCart = quantity > 0
-  const isSoldOut = item.isSoldOut
+  const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit > 0
+  const isLimitReached = hasLimit && quantity >= item.orderLimit!
+  const isSoldOut = item.isSoldOut || (hasLimit && item.orderLimit! <= 0)
 
   return (
     <article
@@ -132,14 +134,27 @@ export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecre
           {item.name}
         </h2>
 
-        {/* Price */}
+        {/* Price & Stock info */}
         <div className="flex items-baseline justify-between mt-auto mb-3">
-          <span className="text-base font-black text-[#14274E] tracking-tight">
-            ₱{item.price.toFixed(2)}
-          </span>
-          {item.originalPrice && (
-            <span className="text-xs text-[#9BA4B4] line-through font-semibold">
-              ₱{item.originalPrice.toFixed(2)}
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-base font-black text-[#14274E] tracking-tight">
+              ₱{item.price.toFixed(2)}
+            </span>
+            {item.originalPrice && (
+              <span className="text-xs text-[#9BA4B4] line-through font-semibold">
+                ₱{item.originalPrice.toFixed(2)}
+              </span>
+            )}
+          </div>
+          {hasLimit && (
+            <span
+              className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${
+                isLimitReached
+                  ? 'bg-amber-100 text-amber-800 border border-amber-300/60'
+                  : 'bg-[#14274E]/10 text-[#14274E] border border-[#14274E]/15'
+              }`}
+            >
+              {isLimitReached ? `Limit reached (${item.orderLimit})` : `Stock: ${item.orderLimit} left`}
             </span>
           )}
         </div>
@@ -155,13 +170,16 @@ export function MenuItemCard({ item, quantity, onTap, onAdd, onIncrease, onDecre
         ) : inCart ? (
           <QuantityControl
             quantity={quantity}
+            max={hasLimit ? item.orderLimit : undefined}
+            disableIncrease={isLimitReached}
             onIncrease={(e?: React.MouseEvent) => { e?.stopPropagation?.(); onIncrease() }}
             onDecrease={(e?: React.MouseEvent) => { e?.stopPropagation?.(); onDecrease() }}
           />
         ) : (
           <button
             onClick={(e) => { e.stopPropagation(); onAdd() }}
-            className="w-full py-2.5 rounded-xl bg-[#F1F6F9] hover:bg-[#14274E] hover:text-white border border-[#9BA4B4]/35 text-[#14274E] text-xs font-extrabold interactive-button flex items-center justify-center gap-1 min-h-[42px]"
+            disabled={hasLimit && item.orderLimit! <= 0}
+            className="w-full py-2.5 rounded-xl bg-[#F1F6F9] hover:bg-[#14274E] hover:text-white border border-[#9BA4B4]/35 text-[#14274E] text-xs font-extrabold interactive-button flex items-center justify-center gap-1 min-h-[42px] disabled:opacity-40 disabled:cursor-not-allowed"
           >
             + Add to Dish
           </button>

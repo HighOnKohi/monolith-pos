@@ -426,24 +426,25 @@ export async function updateTable(
 
   // Check if this table is part of a merge group (as anchor or secondary)
   const anchorId = current.MERGE_GROUP_ID ?? current.TABLE_ID
-  const { data: secondariesData, error: secErr } = await supabase
+  const { data: groupTablesData, error: grpErr } = await supabase
     .schema('tables').from('Restaurant_Tables')
     .select('*')
-    .eq('MERGE_GROUP_ID', anchorId)
+    .or(`TABLE_ID.eq.${anchorId},MERGE_GROUP_ID.eq.${anchorId}`)
 
-  if (secErr) throw secErr
+  if (grpErr) throw grpErr
 
-  const secondaries = (secondariesData ?? []) as TableData[]
-  const isMerged = current.MERGE_GROUP_ID !== null || secondaries.length > 0
-
-  const memberIds = new Set<number>()
-  memberIds.add(anchorId)
-  secondaries.forEach((s) => memberIds.add(Number(s.TABLE_ID)))
-  const targetIds = Array.from(memberIds)
+  const allGroupMembers = (groupTablesData ?? []) as TableData[]
+  const isMerged = allGroupMembers.length > 1
+  const targetIds = isMerged ? allGroupMembers.map((m) => Number(m.TABLE_ID)) : [tableId]
 
   // Individual table capacity (not overridden by group capacity)
   const effectiveCapacity = fields.capacity ?? current.GUEST_CAPACITY
   const currentPax = current.CURRENT_GUEST_COUNT
+
+  // Total capacity (group combined capacity if merged, else individual)
+  const groupCapacity = isMerged
+    ? allGroupMembers.reduce((sum, m) => sum + (Number(m.GUEST_CAPACITY) || 4), 0)
+    : effectiveCapacity
 
   // Validate capacity
   if (fields.capacity !== undefined && !isMerged && fields.capacity < currentPax) {
@@ -452,13 +453,16 @@ export async function updateTable(
     )
   }
 
-  // Validate seatedPax strictly against this individual table's capacity
+  // Validate seatedPax against group capacity if merged, or individual table capacity
   if (fields.seatedPax !== undefined) {
     if (!Number.isInteger(fields.seatedPax) || fields.seatedPax < 0) {
       throw new Error('Seated pax must be 0 or greater.')
     }
-    if (fields.seatedPax > effectiveCapacity) {
-      throw new Error(`Seated pax (${fields.seatedPax}) cannot exceed Table #${current.TABLE_NUM}'s capacity (${effectiveCapacity}).`)
+    const maxAllowed = isMerged ? groupCapacity : effectiveCapacity
+    if (fields.seatedPax > maxAllowed) {
+      throw new Error(
+        `Seated pax (${fields.seatedPax}) cannot exceed ${isMerged ? 'merged group' : `Table #${current.TABLE_NUM}`}'s capacity (${maxAllowed}).`,
+      )
     }
   }
 
@@ -492,16 +496,17 @@ export async function updateTable(
   if (fields.seatedPax !== undefined) {
     const newPax = fields.seatedPax
 
-    // Update target table's guest count directly (preserves individual table max pax in merged groups)
     const payload: Record<string, unknown> = { CURRENT_GUEST_COUNT: newPax }
     if (newPax > 0 && (current.STATUS === 'AVAILABLE' || current.STATUS === 'RESERVED')) {
       payload.STATUS = 'OCCUPIED'
     }
 
+    // Shared guest count for merged tables: update all member tables
+    const idsToUpdate = isMerged ? targetIds : [tableId]
     const { error: paxErr } = await supabase
       .schema('tables').from('Restaurant_Tables')
       .update(payload)
-      .eq('TABLE_ID', tableId)
+      .in('TABLE_ID', idsToUpdate)
     if (paxErr) throw paxErr
   }
 
@@ -616,28 +621,33 @@ export async function reserveTable(tableId: number, reservation: ReservationData
   if (fetchErr) throw fetchErr
   if (!current) throw new Error('Table not found.')
 
-  const capacity = (current as { GUEST_CAPACITY: number }).GUEST_CAPACITY
+  const anchorId = (current as { MERGE_GROUP_ID: number | null }).MERGE_GROUP_ID ?? tableId
+  const { data: members, error: membersErr } = await supabase
+    .schema('tables').from('Restaurant_Tables')
+    .select('TABLE_ID, GUEST_CAPACITY')
+    .or(`MERGE_GROUP_ID.eq.${anchorId},TABLE_ID.eq.${anchorId}`)
+  if (membersErr) throw membersErr
+
+  const targetIds = (members && members.length > 0)
+    ? members.map((m) => Number(m.TABLE_ID))
+    : [tableId]
+
+  const effectiveCapacity = (members && members.length > 0)
+    ? members.reduce((sum, m) => sum + (Number(m.GUEST_CAPACITY) || 4), 0)
+    : (current as { GUEST_CAPACITY: number }).GUEST_CAPACITY
+
   const status = (current as { STATUS: string }).STATUS
 
   if (OCCUPIED_STATUSES.includes(status as TableStatus)) {
     throw new Error(`Table ${(current as { TABLE_NUM: number }).TABLE_NUM} is occupied and cannot be reserved.`)
   }
   if (reservation.pax < 1) throw new Error('Reservation pax must be at least 1.')
-  if (reservation.pax > capacity) {
+  if (reservation.pax > effectiveCapacity) {
     throw new Error(
-      `Reservation pax (${reservation.pax}) exceeds table capacity (${capacity}).`,
+      `Reservation pax (${reservation.pax}) exceeds combined table capacity (${effectiveCapacity}).`,
     )
   }
   if (!reservation.name.trim()) throw new Error('Guest name is required.')
-
-  const anchorId = (current as { MERGE_GROUP_ID: number | null }).MERGE_GROUP_ID ?? tableId
-  const { data: members, error: membersErr } = await supabase
-    .schema('tables').from('Restaurant_Tables')
-    .select('TABLE_ID')
-    .eq('MERGE_GROUP_ID', anchorId)
-  if (membersErr) throw membersErr
-
-  const targetIds = [anchorId, ...(members ?? []).map((member) => Number(member.TABLE_ID))]
   const { data: reservationRow, error: reservationError } = await supabase
     .from('Table_Reservations')
     .insert({
@@ -926,29 +936,33 @@ export async function mergeTables(tableIds: number[]): Promise<TableData[]> {
     }
   }
 
-  // 2. Update primary (preserve individual table capacity and seated pax)
+  // 2. Update primary and secondaries: combine seated pax into one shared count across group
   const hasBillOut = preview.allMembers.some((t) => Boolean(t.BILL_OUT_REQUESTED))
-  const primaryMember = preview.allMembers.find((t) => t.TABLE_ID === primaryId)
-  const primaryCapacity = primaryMember?.GUEST_CAPACITY || 4
-  const primaryPax = primaryMember?.CURRENT_GUEST_COUNT || 0
+  const combinedPax = preview.totalSeatedPax
+  const isOccupied = combinedPax > 0 || preview.occupiedTables.length > 0
+  const combinedStatus: TableStatus = isOccupied ? 'OCCUPIED' : 'AVAILABLE'
 
   const { error: primaryErr } = await supabase
     .schema('tables').from('Restaurant_Tables')
     .update({
-      GUEST_CAPACITY: primaryCapacity,
-      CURRENT_GUEST_COUNT: primaryPax,
-      STATUS: primaryPax > 0 || preview.occupiedTables.some(t => t.TABLE_ID === primaryId) ? 'OCCUPIED' : 'AVAILABLE',
+      CURRENT_GUEST_COUNT: combinedPax,
+      STATUS: combinedStatus,
       BILL_OUT_REQUESTED: hasBillOut,
       MERGE_GROUP_ID: null,
     })
     .eq('TABLE_ID', primaryId)
   if (primaryErr) throw primaryErr
 
-  // 3. Update secondaries (preserve individual table capacity and seated pax)
+  // 3. Update secondaries: assign merge group ID and sync combined seated pax & status
   if (secondaryIds.length > 0) {
     const { error: secErr } = await supabase
       .schema('tables').from('Restaurant_Tables')
-      .update({ MERGE_GROUP_ID: primaryId, BILL_OUT_REQUESTED: false })
+      .update({
+        MERGE_GROUP_ID: primaryId,
+        CURRENT_GUEST_COUNT: combinedPax,
+        STATUS: combinedStatus,
+        BILL_OUT_REQUESTED: false,
+      })
       .in('TABLE_ID', secondaryIds)
     if (secErr) throw secErr
   }
@@ -1011,7 +1025,7 @@ export async function unmergeTables(primaryTableId: number): Promise<TableData[]
   const { error: releaseErr } = await supabase
     .schema('tables').from('Restaurant_Tables')
     .update({ MERGE_GROUP_ID: null, STATUS: 'AVAILABLE', CURRENT_GUEST_COUNT: 0 })
-    .in('TABLE_ID', secondaryIds)
+    .in('TABLE_ID', allGroupTableIds)
   if (releaseErr) throw releaseErr
 
   // Individual capacities are preserved on both primary and secondaries

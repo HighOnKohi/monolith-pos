@@ -1,17 +1,20 @@
 import { useState, useEffect } from 'react'
 import { Utensils, X, Users, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react'
 import { fetchAllTables, type TableData } from '@/services/tableService'
+import { resolveTableGroupByList } from '@/services/tableGroupService'
 
 interface AdvanceOrderTableModalProps {
   isOpen: boolean
   selectedTableId?: number | null
-  onSelectTable: (tableId: number, tableNum: number) => void
+  initialGuestCount?: number
+  onSelectTable: (tableId: number, tableNum: number, guestCount?: number) => void
   onClose: () => void
 }
 
 export function AdvanceOrderTableModal({
   isOpen,
   selectedTableId,
+  initialGuestCount = 2,
   onSelectTable,
   onClose,
 }: AdvanceOrderTableModalProps) {
@@ -19,6 +22,7 @@ export function AdvanceOrderTableModal({
   const [isLoading, setIsLoading] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(selectedTableId ?? null)
+  const [guestCount, setGuestCount] = useState<number>(initialGuestCount)
 
   const loadTables = async () => {
     setIsLoading(true)
@@ -41,17 +45,19 @@ export function AdvanceOrderTableModal({
   useEffect(() => {
     if (isOpen) {
       setSelectedId(selectedTableId ?? null)
+      setGuestCount(initialGuestCount)
       loadTables()
     }
-  }, [isOpen, selectedTableId])
+  }, [isOpen, selectedTableId, initialGuestCount])
 
   if (!isOpen) return null
 
   const selectedTable = tables.find((t) => t.TABLE_ID === selectedId)
+  const selectedGroup = selectedId ? resolveTableGroupByList(selectedId, tables) : null
 
   const handleConfirm = () => {
     if (selectedTable) {
-      onSelectTable(selectedTable.TABLE_ID, selectedTable.TABLE_NUM)
+      onSelectTable(selectedTable.TABLE_ID, selectedTable.TABLE_NUM, selectedGroup?.isMerged ? guestCount : undefined)
       onClose()
     }
   }
@@ -119,43 +125,97 @@ export function AdvanceOrderTableModal({
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {tables.map((table) => {
-                const isSelected = selectedId === table.TABLE_ID
-                return (
-                  <button
-                    key={table.TABLE_ID}
-                    type="button"
-                    onClick={() => setSelectedId(table.TABLE_ID)}
-                    className={`p-3.5 rounded-2xl border-2 text-left transition-all relative flex flex-col justify-between min-h-[95px] cursor-pointer ${
-                      isSelected
-                        ? 'border-[#14274E] bg-[#14274E]/5 ring-2 ring-[#14274E]/20 shadow-xs'
-                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 bg-white'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between w-full">
-                      <span className="text-base font-black text-[#14274E]">
-                        Table {table.TABLE_NUM}
-                      </span>
-                      {isSelected ? (
-                        <CheckCircle2 className="w-4 h-4 text-[#14274E] shrink-0" />
-                      ) : (
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-1" />
-                      )}
-                    </div>
-
-                    <div className="pt-2">
-                      <div className="flex items-center gap-1 text-[11px] font-bold text-slate-500">
-                        <Users className="w-3 h-3 text-slate-400" />
-                        <span>Up to {table.GUEST_CAPACITY || 4} guests</span>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {tables.map((table) => {
+                  const isSelected = selectedId === table.TABLE_ID
+                  const groupInfo = resolveTableGroupByList(table.TABLE_ID, tables)
+                  return (
+                    <button
+                      key={table.TABLE_ID}
+                      type="button"
+                      onClick={() => {
+                        setSelectedId(table.TABLE_ID)
+                        if (groupInfo.isMerged) {
+                          setGuestCount((prev) => Math.min(groupInfo.capacity, Math.max(1, prev)))
+                        }
+                      }}
+                      className={`p-3.5 rounded-2xl border-2 text-left transition-all relative flex flex-col justify-between min-h-[95px] cursor-pointer ${
+                        isSelected
+                          ? 'border-[#14274E] bg-[#14274E]/5 ring-2 ring-[#14274E]/20 shadow-xs'
+                          : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between w-full">
+                        <span className="text-base font-black text-[#14274E]">
+                          Table {table.TABLE_NUM}
+                        </span>
+                        {isSelected ? (
+                          <CheckCircle2 className="w-4 h-4 text-[#14274E] shrink-0" />
+                        ) : (
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-1" />
+                        )}
                       </div>
-                      <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md mt-1 inline-block">
-                        Available
-                      </span>
+
+                      <div className="pt-2">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
+                          <span className="flex items-center gap-1">
+                            <Users className="w-3 h-3 text-slate-400" />
+                            {table.GUEST_CAPACITY || 4} guests
+                          </span>
+                          {groupInfo.isMerged && (
+                            <span className="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 text-[9px] font-extrabold">
+                              Merged ({groupInfo.capacity})
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md mt-1 inline-block">
+                          Available
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Guest Count Stepper if Merged Table Selected */}
+              {selectedGroup?.isMerged && (
+                <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl space-y-2 mt-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-black text-[#14274E]">
+                      <Users className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Merged Tables Group ({selectedGroup.memberTableNums.map((n) => `T${n}`).join(' + ')})</span>
                     </div>
-                  </button>
-                )
-              })}
+                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                      Capacity: {selectedGroup.capacity} seats
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-xs text-slate-600 font-bold">Party Guest Count:</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setGuestCount((prev) => Math.max(1, prev - 1))}
+                        disabled={guestCount <= 1}
+                        className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-700 font-black flex items-center justify-center hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                      >
+                        -
+                      </button>
+                      <span className="w-6 text-center text-sm font-black text-[#14274E]">
+                        {guestCount}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setGuestCount((prev) => Math.min(selectedGroup.capacity, prev + 1))}
+                        disabled={guestCount >= selectedGroup.capacity}
+                        className="w-7 h-7 rounded-lg bg-[#14274E] text-white font-black flex items-center justify-center hover:bg-[#203c73] disabled:opacity-40 cursor-pointer"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

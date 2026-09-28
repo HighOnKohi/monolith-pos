@@ -49,10 +49,9 @@ function buildGroupInfoFromMembers(
   const capacity = isMerged
     ? sortedMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY || 0), 0)
     : anchorTable.GUEST_CAPACITY
-  const currentGuestCount = sortedMembers.reduce(
-    (sum, m) => sum + (m.CURRENT_GUEST_COUNT || 0),
-    0,
-  )
+  const currentGuestCount = isMerged
+    ? Math.max(...sortedMembers.map((m) => m.CURRENT_GUEST_COUNT || 0), 0)
+    : (anchorTable.CURRENT_GUEST_COUNT || 0)
   const billOutRequested = sortedMembers.some((m) => Boolean(m.BILL_OUT_REQUESTED))
 
   // Aggregate status

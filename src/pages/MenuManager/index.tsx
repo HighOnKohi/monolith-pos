@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Search, Plus, Edit2, Trash2, ChevronDown, Pencil, Lock } from 'lucide-react'
 import { useMenu } from '@/hooks/useMenu'
 import { useActiveEvent } from '@/hooks/useActiveEvent'
+import { useBusinessDay } from '@/hooks/useBusinessDay'
 import {
   createMenuItem,
   createCategory,
@@ -24,6 +25,7 @@ import { ConfirmModal } from '@/components/menu/ConfirmModal'
 export default function MenuManagerPage() {
   const { items, categories, loadState, setItems, setCategories, reload, presets, activePresetId, setActivePresetId, createPreset } = useMenu()
   const { activeEvent, isEventActive } = useActiveEvent()
+  const { isOpen: isBusinessDayOpen } = useBusinessDay()
 
   const [activeCat, setActiveCat]             = useState<string>('all')
   const [editingItem, setEditingItem]         = useState<MenuItem | null>(null)
@@ -286,6 +288,10 @@ export default function MenuManagerPage() {
   }
 
   async function handleRenamePreset(presetId: number, currentName: string) {
+    if (isBusinessDayOpen) {
+      showToast('Cannot rename menu preset while Business Day is active. Please end the business day first.', 'error')
+      return
+    }
     const newName = window.prompt('Enter new name for menu preset:', currentName)
     if (!newName || !newName.trim() || newName.trim() === currentName) return
     try {
@@ -298,6 +304,10 @@ export default function MenuManagerPage() {
   }
 
   async function handleDeletePreset(presetId: number, presetName: string) {
+    if (isBusinessDayOpen) {
+      showToast('Cannot delete menu preset while Business Day is active. Please end the business day first.', 'error')
+      return
+    }
     if (isEventActive) {
       showToast(`Cannot delete preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
       return
@@ -352,8 +362,15 @@ export default function MenuManagerPage() {
             <div className="menu-preset-dropdown">
               <button
                 type="button"
-                className={`menu-preset-dropdown-trigger ${isEventActive ? 'opacity-85 cursor-not-allowed border-amber-300' : ''}`}
+                className={`menu-preset-dropdown-trigger ${isEventActive || isBusinessDayOpen ? 'opacity-85 cursor-not-allowed border-amber-300' : ''}`}
                 onClick={() => {
+                  if (isBusinessDayOpen) {
+                    showToast(
+                      'Menu preset switching is locked while Business Day is active. Please end the business day to switch presets.',
+                      'error'
+                    )
+                    return
+                  }
                   if (isEventActive) {
                     showToast(
                       `Preset switching is locked while event "${activeEvent?.title ?? 'Active Event'}" is active. Deactivate the event in Events to switch presets.`,
@@ -364,17 +381,27 @@ export default function MenuManagerPage() {
                   setPresetDropdownOpen((open) => !open)
                 }}
                 aria-expanded={isPresetDropdownOpen}
-                title={isEventActive ? `Locked: Event "${activeEvent?.title}" is active` : undefined}
+                title={
+                  isEventActive
+                    ? `Locked: Event "${activeEvent?.title}" is active`
+                    : isBusinessDayOpen
+                    ? 'Locked: Business Day is active'
+                    : undefined
+                }
               >
-                {isEventActive && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0 mr-1" />}
+                {(isEventActive || isBusinessDayOpen) && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0 mr-1" />}
                 <span className="menu-preset-dropdown-label">
                   <span className="menu-preset-dropdown-prefix">Preset: </span>
                   {presets.find((preset) => preset.PRESET_ID === activePresetId)?.PRESET_NAME ?? 'Default'}
-                  {isEventActive && (
+                  {isEventActive ? (
                     <span className="ml-1.5 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
                       Event Active
                     </span>
-                  )}
+                  ) : isBusinessDayOpen ? (
+                    <span className="ml-1.5 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                      Day Active
+                    </span>
+                  ) : null}
                 </span>
                 <ChevronDown className={`menu-preset-dropdown-chevron ${isPresetDropdownOpen ? 'is-open' : ''}`} />
               </button>
@@ -388,6 +415,11 @@ export default function MenuManagerPage() {
                           key={preset.PRESET_ID}
                           className={`menu-preset-dropdown-option group ${isSelected ? 'is-selected' : ''}`}
                           onClick={() => {
+                            if (isBusinessDayOpen) {
+                              showToast('Cannot switch menu preset while Business Day is active.', 'error')
+                              setPresetDropdownOpen(false)
+                              return
+                            }
                             if (isEventActive) {
                               showToast(`Cannot switch preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
                               setPresetDropdownOpen(false)
@@ -406,6 +438,7 @@ export default function MenuManagerPage() {
                               type="button"
                               title="Rename Preset"
                               className="menu-preset-action-btn"
+                              disabled={isEventActive || isBusinessDayOpen}
                               onClick={() => {
                                 setPresetDropdownOpen(false)
                                 void handleRenamePreset(preset.PRESET_ID, preset.PRESET_NAME)
@@ -418,6 +451,7 @@ export default function MenuManagerPage() {
                                 type="button"
                                 title="Delete Preset"
                                 className="menu-preset-action-btn delete"
+                                disabled={isEventActive || isBusinessDayOpen}
                                 onClick={() => {
                                   setPresetDropdownOpen(false)
                                   void handleDeletePreset(preset.PRESET_ID, preset.PRESET_NAME)
@@ -434,7 +468,12 @@ export default function MenuManagerPage() {
                   <button
                     type="button"
                     className="menu-preset-dropdown-footer"
+                    disabled={isEventActive || isBusinessDayOpen}
                     onClick={() => {
+                      if (isBusinessDayOpen) {
+                        showToast('Cannot create preset while Business Day is active.', 'error')
+                        return
+                      }
                       if (isEventActive) {
                         showToast(`Cannot create or switch preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
                         return

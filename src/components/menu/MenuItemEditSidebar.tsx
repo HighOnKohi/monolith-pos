@@ -43,6 +43,7 @@ export function MenuItemEditSidebar({
   const [originalPrice, setOriginalPrice] = useState('')
   const [discountPercent, setDiscountPercent] = useState('')
   const [isBestSeller, setIsBestSeller] = useState(false)
+  const [orderLimit, setOrderLimit] = useState('0')
 
   // ── UI States ──
   const [isSaving, setIsSaving] = useState(false)
@@ -71,6 +72,7 @@ export function MenuItemEditSidebar({
       setOriginalPrice(item.originalPrice ? String(item.originalPrice) : '')
       setDiscountPercent(item.discountPercent ? String(item.discountPercent) : '')
       setIsBestSeller(Boolean(item.isBestSeller))
+      setOrderLimit(String(item.orderLimit ?? 0))
       setErrorMessage(null)
       setValidationErrors({})
     }
@@ -182,6 +184,7 @@ export function MenuItemEditSidebar({
         imageUrl: imageUrl.trim() || undefined,
         isAvailable,
         dietaryType,
+        orderLimit: Math.max(0, parseInt(orderLimit, 10) || 0),
       })
 
       // Notify parent to refresh and close sidebar
@@ -353,6 +356,25 @@ export function MenuItemEditSidebar({
                 <span className="menu-edit-error-text">{validationErrors.price}</span>
               )}
             </div>
+          </div>
+
+          {/* Order Stock Limit */}
+          <div className="menu-edit-field">
+            <label htmlFor="dish-order-limit" className="menu-edit-label flex items-center justify-between">
+              <span>Order Stock Limit</span>
+              <span className="text-[11px] font-normal text-[#9BA4B4]">0 = Unlimited stock</span>
+            </label>
+            <input
+              id="dish-order-limit"
+              type="number"
+              min="0"
+              step="1"
+              value={orderLimit}
+              onChange={(e) => setOrderLimit(e.target.value)}
+              placeholder="0"
+              className="menu-edit-input"
+              disabled={isSaving}
+            />
           </div>
 
           {/* Promotions & Badges */}

@@ -185,8 +185,9 @@ export const PresetsManagerView: React.FC<PresetsManagerViewProps> = ({
                     onClick={() =>
                       onRenamePreset(preset.LAYOUT_PRESET_ID, preset.PRESET_NAME)
                     }
-                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                    title="Rename preset"
+                    disabled={isLocked}
+                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={isBusinessDayOpen ? 'Cannot rename preset while Business Day is active' : 'Rename preset'}
                   >
                     <Pencil className="w-3.5 h-3.5" />
                   </button>

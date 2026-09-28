@@ -154,6 +154,8 @@ export function CartSummary({
             <div className="overflow-y-auto px-4 sm:px-5 py-3 space-y-2.5 flex-1 min-h-0">
               {items.map(({ item, quantity, notes }) => {
                 const isEditingNote = editingNoteItemId === item.id
+                const hasItemLimit = typeof item.orderLimit === 'number' && item.orderLimit > 0
+                const isItemLimitReached = hasItemLimit && quantity >= item.orderLimit!
 
                 return (
                   <div
@@ -181,6 +183,17 @@ export function CartSummary({
                               ₱{item.price.toFixed(2)}
                             </span>
                             <span className="text-[10px] text-[#9BA4B4]">× {quantity}</span>
+                            {hasItemLimit && (
+                              <span
+                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                  isItemLimitReached
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-300/60'
+                                    : 'bg-[#14274E]/10 text-[#14274E]'
+                                }`}
+                              >
+                                {isItemLimitReached ? `Limit (${item.orderLimit})` : `Max ${item.orderLimit}`}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -212,9 +225,13 @@ export function CartSummary({
                           <button
                             type="button"
                             onClick={() => onIncreaseQty(item.id)}
-                            disabled={isDisabled}
-                            className="w-7 h-7 flex items-center justify-center rounded-lg bg-[#14274E] text-white hover:bg-[#14274E]/90 active:scale-90 transition-all disabled:opacity-40 cursor-pointer"
-                            title="Increase quantity"
+                            disabled={isDisabled || isItemLimitReached}
+                            className={`w-7 h-7 flex items-center justify-center rounded-lg text-white transition-all ${
+                              isDisabled || isItemLimitReached
+                                ? 'bg-[#14274E]/30 opacity-40 cursor-not-allowed'
+                                : 'bg-[#14274E] hover:bg-[#14274E]/90 active:scale-90 cursor-pointer'
+                            }`}
+                            title={isItemLimitReached ? `Remaining order stock reached (${item.orderLimit})` : 'Increase quantity'}
                             aria-label="Increase quantity"
                           >
                             <Plus className="w-3.5 h-3.5" />

@@ -31,6 +31,7 @@ export interface AdvanceOrder {
   diningType: DiningType
   tableId?: number | null
   tableNum?: number | null
+  guestCount?: number
   status: AdvanceOrderStatus
   subtotal: number
   totalAmount: number
@@ -48,6 +49,7 @@ export interface CreateAdvanceOrderPayload {
   diningType: DiningType
   tableId?: number | null
   tableNum?: number | null
+  guestCount?: number
   cartItems: CartItem[]
   notes?: string
 }
@@ -58,5 +60,6 @@ export interface PreOrderSession {
   diningType: DiningType
   tableId?: number | null
   tableNum?: number | null
+  guestCount?: number
   cart: CartItem[]
 }

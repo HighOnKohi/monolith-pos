@@ -87,7 +87,9 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
 
   const displayTableLabel = tableLabel || (selectedTable ? `Table ${selectedTable.TABLE_NUM || selectedTable.TABLE_ID}` : 'Table 1')
   const tableNum = selectedTable ? (selectedTable.TABLE_NUM || selectedTable.TABLE_ID) : 1
-  const pendingOrders = tableOrders.filter((order) => order.orderStatus === 'REQUESTED')
+  const pendingOrders = tableOrders.filter((order) =>
+    ['REQUESTED', 'VERIFIED', 'PREPARING'].includes(order.orderStatus),
+  )
   const activeOrders = tableOrders.filter((order) =>
     ['VERIFIED', 'PREPARING', 'READY', 'SERVED'].includes(order.orderStatus),
   )
@@ -111,8 +113,9 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   }
   const aggregatedItems = Object.values(itemAggMap)
 
-  // 1. Calculate Bill totals from actual line items
-  const baseSubtotal = aggregatedItems.reduce((sum, it) => sum + it.total, 0)
+  // 1. Calculate Bill totals from actual line items (Menu price is VAT-inclusive)
+  const rawBillTotal = aggregatedItems.reduce((sum, it) => sum + it.total, 0)
+  const baseSubtotal = rawBillTotal > 0 ? rawBillTotal / 1.05 : 0
 
   let discountAmount = 0
   if (discountType === 'senior' || discountType === 'pwd') {
@@ -125,10 +128,11 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   const billTax = taxableSubtotal * 0.05
   const grandTotal = taxableSubtotal + billTax
 
-  // 2. Calculate Punch Cart totals
-  const punchSubtotal = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
-  const punchTax = punchSubtotal * 0.05
-  const punchTotal = punchSubtotal + punchTax
+  // 2. Calculate Punch Cart totals (VAT-inclusive)
+  const punchGross = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
+  const punchSubtotal = punchGross > 0 ? punchGross / 1.05 : 0
+  const punchTax = punchGross - punchSubtotal
+  const punchTotal = punchGross
 
   return (
     <div className="service-interface-right-panel">
@@ -586,7 +590,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                                     <div key={item.orderItemId} className="flex items-center justify-between text-[11px] text-slate-500">
                                       <div className="flex items-center gap-2">
                                         <span>Item #{item.orderItemId}</span>
-                                        {item.status !== 'CANCELLED' && onOpenVoidModal && (
+                                        {item.status !== 'CANCELLED' && item.status !== 'READY' && item.status !== 'SERVED' && !['READY', 'SERVED', 'COMPLETED', 'CANCELLED'].includes(ord.orderStatus) && onOpenVoidModal && (
                                           <button
                                             type="button"
                                             onClick={() => onOpenVoidModal(ord, item.orderItemId)}
@@ -614,7 +618,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                         <span className="text-[11px] font-bold text-slate-500">
                           {ord.items?.length ?? 0} individual item{(ord.items?.length ?? 0) !== 1 ? 's' : ''}
                         </span>
-                        {onOpenVoidModal && (
+                        {!['READY', 'SERVED', 'COMPLETED', 'CANCELLED'].includes(ord.orderStatus) && (ord.items ?? []).some((it) => it.status !== 'CANCELLED' && it.status !== 'READY' && it.status !== 'SERVED') && onOpenVoidModal && (
                           <button
                             type="button"
                             onClick={() => onOpenVoidModal(ord)}

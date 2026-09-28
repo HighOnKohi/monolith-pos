@@ -12,6 +12,7 @@ import {
 import logo from '@/assets/images/monolith-logo-nobg.png'
 import type { DiningType } from '@/types/cart'
 import { fetchAllTables, type TableData } from '@/services/tableService'
+import { resolveTableGroupByList } from '@/services/tableGroupService'
 
 interface CustomerNameGateProps {
   isOpen: boolean
@@ -19,11 +20,13 @@ interface CustomerNameGateProps {
   initialDiningType?: DiningType
   initialTableId?: number | null
   initialTableNum?: number | null
+  initialGuestCount?: number
   onSaveSetup: (
     name: string,
     diningType: DiningType,
     tableId: number | null,
     tableNum: number | null,
+    guestCount?: number,
   ) => void
   onCancel?: () => void
 }
@@ -34,6 +37,7 @@ export function CustomerNameGate({
   initialDiningType = 'dine-in',
   initialTableId = null,
   initialTableNum = null,
+  initialGuestCount = 2,
   onSaveSetup,
   onCancel,
 }: CustomerNameGateProps) {
@@ -41,6 +45,7 @@ export function CustomerNameGate({
   const [diningType, setDiningType] = useState<DiningType>(initialDiningType)
   const [selectedTableId, setSelectedTableId] = useState<number | null>(initialTableId)
   const [selectedTableNum, setSelectedTableNum] = useState<number | null>(initialTableNum)
+  const [guestCount, setGuestCount] = useState<number>(initialGuestCount)
   const [error, setError] = useState<string | null>(null)
 
   // Tables state
@@ -77,9 +82,10 @@ export function CustomerNameGate({
       setDiningType(initialDiningType)
       setSelectedTableId(initialTableId)
       setSelectedTableNum(initialTableNum)
+      setGuestCount(initialGuestCount)
       loadAvailableTables()
     }
-  }, [isOpen, initialName, initialDiningType, initialTableId, initialTableNum])
+  }, [isOpen, initialName, initialDiningType, initialTableId, initialTableNum, initialGuestCount])
 
   if (!isOpen) return null
 
@@ -113,12 +119,16 @@ export function CustomerNameGate({
       }
     }
 
+    const selectedGroup = selectedTableId ? resolveTableGroupByList(selectedTableId, tables) : null
+    const finalGuestCount = selectedGroup?.isMerged ? guestCount : (tables.find((t) => t.TABLE_ID === selectedTableId)?.GUEST_CAPACITY || 1)
+
     setError(null)
     onSaveSetup(
       trimmed,
       diningType,
       diningType === 'dine-in' ? selectedTableId : null,
       diningType === 'dine-in' ? selectedTableNum : null,
+      diningType === 'dine-in' ? finalGuestCount : undefined,
     )
   }
 
@@ -289,6 +299,7 @@ export function CustomerNameGate({
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1">
                   {tables.map((table) => {
                     const isSelected = selectedTableId === table.TABLE_ID
+                    const groupInfo = resolveTableGroupByList(table.TABLE_ID, tables)
                     return (
                       <button
                         key={table.TABLE_ID}
@@ -296,6 +307,9 @@ export function CustomerNameGate({
                         onClick={() => {
                           setSelectedTableId(table.TABLE_ID)
                           setSelectedTableNum(table.TABLE_NUM)
+                          if (groupInfo.isMerged) {
+                            setGuestCount((prev) => Math.min(groupInfo.capacity, Math.max(1, prev)))
+                          }
                           if (error) setError(null)
                         }}
                         className={`p-2.5 rounded-xl border-2 text-left transition-all relative flex flex-col justify-between cursor-pointer ${
@@ -314,15 +328,65 @@ export function CustomerNameGate({
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                           )}
                         </div>
-                        <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-slate-400">
-                          <Users className="w-2.5 h-2.5" />
-                          <span>{table.GUEST_CAPACITY || 4} seats</span>
+                        <div className="mt-1 flex items-center justify-between gap-1 text-[10px] font-bold text-slate-400">
+                          <span className="flex items-center gap-1">
+                            <Users className="w-2.5 h-2.5" />
+                            {table.GUEST_CAPACITY || 4} seats
+                          </span>
+                          {groupInfo.isMerged && (
+                            <span className="px-1 py-0.2 rounded bg-indigo-50 text-indigo-700 text-[9px] font-extrabold">
+                              Merged ({groupInfo.capacity})
+                            </span>
+                          )}
                         </div>
                       </button>
                     )
                   })}
                 </div>
               )}
+
+              {/* Guest Count Request for Merged Tables */}
+              {selectedTableId && (() => {
+                const groupInfo = resolveTableGroupByList(selectedTableId, tables)
+                if (!groupInfo.isMerged) return null
+                return (
+                  <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl space-y-2 mt-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-black text-[#14274E]">
+                        <Users className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>Merged Tables Group ({groupInfo.memberTableNums.map((n) => `T${n}`).join(' + ')})</span>
+                      </div>
+                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                        Max {groupInfo.capacity} seats
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-xs text-slate-600 font-bold">Number of Guests:</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setGuestCount((prev) => Math.max(1, prev - 1))}
+                          disabled={guestCount <= 1}
+                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-700 font-black flex items-center justify-center hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                        >
+                          -
+                        </button>
+                        <span className="w-6 text-center text-sm font-black text-[#14274E]">
+                          {guestCount}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setGuestCount((prev) => Math.min(groupInfo.capacity, prev + 1))}
+                          disabled={guestCount >= groupInfo.capacity}
+                          className="w-7 h-7 rounded-lg bg-[#14274E] text-white font-black flex items-center justify-center hover:bg-[#203c73] disabled:opacity-40 cursor-pointer"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           )}
 

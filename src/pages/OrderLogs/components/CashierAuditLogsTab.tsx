@@ -15,6 +15,8 @@ import {
   Trash2,
   Store,
   AlertTriangle,
+  Calendar,
+  Sparkles,
 } from 'lucide-react'
 import type { CashierAuditLog, CashierAuditAction } from '@/types/cashierShift'
 import {
@@ -50,6 +52,12 @@ const ACTION_COLOR_MAP: Record<string, { bg: string; text: string; border: strin
   DISCOUNT_APPLIED: { bg: 'bg-pink-50', text: 'text-pink-700', border: 'border-pink-200', icon: Info },
   DISCOUNT_REMOVED: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200', icon: Info },
   PRICE_ADJUSTED: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', icon: Info },
+  EVENT_CREATED: { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', icon: Calendar },
+  EVENT_UPDATED: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: Calendar },
+  EVENT_DELETED: { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', icon: Trash2 },
+  EVENT_ACTIVATED: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', icon: Sparkles },
+  EVENT_DEACTIVATED: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200', icon: Calendar },
+  EVENT_CANCELLED: { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', icon: AlertTriangle },
 }
 
 function getActionStyle(action: string) {

@@ -20,7 +20,14 @@ export function MenuItemDetail({
   onClose,
   onUpdateCart,
 }: MenuItemDetailProps) {
-  const [qty, setQty] = useState(initialQuantity === 0 ? 1 : initialQuantity)
+  const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit > 0
+  const maxQty = hasLimit ? Math.max(0, item.orderLimit!) : Infinity
+  const isSoldOut = item.isSoldOut || (hasLimit && item.orderLimit! <= 0)
+
+  const [qty, setQty] = useState(() => {
+    const raw = initialQuantity === 0 ? 1 : initialQuantity
+    return hasLimit ? Math.min(raw, Math.max(1, maxQty)) : raw
+  })
   const [notes, setNotes] = useState(initialNotes)
 
   // Prevent background scrolling while open
@@ -32,7 +39,9 @@ export function MenuItemDetail({
   }, [])
 
   const handleSave = () => {
-    onUpdateCart(qty, notes.trim())
+    if (isSoldOut) return
+    const safeQty = hasLimit ? Math.min(qty, maxQty) : qty
+    onUpdateCart(safeQty, notes.trim())
     onClose()
   }
 
@@ -101,6 +110,16 @@ export function MenuItemDetail({
               </div>
             </div>
 
+            {/* Remaining Stock Banner */}
+            {hasLimit && (
+              <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-900 text-xs font-semibold">
+                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                <span>
+                  Order limit: <strong>{item.orderLimit} {item.orderLimit === 1 ? 'unit' : 'units'}</strong> remaining in stock.
+                </span>
+              </div>
+            )}
+
             {/* Description */}
             {item.description && (
               <p className="text-[#394867] text-sm leading-relaxed">
@@ -132,12 +151,22 @@ export function MenuItemDetail({
           <div className="w-36 shrink-0">
             <QuantityControl
               quantity={qty}
+              max={hasLimit ? maxQty : undefined}
+              disableIncrease={hasLimit && qty >= maxQty}
+              disabled={isSoldOut}
               onDecrease={() => setQty((q) => Math.max(1, q - 1))}
-              onIncrease={() => setQty((q) => q + 1)}
+              onIncrease={() => setQty((q) => Math.min(maxQty, q + 1))}
             />
           </div>
           
-          {initialQuantity > 0 && qty === initialQuantity && notes === initialNotes ? (
+          {isSoldOut ? (
+            <button
+              disabled
+              className="flex-1 bg-[#9BA4B4]/20 text-[#9BA4B4] rounded-2xl font-bold text-base flex items-center justify-center min-h-[52px] cursor-not-allowed"
+            >
+              Sold Out
+            </button>
+          ) : initialQuantity > 0 && qty === initialQuantity && notes === initialNotes ? (
             <button
               onClick={handleRemove}
               className="flex-1 bg-[#F1F6F9] text-[#C94A4A] rounded-2xl font-bold text-base active:scale-[0.98] transition-transform flex items-center justify-center min-h-[52px]"

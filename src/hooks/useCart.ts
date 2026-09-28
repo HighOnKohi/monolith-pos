@@ -10,15 +10,26 @@ export function useCart() {
 
   // ─── Mutations ────────────────────────────────────────────────────────────────
 
-  const addItem = useCallback((item: MenuItem, notes?: string) => {
+  const addItem = useCallback((item: MenuItem, notes?: string, quantity = 1) => {
     setItems((prev) => {
+      const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit > 0
+      const limit = hasLimit ? item.orderLimit! : Infinity
       const existing = prev.find((ci) => ci.item.id === item.id)
+      const currentQty = existing?.quantity ?? 0
+
+      if (currentQty >= limit) {
+        return prev
+      }
+
+      const addAmount = Math.min(quantity, limit - currentQty)
+      if (addAmount <= 0) return prev
+
       if (existing) {
         return prev.map((ci) =>
-          ci.item.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci,
+          ci.item.id === item.id ? { ...ci, quantity: ci.quantity + addAmount } : ci,
         )
       }
-      return [...prev, { item, quantity: 1, notes }]
+      return [...prev, { item, quantity: addAmount, notes }]
     })
   }, [])
 
@@ -27,11 +38,20 @@ export function useCart() {
   }, [])
 
   const increaseQty = useCallback((itemId: string) => {
-    setItems((prev) =>
-      prev.map((ci) =>
+    setItems((prev) => {
+      const existing = prev.find((ci) => ci.item.id === itemId)
+      if (!existing) return prev
+
+      const hasLimit = typeof existing.item.orderLimit === 'number' && existing.item.orderLimit > 0
+      const limit = hasLimit ? existing.item.orderLimit! : Infinity
+      if (existing.quantity >= limit) {
+        return prev
+      }
+
+      return prev.map((ci) =>
         ci.item.id === itemId ? { ...ci, quantity: ci.quantity + 1 } : ci,
-      ),
-    )
+      )
+    })
   }, [])
 
   const decreaseQty = useCallback((itemId: string) => {
@@ -54,12 +74,12 @@ export function useCart() {
 
   // ─── Derived state ────────────────────────────────────────────────────────────
 
-  const subtotal = useMemo(
+  const total = useMemo(
     () => items.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0),
     [items],
   )
-  const tax = useMemo(() => subtotal * TAX_RATE, [subtotal])
-  const total = useMemo(() => subtotal + tax, [subtotal, tax])
+  const subtotal = useMemo(() => total / (1 + TAX_RATE), [total])
+  const tax = useMemo(() => total - subtotal, [total, subtotal])
   const itemCount = useMemo(
     () => items.reduce((sum, ci) => sum + ci.quantity, 0),
     [items],

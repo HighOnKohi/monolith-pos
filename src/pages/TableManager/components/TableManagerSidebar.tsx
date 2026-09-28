@@ -1,4 +1,4 @@
-import React, { memo, useState, useRef, useEffect } from 'react'
+import React, { memo, useState, useRef, useEffect, useMemo } from 'react'
 import {
   TABLE_TYPES,
   type TableType,
@@ -271,12 +271,34 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
     : 4
 
   // In View Mode: effective capacity respecting suppressed adjacent chairs (e.g. 4 for big circle table)
-  const effectiveSeatCapacity = selectedTable
-    ? (selectedTable.GUEST_CAPACITY ?? selectedTable.TABLE_CAPACITY ?? maxSeatsAllowed)
-    : 4
+  // For merged tables, combine capacity and shared pax across all members
+  const isSelectedMerged = selectedTable?.MERGE_GROUP_ID != null
+  const mergedGroupMembers = useMemo(() => {
+    if (!selectedTable?.MERGE_GROUP_ID) return selectedTable ? [selectedTable] : []
+    return allTables.filter((t) => t.MERGE_GROUP_ID === selectedTable.MERGE_GROUP_ID)
+  }, [selectedTable, allTables])
 
-  const currentGuestCount = selectedTable
-    ? Math.max(0, Math.min(effectiveSeatCapacity, selectedTable.CURRENT_GUEST_COUNT || 0))
+  const effectiveSeatCapacity: number = useMemo(() => {
+    if (!selectedTable) return 4
+    if (isSelectedMerged) {
+      return mergedGroupMembers.reduce<number>(
+        (sum, m) => sum + (Number(m.GUEST_CAPACITY) || maxSeatsAllowed),
+        0,
+      )
+    }
+    return Number(selectedTable.GUEST_CAPACITY) || maxSeatsAllowed
+  }, [selectedTable, isSelectedMerged, mergedGroupMembers, maxSeatsAllowed])
+
+  const currentGuestCount: number = selectedTable
+    ? Math.max(
+        0,
+        Math.min(
+          effectiveSeatCapacity,
+          isSelectedMerged
+            ? Math.max(...mergedGroupMembers.map((m) => Number(m.CURRENT_GUEST_COUNT) || 0), 0)
+            : (Number(selectedTable.CURRENT_GUEST_COUNT) || 0),
+        ),
+      )
     : 0
   const currentStatus = selectedTable?.STATUS || 'AVAILABLE'
 
@@ -508,7 +530,7 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
                       </span>
                     </div>
                     <span className="text-[11px] font-bold text-slate-400">
-                      Cap: {effectiveSeatCapacity}
+                      Cap: {effectiveSeatCapacity} {isSelectedMerged ? '(Combined)' : ''}
                     </span>
                   </div>
 

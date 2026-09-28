@@ -7,10 +7,13 @@ import {
   ChevronRight,
   Clock,
   GitMerge,
+  Trash2,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllTables, fetchOrderSummariesForIds, type TableData } from '@/services/tableService'
-import { fetchOrdersByTable, settleTableOrders } from '@/services/orderService'
+import { fetchOrdersByTable, settleTableOrders, voidOrderItems } from '@/services/orderService'
+import { verifyAdminPassword } from '@/services/authVerificationService'
+import { VoidOrderModal } from '@/pages/ServiceInterface/components/VoidOrderModal'
 import { fetchAllBillRequests, resolveBillOutRequest, updateBillRequestStatus } from '@/services/billService'
 import { subscribeToOrderUpdates } from '@/services/dispatcherService'
 import type { BillRequest } from '@/types/bill'
@@ -89,6 +92,11 @@ export default function CashierInterface() {
   const [receipt, setReceipt] = useState<ReceiptSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  // Void order/item state
+  const [isVoidModalOpen, setIsVoidModalOpen] = useState(false)
+  const [voidTargetOrder, setVoidTargetOrder] = useState<Order | null>(null)
+  const [voidInitialItemId, setVoidInitialItemId] = useState<number | null>(null)
 
   // Refs for tracking active state without triggering unnecessary recreations
   const selectedIdRef = useRef<number | null>(null)
@@ -384,6 +392,8 @@ export default function CashierInterface() {
     name: string
     price: number
     orderType: string
+    status?: string
+    orderStatus?: string
   }>>(() => {
     return orders
       .filter((order) => order.orderStatus !== 'CANCELLED')
@@ -396,6 +406,8 @@ export default function CashierInterface() {
             name: item.name ?? `Item #${item.itemId}`,
             price: item.price ?? 0,
             orderType: String(order.orderType),
+            status: item.status,
+            orderStatus: order.orderStatus,
           })),
       )
   }, [orders])
@@ -482,7 +494,15 @@ export default function CashierInterface() {
     setItemDiscounts((prev) => {
       const next = new Map(prev)
       const current = next.get(orderItemId) ?? { pwd: false, senior: false, custom: 0 }
-      next.set(orderItemId, { ...current, [field]: value })
+      if (field === 'pwd') {
+        const nextVal = Boolean(value)
+        next.set(orderItemId, { ...current, pwd: nextVal, senior: nextVal ? false : current.senior })
+      } else if (field === 'senior') {
+        const nextVal = Boolean(value)
+        next.set(orderItemId, { ...current, senior: nextVal, pwd: nextVal ? false : current.pwd })
+      } else {
+        next.set(orderItemId, { ...current, custom: Number(value) || 0 })
+      }
       return next
     })
   }
@@ -492,7 +512,15 @@ export default function CashierInterface() {
       const next = new Map(prev)
       group.items.forEach((item) => {
         const current = next.get(item.orderItemId) ?? { pwd: false, senior: false, custom: 0 }
-        next.set(item.orderItemId, { ...current, [field]: value })
+        if (field === 'pwd') {
+          const nextVal = Boolean(value)
+          next.set(item.orderItemId, { ...current, pwd: nextVal, senior: nextVal ? false : current.senior })
+        } else if (field === 'senior') {
+          const nextVal = Boolean(value)
+          next.set(item.orderItemId, { ...current, senior: nextVal, pwd: nextVal ? false : current.pwd })
+        } else {
+          next.set(item.orderItemId, { ...current, custom: Number(value) || 0 })
+        }
       })
       return next
     })
@@ -525,10 +553,55 @@ export default function CashierInterface() {
       const next = new Map(prev)
       activeItems.forEach((item) => {
         const current = next.get(item.orderItemId) ?? { pwd: false, senior: false, custom: 0 }
-        next.set(item.orderItemId, { ...current, [field]: value })
+        if (field === 'pwd') {
+          const nextVal = Boolean(value)
+          next.set(item.orderItemId, { ...current, pwd: nextVal, senior: nextVal ? false : current.senior })
+        } else if (field === 'senior') {
+          const nextVal = Boolean(value)
+          next.set(item.orderItemId, { ...current, senior: nextVal, pwd: nextVal ? false : current.pwd })
+        } else {
+          next.set(item.orderItemId, { ...current, custom: Number(value) || 0 })
+        }
       })
       return next
     })
+  }
+
+  const handleOpenVoidModal = (order: Order, initialItemId?: number) => {
+    setVoidTargetOrder(order)
+    setVoidInitialItemId(initialItemId ?? null)
+    setIsVoidModalOpen(true)
+  }
+
+  const handleConfirmVoid = async (orderId: number, orderItemIds: number[], password: string) => {
+    const authRes = await verifyAdminPassword(password)
+    if (!authRes.valid) {
+      throw new Error(authRes.error || 'Incorrect administrator password.')
+    }
+
+    if (!selectedTableGroup) return
+
+    await voidOrderItems(
+      orderId,
+      orderItemIds,
+      selectedTableGroup.group.anchorTableId,
+      selectedTableGroup.group.memberTableIds,
+      {
+        staffId: staff?.codeId,
+        shiftId: shift?.shiftId,
+        reason: `Cashier voided ${orderItemIds.length} item(s) for ${selectedTableGroup.group.displayLabel}`,
+      },
+    )
+
+    showToast(`Voided ${orderItemIds.length} item(s) from Order #${orderId}.`, 'success')
+
+    const updated = await fetchOrdersByTable(
+      selectedTableGroup.group.anchorTableId,
+      ALL_ACTIVE_ORDER_STATUSES,
+      selectedTableGroup.group.memberTableIds,
+    )
+    setOrders(updated)
+    await load(true)
   }
 
   const handleClearAssistance = useCallback(async (tableId: number) => {
@@ -863,6 +936,54 @@ export default function CashierInterface() {
                   </div>
                 </div>
 
+                {/* Orders in kitchen status with void buttons */}
+                {orders.filter((o) => ['REQUESTED', 'VERIFIED', 'PREPARING'].includes(o.orderStatus)).length > 0 && (
+                  <div className="mb-3 p-3 bg-amber-50/90 border border-amber-200/90 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-extrabold text-amber-900 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-amber-700" />
+                        Kitchen Orders
+                      </span>
+                      <span className="text-[10px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                        {orders.filter((o) => ['REQUESTED', 'VERIFIED', 'PREPARING'].includes(o.orderStatus)).length} Active
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {orders
+                        .filter((o) => ['REQUESTED', 'VERIFIED', 'PREPARING'].includes(o.orderStatus))
+                        .map((ord) => {
+                          const hasVoidableItems = (ord.items ?? []).some(
+                            (i) => i.status !== 'CANCELLED' && i.status !== 'READY' && i.status !== 'SERVED',
+                          )
+                          return (
+                            <div
+                              key={ord.orderId}
+                              className="flex items-center justify-between p-2 rounded-xl bg-white border border-amber-200/60 text-xs shadow-2xs"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="font-black text-slate-800">Order #{ord.orderId}</span>
+                                <span className="text-[10px] font-extrabold px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900">
+                                  {ord.orderStatus}
+                                </span>
+                              </div>
+                              {hasVoidableItems && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenVoidModal(ord)}
+                                  className="px-2 py-0.5 rounded-lg text-[10px] font-black text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 flex items-center gap-1 transition-colors cursor-pointer"
+                                  title="Void order (requires admin password)"
+                                >
+                                  <Trash2 className="w-3 h-3 text-rose-600" />
+                                  <span>Void</span>
+                                </button>
+                              )}
+                            </div>
+                          )
+                        })}
+                    </div>
+                  </div>
+                )}
+
                 {activeItems.length === 0 ? (
                   <div className="ci-sidebar-empty">No completed items to bill.</div>
                 ) : (
@@ -873,23 +994,41 @@ export default function CashierInterface() {
                       <span>
                         PWD
                         <input
-                          type="checkbox"
+                          type="radio"
+                          name="apply-all-discount"
                           checked={applyAllPwd}
-                          onChange={(e) => {
-                            setApplyAllPwd(e.target.checked)
-                            applyDiscountToAll('pwd', e.target.checked)
+                          onClick={() => {
+                            if (applyAllPwd) {
+                              setApplyAllPwd(false)
+                              applyDiscountToAll('pwd', false)
+                            } else {
+                              setApplyAllPwd(true)
+                              setApplyAllSenior(false)
+                              applyDiscountToAll('senior', false)
+                              applyDiscountToAll('pwd', true)
+                            }
                           }}
+                          onChange={() => {}}
                         />
                       </span>
                       <span>
                         Senior
                         <input
-                          type="checkbox"
+                          type="radio"
+                          name="apply-all-discount"
                           checked={applyAllSenior}
-                          onChange={(e) => {
-                            setApplyAllSenior(e.target.checked)
-                            applyDiscountToAll('senior', e.target.checked)
+                          onClick={() => {
+                            if (applyAllSenior) {
+                              setApplyAllSenior(false)
+                              applyDiscountToAll('senior', false)
+                            } else {
+                              setApplyAllSenior(true)
+                              setApplyAllPwd(false)
+                              applyDiscountToAll('pwd', false)
+                              applyDiscountToAll('senior', true)
+                            }
                           }}
+                          onChange={() => {}}
                         />
                       </span>
                       <span>
@@ -913,7 +1052,7 @@ export default function CashierInterface() {
                       {groupedItems.map((group, groupIndex) => {
                         const isCollapsed = collapsedGroups.has(group.name)
                         const isMultiple = group.items.length > 1
-                        const totalPrice = group.items.reduce((sum, item) => sum + item.price, 0) / 1.05
+                        const totalPrice = group.items.reduce((sum, item) => sum + item.price, 0)
 
                         // Split name and counter for proper wrapping
                         const nameParts = group.name.split(' ')
@@ -935,6 +1074,8 @@ export default function CashierInterface() {
                             senior: false,
                             custom: 0,
                           }
+                          const isVoidable = ['REQUESTED', 'VERIFIED', 'PREPARING'].includes(item.orderStatus ?? '') && item.status !== 'READY' && item.status !== 'SERVED'
+                          const parentOrder = orders.find((o) => o.orderId === item.orderId)
                           return (
                             <div key={group.name} className="ci-item-group">
                               <div
@@ -944,16 +1085,24 @@ export default function CashierInterface() {
                                 <span className="ci-item-name">{group.name}</span>
                                 <span className="ci-item-checkbox">
                                   <input
-                                    type="checkbox"
+                                    type="radio"
+                                    name={`discount-${item.orderItemId}`}
                                     checked={discount.pwd}
-                                    onChange={(e) => updateItemDiscount(item.orderItemId, 'pwd', e.target.checked)}
+                                    onClick={() => {
+                                      updateItemDiscount(item.orderItemId, 'pwd', !discount.pwd)
+                                    }}
+                                    onChange={() => {}}
                                   />
                                 </span>
                                 <span className="ci-item-checkbox">
                                   <input
-                                    type="checkbox"
+                                    type="radio"
+                                    name={`discount-${item.orderItemId}`}
                                     checked={discount.senior}
-                                    onChange={(e) => updateItemDiscount(item.orderItemId, 'senior', e.target.checked)}
+                                    onClick={() => {
+                                      updateItemDiscount(item.orderItemId, 'senior', !discount.senior)
+                                    }}
+                                    onChange={() => {}}
                                   />
                                 </span>
                                 <span className="ci-item-custom">
@@ -967,7 +1116,19 @@ export default function CashierInterface() {
                                     }
                                   />
                                 </span>
-                                <span className="ci-item-price">{money(item.price / 1.05)}</span>
+                                <span className="ci-item-price">
+                                  {isVoidable && parentOrder && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenVoidModal(parentOrder, Number(item.orderItemId))}
+                                      className="p-1 mr-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                                      title="Void this item (requires admin password)"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                                    </button>
+                                  )}
+                                  {money(item.price)}
+                                </span>
                               </div>
                             </div>
                           )
@@ -1005,16 +1166,26 @@ export default function CashierInterface() {
                               </span>
                               <span className="ci-item-checkbox">
                                 <input
-                                  type="checkbox"
+                                  type="radio"
+                                  name={`discount-group-${group.name}`}
                                   checked={Boolean(getGroupDiscount(group, 'pwd'))}
-                                  onChange={(e) => updateGroupDiscount(group, 'pwd', e.target.checked)}
+                                  onClick={() => {
+                                    const current = Boolean(getGroupDiscount(group, 'pwd'))
+                                    updateGroupDiscount(group, 'pwd', !current)
+                                  }}
+                                  onChange={() => {}}
                                 />
                               </span>
                               <span className="ci-item-checkbox">
                                 <input
-                                  type="checkbox"
+                                  type="radio"
+                                  name={`discount-group-${group.name}`}
                                   checked={Boolean(getGroupDiscount(group, 'senior'))}
-                                  onChange={(e) => updateGroupDiscount(group, 'senior', e.target.checked)}
+                                  onClick={() => {
+                                    const current = Boolean(getGroupDiscount(group, 'senior'))
+                                    updateGroupDiscount(group, 'senior', !current)
+                                  }}
+                                  onChange={() => {}}
                                 />
                               </span>
                               <span className="ci-item-custom">
@@ -1041,6 +1212,8 @@ export default function CashierInterface() {
                                     senior: false,
                                     custom: 0,
                                   }
+                                  const isVoidable = ['REQUESTED', 'VERIFIED', 'PREPARING'].includes(item.orderStatus ?? '') && item.status !== 'READY' && item.status !== 'SERVED'
+                                  const parentOrder = orders.find((o) => o.orderId === item.orderId)
                                   return (
                                     <div
                                       className={`ci-item-row ci-item-subrow ${groupIndex % 2 === 0 ? 'ci-row-even' : 'ci-row-odd'
@@ -1050,20 +1223,24 @@ export default function CashierInterface() {
                                       <span className="ci-item-name ci-subitem-name">└ #{itemIndex + 1}</span>
                                       <span className="ci-item-checkbox">
                                         <input
-                                          type="checkbox"
+                                          type="radio"
+                                          name={`discount-${item.orderItemId}`}
                                           checked={discount.pwd}
-                                          onChange={(e) =>
-                                            updateItemDiscount(item.orderItemId, 'pwd', e.target.checked)
-                                          }
+                                          onClick={() => {
+                                            updateItemDiscount(item.orderItemId, 'pwd', !discount.pwd)
+                                          }}
+                                          onChange={() => {}}
                                         />
                                       </span>
                                       <span className="ci-item-checkbox">
                                         <input
-                                          type="checkbox"
+                                          type="radio"
+                                          name={`discount-${item.orderItemId}`}
                                           checked={discount.senior}
-                                          onChange={(e) =>
-                                            updateItemDiscount(item.orderItemId, 'senior', e.target.checked)
-                                          }
+                                          onClick={() => {
+                                            updateItemDiscount(item.orderItemId, 'senior', !discount.senior)
+                                          }}
+                                          onChange={() => {}}
                                         />
                                       </span>
                                       <span className="ci-item-custom">
@@ -1077,7 +1254,19 @@ export default function CashierInterface() {
                                           }
                                         />
                                       </span>
-                                      <span className="ci-item-price">{money(item.price / 1.05)}</span>
+                                      <span className="ci-item-price">
+                                        {isVoidable && parentOrder && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenVoidModal(parentOrder, Number(item.orderItemId))}
+                                            className="p-1 mr-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                                            title="Void this item (requires admin password)"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                                          </button>
+                                        )}
+                                        {money(item.price)}
+                                      </span>
                                     </div>
                                   )
                                 })}
@@ -1152,6 +1341,20 @@ export default function CashierInterface() {
       {!receipt && selectedTableGroup && activeBillRequest && (
         <span className="sr-only">Payment requested via {activeBillRequest.paymentMethod}</span>
       )}
+
+      {/* Admin-Authorized Void Order / Items Modal */}
+      <VoidOrderModal
+        isOpen={isVoidModalOpen}
+        order={voidTargetOrder}
+        tableLabel={selectedTableGroup?.group.displayLabel || 'Table'}
+        initialItemId={voidInitialItemId}
+        onClose={() => {
+          setIsVoidModalOpen(false)
+          setVoidTargetOrder(null)
+          setVoidInitialItemId(null)
+        }}
+        onConfirmVoid={handleConfirmVoid}
+      />
     </div>
   )
 }

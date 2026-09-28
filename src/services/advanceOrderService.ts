@@ -55,8 +55,10 @@ export function getPreOrderSession(): PreOrderSession {
   const diningType = (localStorage.getItem(STORAGE_KEY_DINING_TYPE) as DiningType) || 'dine-in'
   const rawTableId = localStorage.getItem(STORAGE_KEY_TABLE_ID)
   const rawTableNum = localStorage.getItem(STORAGE_KEY_TABLE_NUM)
+  const rawGuestCount = localStorage.getItem('advance_order_guest_count')
   const tableId = rawTableId ? Number(rawTableId) : null
   const tableNum = rawTableNum ? Number(rawTableNum) : null
+  const guestCount = rawGuestCount ? Number(rawGuestCount) : undefined
 
   let cart: CartItem[] = []
   try {
@@ -74,6 +76,7 @@ export function getPreOrderSession(): PreOrderSession {
     diningType,
     tableId,
     tableNum,
+    guestCount,
     cart,
   }
 }
@@ -84,13 +87,32 @@ export function saveCustomerName(name: string): string {
   return trimmed
 }
 
-/** Marks a table as RESERVED in Restaurant_Tables. */
+/** Marks a table as RESERVED in Restaurant_Tables, syncing across merged groups if applicable. */
 export async function markTableAsReserved(
   tableId: number,
   customerName: string,
   note?: string,
+  guestCount?: number,
 ): Promise<void> {
   try {
+    // Check if this table has a MERGE_GROUP_ID
+    const { data: targetTable } = await supabase
+      .from('Restaurant_Tables')
+      .select('TABLE_ID, MERGE_GROUP_ID')
+      .eq('TABLE_ID', tableId)
+      .single()
+
+    let targetIds = [tableId]
+    if (targetTable?.MERGE_GROUP_ID != null) {
+      const { data: groupTables } = await supabase
+        .from('Restaurant_Tables')
+        .select('TABLE_ID')
+        .eq('MERGE_GROUP_ID', targetTable.MERGE_GROUP_ID)
+      if (groupTables && groupTables.length > 0) {
+        targetIds = groupTables.map((t) => t.TABLE_ID)
+      }
+    }
+
     const { error } = await supabase
       .from('Restaurant_Tables')
       .update({
@@ -98,8 +120,10 @@ export async function markTableAsReserved(
         RESERVED_SINCE: new Date().toISOString(),
         RESERVATION_NAME: customerName.trim(),
         RESERVATION_NOTES: note || 'Advance Order',
+        CURRENT_GUEST_COUNT: guestCount ?? 1,
+        RESERVATION_PAX: guestCount ?? 1,
       })
-      .eq('TABLE_ID', tableId)
+      .in('TABLE_ID', targetIds)
 
     if (error) {
       console.warn('[advanceOrderService] Could not update table status to RESERVED:', error)
@@ -109,9 +133,26 @@ export async function markTableAsReserved(
   }
 }
 
-/** Releases a table reservation back to AVAILABLE. */
+/** Releases a table reservation back to AVAILABLE, syncing across merged groups. */
 export async function releaseTableReservation(tableId: number): Promise<void> {
   try {
+    const { data: targetTable } = await supabase
+      .from('Restaurant_Tables')
+      .select('TABLE_ID, MERGE_GROUP_ID')
+      .eq('TABLE_ID', tableId)
+      .single()
+
+    let targetIds = [tableId]
+    if (targetTable?.MERGE_GROUP_ID != null) {
+      const { data: groupTables } = await supabase
+        .from('Restaurant_Tables')
+        .select('TABLE_ID')
+        .eq('MERGE_GROUP_ID', targetTable.MERGE_GROUP_ID)
+      if (groupTables && groupTables.length > 0) {
+        targetIds = groupTables.map((t) => t.TABLE_ID)
+      }
+    }
+
     const { error } = await supabase
       .from('Restaurant_Tables')
       .update({
@@ -120,8 +161,9 @@ export async function releaseTableReservation(tableId: number): Promise<void> {
         RESERVATION_NAME: null,
         RESERVATION_NOTES: null,
         RESERVATION_PAX: null,
+        CURRENT_GUEST_COUNT: 0,
       })
-      .eq('TABLE_ID', tableId)
+      .in('TABLE_ID', targetIds)
 
     if (error) {
       console.warn('[advanceOrderService] Could not release table to AVAILABLE:', error)
@@ -136,6 +178,7 @@ export async function savePreOrderTable(
   tableNum: number | null,
   previousTableId?: number | null,
   customerName?: string,
+  guestCount?: number,
 ) {
   // If user held a previous table that changed, release it
   if (previousTableId && previousTableId !== tableId) {
@@ -144,10 +187,14 @@ export async function savePreOrderTable(
 
   if (tableId != null) {
     localStorage.setItem(STORAGE_KEY_TABLE_ID, String(tableId))
-    // Mark chosen table as RESERVED
-    await markTableAsReserved(tableId, customerName || 'Advance Order Guest', 'Advance Order Seating')
+    if (guestCount) {
+      localStorage.setItem('advance_order_guest_count', String(guestCount))
+    }
+    // Mark chosen table as RESERVED with shared guest count
+    await markTableAsReserved(tableId, customerName || 'Advance Order Guest', 'Advance Order Seating', guestCount)
   } else {
     localStorage.removeItem(STORAGE_KEY_TABLE_ID)
+    localStorage.removeItem('advance_order_guest_count')
   }
 
   if (tableNum != null) {
@@ -267,11 +314,21 @@ export async function createAdvanceOrder(
   const createdAt = new Date().toISOString()
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
 
-  // Format notes to include table number if dining in
+  // Format notes to include table number & guest count if dining in
   let formattedNotes = payload.notes?.trim() || ''
   if (payload.diningType === 'dine-in' && payload.tableNum) {
-    const tablePrefix = `[Table #${payload.tableNum}]`
+    const paxStr = payload.guestCount ? ` (${payload.guestCount} guests)` : ''
+    const tablePrefix = `[Table #${payload.tableNum}${paxStr}]`
     formattedNotes = formattedNotes ? `${tablePrefix} ${formattedNotes}` : tablePrefix
+  }
+
+  if (payload.diningType === 'dine-in' && payload.tableId) {
+    await markTableAsReserved(
+      payload.tableId,
+      cleanName,
+      'Advance Order Confirmed',
+      payload.guestCount,
+    )
   }
 
   let createdOrder: AdvanceOrder | null = null
@@ -324,6 +381,7 @@ export async function createAdvanceOrder(
           diningType: (orderRow.DINING_TYPE as DiningType) || 'dine-in',
           tableId: payload.tableId ?? null,
           tableNum: payload.tableNum ?? null,
+          guestCount: payload.guestCount,
           status: (orderRow.STATUS as AdvanceOrderStatus) || 'PENDING',
           subtotal: Number(orderRow.SUBTOTAL) || subtotal,
           totalAmount: Number(orderRow.TOTAL_AMOUNT) || totalAmount,
@@ -363,6 +421,7 @@ export async function createAdvanceOrder(
       diningType: payload.diningType,
       tableId: payload.tableId ?? null,
       tableNum: payload.tableNum ?? null,
+      guestCount: payload.guestCount,
       status: 'PENDING',
       subtotal,
       totalAmount,

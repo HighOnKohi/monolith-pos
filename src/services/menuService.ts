@@ -173,6 +173,7 @@ function mapItem(row: Record<string, unknown>): MenuItem {
     description: description || undefined,
     isBestSeller: isDirectBestSeller,
     badge,
+    orderLimit: row['ORDER_LIMIT'] != null ? Number(row['ORDER_LIMIT']) : 0,
   }
 }
 
@@ -579,6 +580,7 @@ export async function fetchServiceMenuItems(): Promise<MenuItem[]> {
     isSoldOut: group.status === 'OUT_OF_STOCK',
     isItemGroup: true,
     includedItemNames: group.itemNames,
+    orderLimit: group.orderLimit,
   }))
 
   return [...items, ...groupItems]

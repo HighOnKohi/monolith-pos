@@ -44,6 +44,12 @@ export type CashierAuditAction =
   | 'DISCOUNT_APPLIED'
   | 'DISCOUNT_REMOVED'
   | 'PRICE_ADJUSTED'
+  | 'EVENT_CREATED'
+  | 'EVENT_UPDATED'
+  | 'EVENT_DELETED'
+  | 'EVENT_ACTIVATED'
+  | 'EVENT_DEACTIVATED'
+  | 'EVENT_CANCELLED'
 
 export interface CashierAuditLog {
   logId: number

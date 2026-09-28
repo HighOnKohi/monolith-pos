@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { CalendarDays, List, AlertCircle, CalendarX, Plus } from 'lucide-react'
+import { CalendarDays, List, AlertCircle, CalendarX, Plus, Utensils } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
 import type { RestaurantEvent, EventFilterParams, EventFormData } from '@/types/event'
@@ -14,7 +14,10 @@ import {
   deactivateEvent,
   isEventServiceUsingFallback,
 } from '@/services/eventService'
-import { filterEvents } from './utils/eventUtils'
+import { fetchCurrentTableSetup, type TableSetupBreakdown } from '@/services/tableLayoutService'
+import { TableShapeIcon } from '@/pages/TableManager/components/TableVisual'
+import { filterEvents, computeEventStats, type EventCardType } from './utils/eventUtils'
+import { EventsSummaryCards } from './components/EventsSummaryCards'
 import { EventsFilterBar } from './components/EventsFilterBar'
 import { EventsCalendar } from './components/EventsCalendar'
 import { EventsListView } from './components/EventsListView'
@@ -103,6 +106,39 @@ export default function EventsPage() {
 
   // ── Fallback Storage State ──
   const [isFallback, setIsFallback] = useState(false)
+  const [tableSetup, setTableSetup] = useState<TableSetupBreakdown>({
+    totalTables: 0,
+    totalSeats: 0,
+    byType: [],
+  })
+  const [selectedSummaryCard, setSelectedSummaryCard] = useState<EventCardType>('total')
+
+  const eventStats = useMemo(() => computeEventStats(events), [events])
+
+  const handleCardClick = (card: EventCardType) => {
+    setSelectedSummaryCard(card)
+    if (card === 'total') {
+      setFilters((prev) => ({ ...prev, status: 'All', dateFilter: 'all' }))
+    } else if (card === 'upcoming') {
+      setFilters((prev) => ({ ...prev, status: 'Scheduled', dateFilter: 'all' }))
+    } else if (card === 'today') {
+      setFilters((prev) => ({ ...prev, status: 'All', dateFilter: 'today' }))
+    } else if (card === 'thisWeek') {
+      setFilters((prev) => ({ ...prev, status: 'All', dateFilter: 'this_week' }))
+    } else if (card === 'ongoing') {
+      setFilters((prev) => ({ ...prev, status: 'Ongoing', dateFilter: 'all' }))
+    }
+  }
+
+  // ── Load Tables Setup Count & Breakdown ──
+  const loadTableSetup = useCallback(async () => {
+    try {
+      const setup = await fetchCurrentTableSetup()
+      setTableSetup(setup)
+    } catch (err) {
+      console.warn('[EventsPage] Failed to fetch table setup count:', err)
+    }
+  }, [])
 
   // ── Load Events (Always loads all events so summary stats stay globally accurate) ──
   const loadEvents = useCallback(async () => {
@@ -112,13 +148,14 @@ export default function EventsPage() {
       const data = await fetchEvents()
       setEvents(data)
       setIsFallback(isEventServiceUsingFallback())
+      void loadTableSetup()
     } catch (err: unknown) {
       console.error('[EventsPage] Failed to load events:', err)
       setError(err instanceof Error ? err.message : 'Failed to load events.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [loadTableSetup])
 
   useEffect(() => {
     loadEvents()
@@ -128,6 +165,13 @@ export default function EventsPage() {
   useEffect(() => {
     const channel = supabase
       .channel('restaurant_events_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Restaurant_Events' },
+        () => {
+          loadEvents()
+        },
+      )
       .on(
         'postgres_changes',
         { event: '*', schema: 'events', table: 'Restaurant_Events' },
@@ -327,7 +371,7 @@ export default function EventsPage() {
         </div>
       )}
 
-      <div className="flex items-center self-start shrink-0">
+      <div className="flex items-center justify-between gap-3 shrink-0 flex-wrap">
         <div className={`events-view-toggle flex items-center gap-1 bg-slate-100 rounded-xl p-1 ${viewMode === 'list' ? 'events-view-toggle-list' : ''}`}>
           <span className="events-view-toggle-indicator" />
           <button
@@ -355,7 +399,56 @@ export default function EventsPage() {
             <span>Events</span>
           </button>
         </div>
+
+        {/* Current Tables Setup Badge */}
+        <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-xl border border-slate-200 shadow-2xs">
+          <div className="p-2 rounded-lg bg-[#14274E]/5 text-[#14274E] shrink-0">
+            <Utensils className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider block leading-none">
+                Current Tables Setup
+              </span>
+              {tableSetup.presetName && (
+                <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.2 rounded-md">
+                  {tableSetup.presetName}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-xs font-black text-[#14274E]">
+                {tableSetup.totalTables} Tables{' '}
+                <span className="font-semibold text-slate-400">({tableSetup.totalSeats} Total Seats)</span>
+              </span>
+            </div>
+            {tableSetup.byType.length > 0 && (
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                {tableSetup.byType.map((item) => (
+                  <span
+                    key={item.type}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 bg-slate-100/90 px-1.5 py-0.5 rounded-md border border-slate-200/60"
+                    title={`${item.count} × ${item.name} (${item.totalSeats} seats)`}
+                  >
+                    <TableShapeIcon tableType={item.type} size={11} />
+                    <span>
+                      {item.count} {item.name.replace(' Table', '').replace(' (Horizontal)', '').replace(' (Vertical)', '').replace(' (1x1)', '').replace(' (2x2)', '')}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* ── Summary Cards ── */}
+      <EventsSummaryCards
+        stats={eventStats}
+        loading={loading}
+        activeCard={selectedSummaryCard}
+        onCardClick={handleCardClick}
+      />
 
       {/* ── Fallback Storage Notice ── */}
       {isFallback && (
@@ -472,6 +565,7 @@ export default function EventsPage() {
         prefillDate={prefillDate}
         canManageEvents={canManageEvents}
         existingEvents={events}
+        currentTableSetup={tableSetup}
         submitting={submitting}
         onClose={() => setDrawerOpen(false)}
         onSave={handleSave}

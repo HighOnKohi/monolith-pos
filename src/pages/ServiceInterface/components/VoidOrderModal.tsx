@@ -24,7 +24,9 @@ export function VoidOrderModal({
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const activeItems = (order?.items ?? []).filter((item) => item.status !== 'CANCELLED')
+  const activeItems = (order?.items ?? []).filter(
+    (item) => item.status !== 'CANCELLED' && item.status !== 'READY' && item.status !== 'SERVED',
+  )
 
   useEffect(() => {
     if (!isOpen || !order) return

@@ -4,6 +4,7 @@ import type { Order, OrderItem, OrderStatus } from '@/types/order'
 import { logOrderEvent } from '@/services/orderLogsService'
 import { broadcastOrderUpdate } from '@/services/dispatcherService'
 import { logCashierAction } from '@/services/cashierAuditService'
+import { broadcastMenuItemStatus } from '@/hooks/useRealtimeMenu'
 
 const DINING_TYPE_MAP: Record<DiningType, string> = {
   'dine-in': 'DINE-IN',
@@ -171,6 +172,43 @@ export async function createOrder(
 
   const { error: itemsError } = await supabase.from('Order_Items').insert(orderItems)
   if (itemsError) throw itemsError
+
+  // Decrement remaining order stock (ORDER_LIMIT) for items that have an order limit
+  try {
+    for (const ci of items) {
+      const itemId = Number(ci.item.id)
+      if (isNaN(itemId)) continue
+
+      const { data: dbItem } = await supabase
+        .schema('menu')
+        .from('Menu_Items')
+        .select('ORDER_LIMIT, ITEM_STATUS')
+        .eq('ITEM_ID', itemId)
+        .maybeSingle()
+
+      if (dbItem && dbItem.ORDER_LIMIT != null && Number(dbItem.ORDER_LIMIT) > 0) {
+        const currentLimit = Number(dbItem.ORDER_LIMIT)
+        const newLimit = Math.max(0, currentLimit - ci.quantity)
+        const isNowSoldOut = newLimit === 0
+        const newStatus = isNowSoldOut ? 'OUT_OF_STOCK' : (dbItem.ITEM_STATUS ?? 'AVAILABLE')
+
+        await supabase
+          .schema('menu')
+          .from('Menu_Items')
+          .update({
+            ORDER_LIMIT: newLimit,
+            ITEM_STATUS: newStatus,
+          })
+          .eq('ITEM_ID', itemId)
+
+        if (isNowSoldOut) {
+          broadcastMenuItemStatus(itemId, true)
+        }
+      }
+    }
+  } catch (stockErr) {
+    console.warn('[orderService] Failed to update ORDER_LIMIT stock:', stockErr)
+  }
 
   // 3. Mark table as OCCUPIED if it was not already occupied/has_request
   try {
@@ -352,18 +390,24 @@ import type { CompressedTableOrder, CompressedOrderItem } from '@/types/order'
 export function compressTableOrders(orders: Order[]): CompressedTableOrder | null {
   if (!orders || orders.length === 0) return null
 
-  const tableId = orders[0].tableId
-  const totalBill = orders.reduce((sum, o) => sum + (o.totalBill || 0), 0)
+  // Exclude cancelled orders completely from table compression
+  const activeOrders = orders.filter((o) => o.orderStatus !== 'CANCELLED')
+  if (activeOrders.length === 0) return null
 
-  // Aggregate items across all orders for this table
+  const tableId = activeOrders[0].tableId
+
+  // Aggregate items across all active orders for this table
   const itemMap: Record<string, CompressedOrderItem> = {}
 
-  for (const order of orders) {
+  for (const order of activeOrders) {
     for (const item of order.items ?? []) {
+      const st = (item.status || 'PENDING').toUpperCase()
+      // Skip cancelled line items
+      if (st === 'CANCELLED') continue
+
       const id = item.itemId
       const name = item.name || `Item #${id}`
       const price = item.price || 0
-      const st = (item.status || 'PENDING').toUpperCase()
 
       if (!itemMap[id]) {
         itemMap[id] = {
@@ -402,7 +446,7 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
         itemMap[id].servedCount += 1
       } else if (st === 'PREPARING' || order.orderStatus === 'PREPARING') {
         itemMap[id].preparingCount += 1
-      } else if (st !== 'CANCELLED') {
+      } else {
         itemMap[id].pendingCount += 1
       }
     }
@@ -410,16 +454,15 @@ export function compressTableOrders(orders: Order[]): CompressedTableOrder | nul
 
   const items = Object.values(itemMap)
   const totalItemCount = items.reduce((sum, it) => sum + it.quantity, 0)
-  const hasFlaggedItems = items.some((it) => it.isFlagged) || orders.some((o) => o.items?.some((it) => it.isFlagged))
+  // Ensure totalBill matches the exact sum of active line items
+  const totalBill = items.reduce((sum, it) => sum + it.total, 0)
+  const hasFlaggedItems = items.some((it) => it.isFlagged) || activeOrders.some((o) => o.items?.some((it) => it.isFlagged))
 
   // Determine overall table status:
   // Precedence from least complete to most complete (Prompt 2 §5 & §29):
   // REQUESTED -> VERIFIED -> PREPARING -> READY -> SERVED -> COMPLETED
   let overallStatus: OrderStatus = 'REQUESTED'
-  const activeOrders = orders.filter((o) => o.orderStatus !== 'CANCELLED')
-  if (activeOrders.length === 0) {
-    overallStatus = 'REQUESTED'
-  } else if (activeOrders.every((o) => o.orderStatus === 'COMPLETED')) {
+  if (activeOrders.every((o) => o.orderStatus === 'COMPLETED')) {
     overallStatus = 'COMPLETED'
   } else if (activeOrders.every((o) => o.orderStatus === 'SERVED' || o.orderStatus === 'COMPLETED')) {
     overallStatus = 'SERVED'

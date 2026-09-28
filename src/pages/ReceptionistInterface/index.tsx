@@ -15,6 +15,7 @@ import {
   setTableStatus,
   updateSeatedPax,
   unmergeTables,
+  saveTableMerge,
   type TableData,
   type TableStatus,
 } from '@/services/tableService'
@@ -82,11 +83,26 @@ export default function ReceptionistInterface() {
 
   // ── UI State ──
   const [selectedTableNum, setSelectedTableNum] = useState<number | null>(null)
+  const [selectedTableNums, setSelectedTableNums] = useState<Set<number>>(new Set())
   const [statusFilter, setStatusFilter] = useState<TableStatus | 'ALL'>('ALL')
   const [showQrModal, setShowQrModal] = useState(false)
   const [qrTableNum, setQrTableNum] = useState<number | null>(null)
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 })
   const [labelsModalOpen, setLabelsModalOpen] = useState(false)
+
+  // ── Drag & Drop State ──
+  interface DragState {
+    tableNum: number
+    startMouseX: number
+    startMouseY: number
+    startTableX: number
+    startTableY: number
+    currentX: number
+    currentY: number
+  }
+  const [dragState, setDragState] = useState<DragState | null>(null)
+  const dragStateRef = useRef<DragState | null>(null)
+  dragStateRef.current = dragState
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -139,10 +155,29 @@ export default function ReceptionistInterface() {
     return Math.max(20, scale)
   }, [containerDimensions.height, containerDimensions.width, layoutTables])
 
+  // ── Grid Dimensions ──
+  const gridWidth = useMemo(() => {
+    if (containerDimensions.width <= 0) return 24
+    return Math.max(8, Math.floor(containerDimensions.width / cellSize))
+  }, [containerDimensions.width, cellSize])
+
+  const gridHeight = useMemo(() => {
+    if (containerDimensions.height <= 0) return 13
+    return Math.max(6, Math.floor(containerDimensions.height / cellSize))
+  }, [containerDimensions.height, cellSize])
+
+  // ── Effective Layout Tables taking active drag into account ──
+  const effectiveLayoutTables = useMemo(() => {
+    if (!dragState) return layoutTables
+    return layoutTables.map((t) =>
+      t.TABLE_NUM === dragState.tableNum ? { ...t, X_POS: dragState.currentX, Y_POS: dragState.currentY } : t
+    )
+  }, [layoutTables, dragState])
+
   // ── Chair Suppression Map ──
   const chairSuppressionMap = useMemo(() => {
-    return calculateLayoutSuppression(layoutTables)
-  }, [layoutTables])
+    return calculateLayoutSuppression(effectiveLayoutTables)
+  }, [effectiveLayoutTables])
 
   // ── Data Loading ──
   const loadData = useCallback(async (silent = false, presetOverrideId?: number) => {
@@ -351,15 +386,64 @@ export default function ReceptionistInterface() {
     const counts = { AVAILABLE: 0, OCCUPIED: 0, RESERVED: 0, HAS_REQUEST: 0, UNAVAILABLE: 0 }
     let seated = 0
     let cap = 0
+    const processedMergeGroups = new Set<number>()
+
     for (const t of layoutTables) {
       if (t.STATUS && counts[t.STATUS] !== undefined) {
         counts[t.STATUS]++
       }
-      seated += t.CURRENT_GUEST_COUNT ?? 0
       cap += t.GUEST_CAPACITY ?? 4
+
+      if (t.MERGE_GROUP_ID != null) {
+        if (!processedMergeGroups.has(t.MERGE_GROUP_ID)) {
+          processedMergeGroups.add(t.MERGE_GROUP_ID)
+          seated += t.CURRENT_GUEST_COUNT ?? 0
+        }
+      } else {
+        seated += t.CURRENT_GUEST_COUNT ?? 0
+      }
     }
     return { statusCounts: counts, totalSeatedPax: seated, totalVenueCapacity: cap }
   }, [layoutTables])
+
+  // ── Combined Pax & Capacity for Selected Table ──
+  const isSelectedMerged = Boolean(selectedTable?.MERGE_GROUP_ID != null || selectedGroup?.isMerged)
+
+  const selectedGroupMembers = useMemo(() => {
+    if (!selectedTable) return []
+    if (selectedTable.MERGE_GROUP_ID != null) {
+      return layoutTables.filter((t) => t.MERGE_GROUP_ID === selectedTable.MERGE_GROUP_ID)
+    }
+    return [selectedTable]
+  }, [selectedTable, layoutTables])
+
+  const selectedEffectiveCapacity = useMemo(() => {
+    if (!selectedTable) return 4
+    if (isSelectedMerged) {
+      return selectedGroupMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY ?? 4), 0)
+    }
+    return selectedTable.GUEST_CAPACITY ?? 4
+  }, [selectedTable, isSelectedMerged, selectedGroupMembers])
+
+  const selectedCurrentPax = useMemo(() => {
+    if (!selectedTable) return 0
+    if (isSelectedMerged) {
+      return Math.max(...selectedGroupMembers.map((m) => m.CURRENT_GUEST_COUNT ?? 0), 0)
+    }
+    return selectedTable.CURRENT_GUEST_COUNT ?? 0
+  }, [selectedTable, isSelectedMerged, selectedGroupMembers])
+
+  const quickPaxOptions = useMemo(() => {
+    if (selectedEffectiveCapacity <= 4) {
+      return [1, 2, 3, 4].filter((p) => p <= selectedEffectiveCapacity)
+    }
+    if (selectedEffectiveCapacity <= 8) {
+      return [2, 4, 6, selectedEffectiveCapacity].filter((v, i, a) => a.indexOf(v) === i)
+    }
+    const step = Math.max(2, Math.ceil(selectedEffectiveCapacity / 4))
+    const list = [2, 2 + step, 2 + step * 2, selectedEffectiveCapacity]
+    return Array.from(new Set(list.filter((p) => p <= selectedEffectiveCapacity)))
+  }, [selectedEffectiveCapacity])
 
   // ── Dynamic Visuals for Merged Groups (Box or Chain) ──
   const mergeGroupVisuals: MergeGroupVisual[] = useMemo(() => {
@@ -376,7 +460,7 @@ export default function ReceptionistInterface() {
     for (const [groupId, members] of groupMap.entries()) {
       if (members.length < 2) continue
 
-      const isGroupSelected = members.some((m) => m.TABLE_NUM === selectedTableNum)
+      const isGroupSelected = members.some((m) => m.TABLE_NUM === selectedTableNum || selectedTableNums.has(m.TABLE_NUM))
 
       const memberDetails = members.map((m) => {
         const cfg = TABLE_TYPES[m.TABLE_TYPE] || TABLE_TYPES[1]
@@ -506,7 +590,7 @@ export default function ReceptionistInterface() {
     }
 
     return visuals
-  }, [layoutTables, selectedTableNum, cellSize])
+  }, [layoutTables, selectedTableNum, selectedTableNums, cellSize])
 
   // ── Operational Handlers ──
   async function handleStatusChange(tableId: number, newStatus: TableStatus) {
@@ -535,20 +619,208 @@ export default function ReceptionistInterface() {
     }
   }
 
+  // ── Drag & Drop Event Listeners ──
+  const handleTableMouseDown = (table: MergedTableNode, e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    // Ctrl/Cmd click is reserved for multi-selection toggle
+    if (e.ctrlKey || e.metaKey) return
+
+    const newDrag: DragState = {
+      tableNum: table.TABLE_NUM,
+      startMouseX: e.clientX,
+      startMouseY: e.clientY,
+      startTableX: table.X_POS,
+      startTableY: table.Y_POS,
+      currentX: table.X_POS,
+      currentY: table.Y_POS,
+    }
+    dragStateRef.current = newDrag
+    setDragState(newDrag)
+  }
+
+  // ── Adjacency Detection for Drag-and-Drop Merge ──
+  const areTablesAdjacent = useCallback((t1: MergedTableNode, t2: MergedTableNode) => {
+    const cfg1 = TABLE_TYPES[t1.TABLE_TYPE] || TABLE_TYPES[1]
+    const cfg2 = TABLE_TYPES[t2.TABLE_TYPE] || TABLE_TYPES[1]
+
+    for (let dx1 = 0; dx1 < cfg1.width; dx1++) {
+      for (let dy1 = 0; dy1 < cfg1.height; dy1++) {
+        for (let dx2 = 0; dx2 < cfg2.width; dx2++) {
+          for (let dy2 = 0; dy2 < cfg2.height; dy2++) {
+            const dist =
+              Math.abs((t1.X_POS + dx1) - (t2.X_POS + dx2)) +
+              Math.abs((t1.Y_POS + dy1) - (t2.Y_POS + dy2))
+            if (dist === 1) return true
+          }
+        }
+      }
+    }
+    return false
+  }, [])
+
+  useEffect(() => {
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (e.buttons === 0) {
+        if (dragStateRef.current !== null) {
+          void handleGlobalMouseUp()
+        }
+        return
+      }
+
+      const activeDrag = dragStateRef.current || dragState
+      if (activeDrag) {
+        const deltaPixelX = e.clientX - activeDrag.startMouseX
+        const deltaPixelY = e.clientY - activeDrag.startMouseY
+
+        const deltaGridX = Math.round(deltaPixelX / cellSize)
+        const deltaGridY = Math.round(deltaPixelY / cellSize)
+
+        const targetTable = layoutTables.find((t) => t.TABLE_NUM === activeDrag.tableNum)
+        if (targetTable) {
+          const cfg = TABLE_TYPES[targetTable.TABLE_TYPE] || TABLE_TYPES[1]
+          const nextX = Math.max(0, Math.min(gridWidth - cfg.width, activeDrag.startTableX + deltaGridX))
+          const nextY = Math.max(0, Math.min(gridHeight - cfg.height, activeDrag.startTableY + deltaGridY))
+
+          if (nextX !== activeDrag.currentX || nextY !== activeDrag.currentY) {
+            const updated: DragState = { ...activeDrag, currentX: nextX, currentY: nextY }
+            dragStateRef.current = updated
+            setDragState(updated)
+          }
+        }
+      }
+    }
+
+    const handleGlobalMouseUp = async () => {
+      const activeDrag = dragStateRef.current || dragState
+      dragStateRef.current = null
+      setDragState(null)
+
+      if (activeDrag) {
+        const { tableNum, currentX, currentY, startTableX, startTableY } = activeDrag
+        const hasMoved = currentX !== startTableX || currentY !== startTableY
+
+        if (hasMoved) {
+          lastMutationTimeRef.current = Date.now()
+
+          // Build updated layout with new position
+          const updatedLayout = layoutTables.map((t) =>
+            t.TABLE_NUM === tableNum ? { ...t, X_POS: currentX, Y_POS: currentY } : t
+          )
+          setLayoutTables(updatedLayout)
+
+          try {
+            const presetId = activePresetRef.current?.LAYOUT_PRESET_ID
+            if (presetId) {
+              const { error } = await supabase
+                .schema('tables')
+                .from('Table_Layout_Info')
+                .update({ X_POS: currentX, Y_POS: currentY })
+                .eq('LAYOUT_PRESET_ID', presetId)
+                .eq('TABLE_NUM', tableNum)
+
+              if (error) {
+                await supabase
+                  .from('Table_Layout_Info')
+                  .update({ X_POS: currentX, Y_POS: currentY })
+                  .eq('LAYOUT_PRESET_ID', presetId)
+                  .eq('TABLE_NUM', tableNum)
+              }
+            }
+            void logTableAction('LAYOUT_CHANGED', `Moved Table ${tableNum} to (${currentX}, ${currentY}) from Receptionist.`)
+
+            // ── Auto-Merge on Drop: Check adjacency with other tables ──
+            const movedTable = updatedLayout.find((t) => t.TABLE_NUM === tableNum)
+            if (movedTable) {
+              const adjacentTables = updatedLayout.filter(
+                (t) => t.TABLE_NUM !== tableNum && areTablesAdjacent(movedTable, t)
+              )
+
+              if (adjacentTables.length > 0) {
+                // Gather all tables to merge (moved table + all adjacent tables + their existing groups)
+                const tablesToMerge = new Set<number>([tableNum])
+                for (const adj of adjacentTables) {
+                  tablesToMerge.add(adj.TABLE_NUM)
+                  // Also include existing group members of adjacent tables
+                  if (adj.MERGE_GROUP_ID != null) {
+                    for (const t of updatedLayout) {
+                      if (t.MERGE_GROUP_ID === adj.MERGE_GROUP_ID) {
+                        tablesToMerge.add(t.TABLE_NUM)
+                      }
+                    }
+                  }
+                }
+                // Also include existing group members of the moved table
+                if (movedTable.MERGE_GROUP_ID != null) {
+                  for (const t of updatedLayout) {
+                    if (t.MERGE_GROUP_ID === movedTable.MERGE_GROUP_ID) {
+                      tablesToMerge.add(t.TABLE_NUM)
+                    }
+                  }
+                }
+
+                const mergeList = updatedLayout
+                  .filter((t) => tablesToMerge.has(t.TABLE_NUM))
+                  .sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
+
+                if (mergeList.length >= 2) {
+                  const captainId = mergeList[0].TABLE_ID ?? mergeList[0].TABLE_NUM
+                  const memberIds = mergeList.slice(1).map((t) => t.TABLE_ID ?? t.TABLE_NUM)
+
+                  try {
+                    await saveTableMerge(captainId, memberIds)
+                    void logTableAction('TABLES_MERGED', `Drag-merge: Tables ${mergeList.map((t) => t.TABLE_NUM).join(', ')} merged from Receptionist.`, {
+                      targetEntity: 'TABLE_GROUP',
+                      targetId: String(captainId),
+                      newState: { memberTableNums: mergeList.map((t) => t.TABLE_NUM) },
+                    })
+                    showToast(`Merged ${mergeList.length} tables into Group #${mergeList[0].TABLE_NUM}`, 'success')
+                    await loadData(true)
+                  } catch (mergeErr) {
+                    console.warn('Auto-merge after drag failed:', mergeErr)
+                    showToast(`Moved Table ${tableNum}`, 'info')
+                  }
+                } else {
+                  showToast(`Moved Table ${tableNum}`, 'info')
+                }
+              } else {
+                showToast(`Moved Table ${tableNum}`, 'info')
+              }
+            }
+          } catch (err) {
+            console.error('Failed to save table move from receptionist:', err)
+            showToast('Failed to save table position', 'error')
+          }
+        }
+      }
+    }
+
+    window.addEventListener('mousemove', handleGlobalMouseMove)
+    window.addEventListener('mouseup', handleGlobalMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleGlobalMouseMove)
+      window.removeEventListener('mouseup', handleGlobalMouseUp)
+    }
+  }, [dragState, cellSize, gridWidth, gridHeight, layoutTables, areTablesAdjacent, loadData])
+
   async function handleSeatedPaxChange(tableId: number, pax: number) {
     lastMutationTimeRef.current = Date.now()
 
-    // Optimistic guest count update
+    const targetTable = layoutTables.find((t) => t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM)
+    const targetMergeGroupId = targetTable?.MERGE_GROUP_ID
+
+    // Optimistic guest count update for target table and any merged group members
     setLayoutTables((prev) =>
-      prev.map((t) =>
-        t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM
+      prev.map((t) => {
+        const isTarget = t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM
+        const isMergedWithTarget = targetMergeGroupId != null && t.MERGE_GROUP_ID === targetMergeGroupId
+        return isTarget || isMergedWithTarget
           ? {
               ...t,
               CURRENT_GUEST_COUNT: pax,
               STATUS: (pax > 0 && t.STATUS === 'AVAILABLE') ? 'OCCUPIED' : t.STATUS,
             }
-          : t,
-      ),
+          : t
+      }),
     )
 
     try {
@@ -570,13 +842,18 @@ export default function ReceptionistInterface() {
   async function handleClearTable(tableId: number) {
     lastMutationTimeRef.current = Date.now()
 
-    // Optimistic table clear
+    const targetTable = layoutTables.find((t) => t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM)
+    const targetMergeGroupId = targetTable?.MERGE_GROUP_ID
+
+    // Optimistic table clear for target table and any merged group members
     setLayoutTables((prev) =>
-      prev.map((t) =>
-        t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM
+      prev.map((t) => {
+        const isTarget = t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM
+        const isMergedWithTarget = targetMergeGroupId != null && t.MERGE_GROUP_ID === targetMergeGroupId
+        return isTarget || isMergedWithTarget
           ? { ...t, CURRENT_GUEST_COUNT: 0, STATUS: 'AVAILABLE' }
-          : t,
-      ),
+          : t
+      }),
     )
 
     try {
@@ -647,8 +924,66 @@ export default function ReceptionistInterface() {
     }
   }
 
-  function handleTableClick(node: MergedTableNode) {
-    setSelectedTableNum((prev) => (prev === node.TABLE_NUM ? null : node.TABLE_NUM))
+  function handleTableClick(node: MergedTableNode, e?: React.MouseEvent) {
+    if (e && (e.ctrlKey || e.metaKey)) {
+      // Multi-selection via Ctrl/Cmd+Click
+      setSelectedTableNums((prev) => {
+        const next = new Set(prev)
+        // If there was a single active selected table not in the set, retain it
+        if (selectedTableNum != null && !next.has(selectedTableNum)) {
+          next.add(selectedTableNum)
+        }
+
+        if (next.has(node.TABLE_NUM)) {
+          next.delete(node.TABLE_NUM)
+          if (selectedTableNum === node.TABLE_NUM) {
+            const remaining = Array.from(next)
+            setSelectedTableNum(remaining.length > 0 ? remaining[remaining.length - 1] : null)
+          }
+        } else {
+          next.add(node.TABLE_NUM)
+          setSelectedTableNum(node.TABLE_NUM)
+        }
+        return next
+      })
+    } else {
+      // Single click: select this table, deselect everything else
+      setSelectedTableNum((prev) => (prev === node.TABLE_NUM ? null : node.TABLE_NUM))
+      setSelectedTableNums(node.TABLE_NUM === selectedTableNum ? new Set() : new Set([node.TABLE_NUM]))
+    }
+  }
+
+  // ── Merge Multi-Selected Tables ──
+  async function handleMergeSelectedTables() {
+    if (selectedTableNums.size < 2) return
+    lastMutationTimeRef.current = Date.now()
+
+    // Map selected table numbers to TABLE_IDs
+    const selectedTables = layoutTables.filter((t) => selectedTableNums.has(t.TABLE_NUM))
+    if (selectedTables.length < 2) {
+      showToast('Select at least 2 tables to merge', 'error')
+      return
+    }
+
+    // Determine captain (lowest TABLE_NUM)
+    const sorted = [...selectedTables].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
+    const captainId = sorted[0].TABLE_ID ?? sorted[0].TABLE_NUM
+    const memberIds = sorted.slice(1).map((t) => t.TABLE_ID ?? t.TABLE_NUM)
+
+    try {
+      await saveTableMerge(captainId, memberIds)
+      void logTableAction('TABLES_MERGED', `Merged tables ${Array.from(selectedTableNums).sort().join(', ')} from Receptionist.`, {
+        targetEntity: 'TABLE_GROUP',
+        targetId: String(captainId),
+        newState: { memberTableNums: Array.from(selectedTableNums) },
+      })
+      showToast(`Merged ${selectedTableNums.size} tables into Group #${sorted[0].TABLE_NUM}`, 'success')
+      setSelectedTableNums(new Set())
+      setSelectedTableNum(null)
+      await loadData(true)
+    } catch (err) {
+      showToast((err as Error).message || 'Failed to merge tables', 'error')
+    }
   }
 
   const selectedLabel = selectedTable?.LABEL_ID ? labelMap.get(selectedTable.LABEL_ID) : null
@@ -741,12 +1076,29 @@ export default function ReceptionistInterface() {
               // Click background deselects table
               const target = e.target as HTMLElement
               if (!target.closest('.table-node-item')) {
-                setSelectedTableNum(null)
+                if (!e.ctrlKey && !e.metaKey) {
+                  setSelectedTableNum(null)
+                  setSelectedTableNums(new Set())
+                }
               }
             }}
             className="floor-grid-canvas flex-1 h-full w-full overflow-hidden relative bg-white select-none p-0 cursor-default"
           >
             <div className="w-full h-full relative select-none bg-white">
+                {/* Floating Merge Tables Button (When >= 2 tables are multi-selected) */}
+                {selectedTableNums.size >= 2 && (
+                  <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150">
+                    <button
+                      type="button"
+                      onClick={handleMergeSelectedTables}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-xl hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-105 active:scale-95 transition-all font-bold text-xs cursor-pointer"
+                    >
+                      <GitMerge className="w-4 h-4 text-[#E9C46A]" />
+                      <span>Merge Tables ({selectedTableNums.size})</span>
+                    </button>
+                  </div>
+                )}
+
                 {/* Dynamic Merge Group Indicators (Only shown when a table under that merge group is selected) */}
                 {mergeGroupVisuals
                   .filter((visual) => visual.isSelected)
@@ -831,20 +1183,37 @@ export default function ReceptionistInterface() {
                 })}
 
                 {/* Render Table Nodes with TableVisual */}
-                {layoutTables.map((node) => {
-                  const isSelected = selectedTableNum === node.TABLE_NUM
+                {effectiveLayoutTables.map((node) => {
+                  const isSelected = selectedTableNum === node.TABLE_NUM || selectedTableNums.has(node.TABLE_NUM)
                   const suppress = chairSuppressionMap.get(node.TABLE_NUM)
                   const label = node.LABEL_ID ? labelMap.get(node.LABEL_ID) : undefined
 
                   // Dim tables that don't match the current status filter (preserving floor layout spatial context)
                   const matchesFilter = statusFilter === 'ALL' || node.STATUS === statusFilter
 
+                  // Compute combined pax and capacity if merged
+                  const isMerged = node.MERGE_GROUP_ID != null
+                  const groupMembers = isMerged
+                    ? effectiveLayoutTables.filter((t) => t.MERGE_GROUP_ID === node.MERGE_GROUP_ID)
+                    : [node]
+                  const displayCapacity = isMerged
+                    ? groupMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY ?? 4), 0)
+                    : (node.GUEST_CAPACITY ?? 4)
+                  const displayPax = isMerged
+                    ? Math.max(...groupMembers.map((m) => m.CURRENT_GUEST_COUNT ?? 0), 0)
+                    : (node.CURRENT_GUEST_COUNT ?? 0)
+
                   return (
                     <div
                       key={node.TABLE_NUM}
-                      onClick={() => handleTableClick(node)}
-                      className={`table-node-item absolute transition-all select-none cursor-pointer ${
-                        isSelected
+                      onMouseDown={(e) => handleTableMouseDown(node, e)}
+                      onClick={(e) => handleTableClick(node, e)}
+                      className={`table-node-item absolute select-none cursor-grab active:cursor-grabbing ${
+                        dragState?.tableNum === node.TABLE_NUM
+                          ? 'transition-none z-50 shadow-2xl scale-105'
+                          : 'transition-all'
+                      } ${
+                        isSelected || selectedTableNums.has(node.TABLE_NUM)
                           ? 'z-40 scale-105 filter drop-shadow-lg'
                           : matchesFilter
                             ? 'z-20 hover:scale-103'
@@ -860,11 +1229,11 @@ export default function ReceptionistInterface() {
                         tableNum={node.TABLE_NUM}
                         cellSize={cellSize}
                         status={node.STATUS}
-                        guestCount={node.CURRENT_GUEST_COUNT}
-                        capacity={node.GUEST_CAPACITY}
+                        guestCount={displayPax}
+                        capacity={displayCapacity}
                         labelName={label?.NAME}
                         labelColor={label?.COLOR}
-                        isMerged={node.MERGE_GROUP_ID != null}
+                        isMerged={isMerged}
                         mergeGroupId={node.MERGE_GROUP_ID}
                         isSelected={isSelected}
                         hideChairs={suppress}
@@ -916,8 +1285,12 @@ export default function ReceptionistInterface() {
                         Table {selectedTable.TABLE_NUM}
                       </h2>
                       <span className="text-xs text-slate-500 font-medium">
-                        {TABLE_TYPES[selectedTable.TABLE_TYPE]?.name ?? 'Table'} • Max{' '}
-                        {selectedTable.GUEST_CAPACITY ?? 4} Pax
+                        {TABLE_TYPES[selectedTable.TABLE_TYPE]?.name ?? 'Table'} •{' '}
+                        {isSelectedMerged ? (
+                          <span className="text-indigo-600 font-bold">Max {selectedEffectiveCapacity} Pax (Combined)</span>
+                        ) : (
+                          `Max ${selectedEffectiveCapacity} Pax`
+                        )}
                       </span>
                     </div>
                   </div>
@@ -1101,7 +1474,7 @@ export default function ReceptionistInterface() {
                       <span>Seated Guests</span>
                     </div>
                     <span className="text-xs font-semibold text-slate-500">
-                      Max {selectedTable.GUEST_CAPACITY ?? 4} Pax
+                      Max {selectedEffectiveCapacity} Pax {isSelectedMerged ? '(Combined)' : ''}
                     </span>
                   </div>
 
@@ -1111,7 +1484,7 @@ export default function ReceptionistInterface() {
                       onClick={() =>
                         handleSeatedPaxChange(
                           selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
-                          Math.max(0, (selectedTable.CURRENT_GUEST_COUNT ?? 0) - 1),
+                          Math.max(0, selectedCurrentPax - 1),
                         )
                       }
                       className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-black cursor-pointer transition-colors active:scale-95"
@@ -1122,10 +1495,10 @@ export default function ReceptionistInterface() {
 
                     <div className="flex flex-col items-center">
                       <span className="text-2xl font-black text-[#14274E] leading-none">
-                        {selectedTable.CURRENT_GUEST_COUNT ?? 0}
+                        {selectedCurrentPax}
                       </span>
                       <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
-                        Guests Seated
+                        {isSelectedMerged ? 'Combined Guests' : 'Guests Seated'}
                       </span>
                     </div>
 
@@ -1135,8 +1508,8 @@ export default function ReceptionistInterface() {
                         handleSeatedPaxChange(
                           selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
                           Math.min(
-                            selectedTable.GUEST_CAPACITY ?? 4,
-                            (selectedTable.CURRENT_GUEST_COUNT ?? 0) + 1,
+                            selectedEffectiveCapacity,
+                            selectedCurrentPax + 1,
                           ),
                         )
                       }
@@ -1149,7 +1522,7 @@ export default function ReceptionistInterface() {
 
                   {/* Quick Pax Buttons */}
                   <div className="flex items-center gap-1.5 mt-2.5">
-                    {[1, 2, 3, 4].map((pax) => (
+                    {quickPaxOptions.map((pax) => (
                       <button
                         key={pax}
                         type="button"
@@ -1157,7 +1530,7 @@ export default function ReceptionistInterface() {
                           handleSeatedPaxChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, pax)
                         }
                         className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                          selectedTable.CURRENT_GUEST_COUNT === pax
+                          selectedCurrentPax === pax
                             ? 'bg-[#14274E] text-[#E9C46A] border-[#14274E]'
                             : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                         }`}
@@ -1170,7 +1543,7 @@ export default function ReceptionistInterface() {
                       onClick={() =>
                         handleSeatedPaxChange(
                           selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
-                          selectedTable.GUEST_CAPACITY ?? 4,
+                          selectedEffectiveCapacity,
                         )
                       }
                       className="flex-1 py-1 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-200 hover:bg-slate-100 cursor-pointer"
@@ -1180,7 +1553,7 @@ export default function ReceptionistInterface() {
                   </div>
 
                   {/* Clear Table Action */}
-                  {(selectedTable.CURRENT_GUEST_COUNT ?? 0) > 0 && (
+                  {selectedCurrentPax > 0 && (
                     <button
                       type="button"
                       onClick={() => handleClearTable(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM)}

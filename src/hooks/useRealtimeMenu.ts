@@ -16,7 +16,7 @@ export function broadcastMenuItemStatus(itemId: string | number, isSoldOut: bool
  * the updated item ID and new sold-out state so the parent can merge.
  */
 export function useRealtimeMenu(
-  onUpdate: (itemId: string, isSoldOut: boolean) => void,
+  onUpdate: (itemId: string, isSoldOut: boolean, orderLimit?: number) => void,
 ) {
   useEffect(() => {
     const channel = supabase
@@ -28,7 +28,8 @@ export function useRealtimeMenu(
           const row = payload.new as Record<string, unknown>
           const itemId = String(row['ITEM_ID'])
           const isSoldOut = row['ITEM_STATUS'] === 'OUT_OF_STOCK'
-          onUpdate(itemId, isSoldOut)
+          const orderLimit = row['ORDER_LIMIT'] != null ? Number(row['ORDER_LIMIT']) : undefined
+          onUpdate(itemId, isSoldOut, orderLimit)
         },
       )
       .subscribe()
@@ -47,10 +48,16 @@ export function applyMenuUpdate(
   items: MenuItem[],
   itemId: string,
   isSoldOut: boolean,
+  orderLimit?: number,
 ): MenuItem[] {
   return items.map((item) =>
     item.id === itemId
-      ? { ...item, isSoldOut, isAvailable: !isSoldOut }
+      ? {
+          ...item,
+          isSoldOut,
+          isAvailable: !isSoldOut,
+          ...(orderLimit !== undefined ? { orderLimit } : {}),
+        }
       : item,
   )
 }

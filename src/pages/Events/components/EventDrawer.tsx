@@ -7,7 +7,14 @@ import {
 import type { RestaurantEvent, EventFormData, EventConflict } from '@/types/event'
 import { EVENT_CATEGORIES, EVENT_FORM_DEFAULTS } from '@/types/event'
 import { checkEventConflicts, checkDuplicateEventTitle } from '@/services/eventService'
-import { fetchAllLayoutPresets, type TableLayoutPreset } from '@/services/tableLayoutService'
+import {
+  fetchAllLayoutPresets,
+  fetchCurrentTableSetup,
+  fetchPresetTableSetup,
+  type TableLayoutPreset,
+  type TableSetupBreakdown,
+} from '@/services/tableLayoutService'
+import { TableShapeIcon } from '@/pages/TableManager/components/TableVisual'
 import { fetchMenuPresets, type MenuPreset } from '@/services/menuService'
 import {
   deriveEventStatus,
@@ -27,6 +34,7 @@ interface EventDrawerProps {
   isOpen: boolean
   mode: EventDrawerMode
   event: RestaurantEvent | null
+  currentTableSetup?: TableSetupBreakdown
   prefillDate?: Date | null
   canManageEvents: boolean
   existingEvents?: RestaurantEvent[]
@@ -65,10 +73,94 @@ interface FormErrors {
 const FORM_LABEL_CLASS = 'block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1'
 const FORM_ERROR_CLASS = 'text-[10px] font-bold text-rose-600 mt-1'
 
+const TableSetupBreakdownSection: React.FC<{
+  title: string
+  badgeText: string
+  badgeVariant?: 'indigo' | 'emerald' | 'amber' | 'slate'
+  setup: TableSetupBreakdown | null
+  emptyMessage?: string
+}> = ({
+  title,
+  badgeText,
+  badgeVariant = 'indigo',
+  setup,
+  emptyMessage = 'No table details available for this layout.',
+}) => {
+  const badgeClasses = {
+    indigo: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+    emerald: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    amber: 'bg-amber-100 text-amber-700 border-amber-200',
+    slate: 'bg-slate-100 text-slate-700 border-slate-200',
+  }[badgeVariant]
+
+  return (
+    <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-50 via-indigo-50/20 to-white border border-slate-200/90 shadow-2xs space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <div className="p-2 rounded-xl bg-[#14274E]/5 text-[#14274E] shrink-0">
+            <Layout className="w-4 h-4 text-indigo-600" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h4 className="text-xs font-black text-[#14274E] uppercase tracking-wider">
+                {title}
+              </h4>
+              <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${badgeClasses}`}>
+                {badgeText}
+              </span>
+            </div>
+            <span className="text-[11px] font-bold text-slate-500">
+              {setup?.totalTables ?? 0} Tables •{' '}
+              <strong className="text-[#14274E]">
+                {setup?.totalSeats ?? 0} Total Seats
+              </strong>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Table Types Breakdown Grid */}
+      {setup && setup.byType && setup.byType.length > 0 ? (
+        <div className="space-y-1.5 pt-1">
+          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+            Tables per Type
+          </span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {setup.byType.map((item) => (
+              <div
+                key={item.type}
+                className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-slate-200/80 shadow-2xs hover:border-slate-300 transition-colors"
+              >
+                <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0">
+                  <TableShapeIcon tableType={item.type} size={20} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="block text-xs font-black text-[#14274E] leading-tight truncate">
+                    {item.name}
+                  </span>
+                  <div className="flex items-center gap-1.5 mt-0.5 text-[11px] font-bold text-slate-400">
+                    <span className="text-indigo-600 font-extrabold">{item.count}</span>{' '}
+                    <span>{item.count === 1 ? 'Table' : 'Tables'}</span>
+                    <span className="text-slate-300">•</span>
+                    <span className="text-slate-500 font-semibold">{item.totalSeats} seats</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-slate-400 italic">{emptyMessage}</p>
+      )}
+    </div>
+  )
+}
+
 export const EventDrawer: React.FC<EventDrawerProps> = ({
   isOpen,
   mode,
   event,
+  currentTableSetup,
   prefillDate,
   canManageEvents,
   existingEvents = [],
@@ -86,6 +178,9 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
   const [conflictChecked, setConflictChecked] = useState(false)
   const [presets, setPresets] = useState<TableLayoutPreset[]>([])
   const [menuPresets, setMenuPresets] = useState<MenuPreset[]>([])
+  const [eventPresetSetup, setEventPresetSetup] = useState<TableSetupBreakdown | null>(null)
+  const [formPresetSetup, setFormPresetSetup] = useState<TableSetupBreakdown | null>(null)
+  const [localCurrentSetup, setLocalCurrentSetup] = useState<TableSetupBreakdown | null>(currentTableSetup ?? null)
 
   // Load layout & menu presets for linking
   useEffect(() => {
@@ -97,6 +192,50 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
       .then(setMenuPresets)
       .catch(() => setMenuPresets([]))
   }, [isOpen])
+
+  // Sync current table setup breakdown
+  useEffect(() => {
+    if (!isOpen) return
+    if (currentTableSetup && currentTableSetup.totalTables > 0) {
+      setLocalCurrentSetup(currentTableSetup)
+    } else {
+      fetchCurrentTableSetup()
+        .then(setLocalCurrentSetup)
+        .catch(() => {})
+    }
+  }, [isOpen, currentTableSetup])
+
+  // Fetch breakdown for viewed event's preset if linked
+  useEffect(() => {
+    if (!isOpen) {
+      setEventPresetSetup(null)
+      return
+    }
+    if (mode === 'view' && event?.presetId) {
+      const presetObj = presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)
+      fetchPresetTableSetup(event.presetId, presetObj?.PRESET_NAME)
+        .then(setEventPresetSetup)
+        .catch(() => setEventPresetSetup(null))
+    } else {
+      setEventPresetSetup(null)
+    }
+  }, [isOpen, mode, event?.presetId, presets])
+
+  // Fetch breakdown for form's selected preset in create/edit mode
+  useEffect(() => {
+    if (!isOpen || mode === 'view') {
+      setFormPresetSetup(null)
+      return
+    }
+    if (form.presetId) {
+      const presetObj = presets.find((p) => p.LAYOUT_PRESET_ID === form.presetId)
+      fetchPresetTableSetup(form.presetId, presetObj?.PRESET_NAME)
+        .then(setFormPresetSetup)
+        .catch(() => setFormPresetSetup(null))
+    } else {
+      setFormPresetSetup(null)
+    }
+  }, [isOpen, mode, form.presetId, presets])
 
   // Compute event capacity vs layout preset capacity
   const eventGuestCapacity = form.maxPax && /^\d+$/.test(form.maxPax) ? parseInt(form.maxPax, 10) : 0
@@ -120,7 +259,9 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
     setConflictChecked(false)
 
     if (mode === 'create') {
-      const d = prefillDate || new Date()
+      const minDate = new Date()
+      minDate.setDate(minDate.getDate() + 7)
+      const d = prefillDate && prefillDate > minDate ? prefillDate : minDate
       const defaultDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
       setForm({
         ...EVENT_FORM_DEFAULTS,
@@ -199,6 +340,14 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
       const start = new Date(`${form.startDate}T${form.startTime}`)
       const end = new Date(`${form.endDate}T${form.endTime}`)
       if (end < start) errs.endDate = 'End must be after start date/time'
+    }
+
+    // Advance booking lead time: must be at least 1 week (7 days) from today
+    const minAdvanceDate = new Date()
+    minAdvanceDate.setDate(minAdvanceDate.getDate() + 7)
+    const minDateStr = `${minAdvanceDate.getFullYear()}-${String(minAdvanceDate.getMonth() + 1).padStart(2, '0')}-${String(minAdvanceDate.getDate()).padStart(2, '0')}`
+    if (mode === 'create' && form.startDate && form.startDate < minDateStr) {
+      errs.startDate = 'Events must be booked at least 1 week (7 days) in advance.'
     }
 
     // 1. Prevention of multiple events at the same time
@@ -412,6 +561,26 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                 )}
               </div>
 
+              {/* ── Current Tables Setup Breakdown Card (Always visible) ── */}
+              <TableSetupBreakdownSection
+                title={`Current Tables Setup${localCurrentSetup?.presetName ? ` (${localCurrentSetup.presetName})` : ''}`}
+                badgeText="Active Venue Setup"
+                badgeVariant="slate"
+                setup={localCurrentSetup}
+                emptyMessage="No current table setup data available."
+              />
+
+              {/* ── Event Linked Table Layout Breakdown Card (If linked to a layout preset) ── */}
+              {event.presetId && (
+                <TableSetupBreakdownSection
+                  title={`Event Linked Layout: ${eventPresetSetup?.presetName || presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME || `Preset #${event.presetId}`}`}
+                  badgeText="Event Layout Preset"
+                  badgeVariant="indigo"
+                  setup={eventPresetSetup}
+                  emptyMessage="Loading preset tables breakdown..."
+                />
+              )}
+
               {/* Description */}
               {event.description && (
                 <div className="space-y-1">
@@ -505,11 +674,20 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                   <input
                     id="event-start-date"
                     type="date"
+                    min={(() => {
+                      const d = new Date()
+                      d.setDate(d.getDate() + 7)
+                      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                    })()}
                     value={form.startDate}
                     onChange={(e) => setField('startDate', e.target.value)}
                     className={formInputClass(!!errors.startDate)}
                   />
-                  {errors.startDate && <p className={FORM_ERROR_CLASS}>{errors.startDate}</p>}
+                  {errors.startDate ? (
+                    <p className={FORM_ERROR_CLASS}>{errors.startDate}</p>
+                  ) : (
+                    <p className="text-[10px] text-slate-400">Notice: Minimum 1-week lead time window required.</p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <label htmlFor="event-start-time" className={FORM_LABEL_CLASS}>
@@ -734,6 +912,25 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                   </select>
                 </div>
               </div>
+
+              {/* ── Table Setup Breakdown Preview in Form Mode ── */}
+              {form.presetId ? (
+                <TableSetupBreakdownSection
+                  title={`Selected Table Layout: ${formPresetSetup?.presetName || selectedPreset?.PRESET_NAME || `Preset #${form.presetId}`}`}
+                  badgeText="Preset Preview"
+                  badgeVariant="indigo"
+                  setup={formPresetSetup}
+                  emptyMessage="Loading preset tables breakdown..."
+                />
+              ) : (
+                <TableSetupBreakdownSection
+                  title={`Current Tables Setup${localCurrentSetup?.presetName ? ` (${localCurrentSetup.presetName})` : ''}`}
+                  badgeText="Standard Active Setup"
+                  badgeVariant="slate"
+                  setup={localCurrentSetup}
+                  emptyMessage="No current table setup data available."
+                />
+              )}
 
               {/* Contact */}
               <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">

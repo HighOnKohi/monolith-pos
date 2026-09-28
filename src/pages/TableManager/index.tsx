@@ -853,6 +853,13 @@ export default function TableManager() {
 
   // ── 4. Rename / Edit Preset ──
   const handleRenamePreset = (presetId: number, currentName: string) => {
+    if (isBusinessDayOpen) {
+      showToast(
+        'Cannot rename layout presets while Business Day is active. Please end the business day in Cashier first.',
+        'error',
+      )
+      return
+    }
     const targetPreset = presets.find((p) => p.LAYOUT_PRESET_ID === presetId)
     setRenameModal({
       isOpen: true,
@@ -1313,8 +1320,16 @@ export default function TableManager() {
   // ── 9b. Update Live Guest Count (View Mode & Live Ops) ──
   const handleUpdateGuestCount = async (tableNum: number, count: number) => {
     lastMutationTimeRef.current = Date.now()
+    const target = restaurantTables.find((r) => r.TABLE_NUM === tableNum)
+    const targetGid = target?.MERGE_GROUP_ID
+    const targetNums = targetGid != null
+      ? restaurantTables
+          .filter((r) => r.MERGE_GROUP_ID === targetGid || r.TABLE_ID === targetGid)
+          .map((r) => r.TABLE_NUM)
+      : [tableNum]
+
     setRestaurantTables((prev) =>
-      prev.map((r) => (r.TABLE_NUM === tableNum ? { ...r, CURRENT_GUEST_COUNT: count } : r)),
+      prev.map((r) => (targetNums.includes(r.TABLE_NUM) ? { ...r, CURRENT_GUEST_COUNT: count } : r)),
     )
     try {
       await updateTableGuestCount(tableNum, count)
@@ -2516,6 +2531,17 @@ export default function TableManager() {
                 const isSelected = selectedTableNum === node.TABLE_NUM || selectedTableNums.has(node.TABLE_NUM)
                 const suppress = chairSuppressionMap.get(node.TABLE_NUM)
 
+                const isMerged = node.MERGE_GROUP_ID != null
+                const groupMembers = isMerged
+                  ? mergedNodes.filter((t) => t.MERGE_GROUP_ID === node.MERGE_GROUP_ID)
+                  : [node]
+                const displayCapacity = isMerged
+                  ? groupMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY ?? 4), 0)
+                  : (node.GUEST_CAPACITY ?? 4)
+                const displayPax = isMerged
+                  ? Math.max(...groupMembers.map((m) => m.CURRENT_GUEST_COUNT ?? 0), 0)
+                  : (node.CURRENT_GUEST_COUNT ?? 0)
+
                 return (
                   <div
                     key={node.TABLE_NUM}
@@ -2533,27 +2559,27 @@ export default function TableManager() {
                       top: `${posY * cellSize}px`,
                     }}
                   >
-                    <TableVisual
-                      tableType={node.TABLE_TYPE}
-                      tableNum={node.TABLE_NUM}
-                      cellSize={cellSize}
-                      status={node.STATUS}
-                      guestCount={node.CURRENT_GUEST_COUNT}
-                      capacity={node.GUEST_CAPACITY}
-                      labelName={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.NAME : undefined}
-                      labelColor={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.COLOR : undefined}
-                      isMerged={node.MERGE_GROUP_ID != null}
-                      mergeGroupId={node.MERGE_GROUP_ID}
-                      isSelected={isSelected}
-                      isEditMode={isEditMode}
-                      isQrPrintMode={isQrPrintMode}
-                      isPrintSelected={selectedForPrintTableNums.has(node.TABLE_NUM)}
-                      onTogglePrintSelect={() => handleTogglePrintSelectTable(node.TABLE_NUM)}
-                      onRotate={() => handleRotateTable(node.TABLE_NUM)}
-                      hideChairs={suppress}
-                    />
-                  </div>
-                )
+                        <TableVisual
+                          tableType={node.TABLE_TYPE}
+                          tableNum={node.TABLE_NUM}
+                          cellSize={cellSize}
+                          status={node.STATUS}
+                          guestCount={displayPax}
+                          capacity={displayCapacity}
+                          labelName={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.NAME : undefined}
+                          labelColor={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.COLOR : undefined}
+                          isMerged={isMerged}
+                          mergeGroupId={node.MERGE_GROUP_ID}
+                          isSelected={isSelected}
+                          isEditMode={isEditMode}
+                          isQrPrintMode={isQrPrintMode}
+                          isPrintSelected={selectedForPrintTableNums.has(node.TABLE_NUM)}
+                          onTogglePrintSelect={() => handleTogglePrintSelectTable(node.TABLE_NUM)}
+                          onRotate={() => handleRotateTable(node.TABLE_NUM)}
+                          hideChairs={suppress}
+                        />
+                      </div>
+                    )
               })}
 
               {/* Loading State */}
@@ -2628,8 +2654,8 @@ export default function TableManager() {
       {/* Automatic Table Allocation Modal */}
       <AutomaticAllocationModal
         isOpen={autoAllocModalOpen}
-        gridWidth={activePreset?.PRESET_GRID_WIDTH ?? DEFAULT_GRID_WIDTH}
-        gridHeight={activePreset?.PRESET_GRID_HEIGHT ?? DEFAULT_GRID_HEIGHT}
+        gridWidth={gridWidth}
+        gridHeight={gridHeight}
         maxVenuePax={activePresetMaxPax}
         presetId={activePresetId ?? 0}
         onClose={() => setAutoAllocModalOpen(false)}

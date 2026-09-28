@@ -30,6 +30,8 @@ export interface MenuItem {
   includedItemNames?: string[]
   badge?: ItemBadge
   isBestSeller?: boolean
+  /** Order stock limit: 0 or undefined = unlimited; >0 = remaining order stock */
+  orderLimit?: number
 }
 
 export const DEFAULT_FOOD_PLACEHOLDER =
