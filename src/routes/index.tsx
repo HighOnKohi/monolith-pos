@@ -19,6 +19,7 @@ const CashierInterfacePage = lazy(() => import('@/pages/CashierInterface'))
 const OrderViewerPage = lazy(() => import('@/pages/OrderViewer'))
 const ReceptionistPage = lazy(() => import('@/pages/ReceptionistInterface'))
 const TableManagerPage = lazy(() => import('@/pages/TableManager'))
+const MenuCatalogPage = lazy(() => import('@/pages/MenuCatalog'))
 const MenuManagerPage = lazy(() => import('@/pages/MenuManager'))
 const AnalyticsPage = lazy(() => import('@/pages/Analytics'))
 const AccountManagerPage = lazy(() => import('@/pages/AccountManager'))
@@ -187,6 +188,7 @@ export const router = createBrowserRouter([
           { path: 'cashier', element: wrapCashier(CashierInterfacePage) },
           { path: 'reception', element: wrap(ReceptionistPage) },
           { path: 'tables', element: wrap(TableManagerPage) },
+          { path: 'catalog', element: wrap(MenuCatalogPage) },
           { path: 'menu', element: wrap(MenuManagerPage) },
           { path: 'analytics', element: wrap(AnalyticsPage) },
           { path: 'events', element: wrap(EventsPage) },

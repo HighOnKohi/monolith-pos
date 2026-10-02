@@ -43,22 +43,13 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
   const selectableItems = useMemo(() => {
     return items.filter((item) => {
       if (item.id === editItem?.id || item.id === editGroup?.id) return false
-      if (effectivePresetId !== undefined && item.presetId !== undefined) {
-        return item.presetId === effectivePresetId
-      }
       return true
     })
-  }, [items, editItem?.id, editGroup?.id, effectivePresetId])
+  }, [items, editItem?.id, editGroup?.id])
 
   const selectableCategories = useMemo(
-    () => categories.filter((c) => {
-      if (c.id === 'all') return false
-      if (effectivePresetId !== undefined && c.presetId !== undefined) {
-        return c.presetId === effectivePresetId
-      }
-      return true
-    }),
-    [categories, effectivePresetId],
+    () => categories.filter((c) => c.id !== 'all'),
+    [categories],
   )
   const firstCategoryId = selectableCategories[0]?.id ?? ''
 

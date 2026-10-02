@@ -28,7 +28,7 @@ interface UseMenuResult {
   presets: MenuPreset[]
   activePresetId: number
   setActivePresetId: (id: number) => Promise<void> | void
-  createPreset: (name: string, description?: string) => Promise<MenuPreset>
+  createPreset: (name: string, initialItemIds?: string[]) => Promise<MenuPreset>
 }
 
 const MenuContext = createContext<UseMenuResult | null>(null)
@@ -73,16 +73,20 @@ function useMenuState(enabled: boolean): UseMenuResult {
       setActivePresetIdState(targetPresetId)
       localStorage.setItem(ACTIVE_PRESET_KEY, String(targetPresetId))
 
-      const activeItems = fetchedItems.filter((item) => item.presetId === targetPresetId)
-      const fetchedCategories = await fetchCategories(activeItems, targetPresetId)
+      const targetPreset = fetchedPresets.find((p) => p.PRESET_ID === targetPresetId)
+      const targetItemIds = new Set((targetPreset?.ITEM_IDS ?? []).map(String))
+      const activeItems = targetItemIds.size > 0
+        ? fetchedItems.filter((item) => targetItemIds.has(item.id))
+        : fetchedItems
+      const fetchedCategories = await fetchCategories(activeItems)
       setPresets(fetchedPresets)
       setItems((current) => {
         const temporaryItems = current.filter((item) => item.id.startsWith('temporary-'))
-        return [...fetchedItems, ...temporaryItems]
+        return [...activeItems, ...temporaryItems]
       })
       setCategories(fetchedCategories)
       if (isInitial) {
-        setLoadState(fetchedItems.length === 0 ? 'empty' : 'loaded')
+        setLoadState(activeItems.length === 0 ? 'empty' : 'loaded')
       }
     } catch (err) {
       console.error('[useMenu] Failed to load menu:', err)
@@ -105,8 +109,8 @@ function useMenuState(enabled: boolean): UseMenuResult {
     void load(false, id)
   }, [load])
 
-  const createPreset = useCallback(async (name: string) => {
-    const preset = await createMenuPreset(name)
+  const createPreset = useCallback(async (name: string, initialItemIds?: string[]) => {
+    const preset = await createMenuPreset(name, initialItemIds)
     setPresets((current) => [...current, preset])
     return preset
   }, [])
@@ -214,8 +218,13 @@ function useMenuState(enabled: boolean): UseMenuResult {
       // Ignore
     }
 
+    const handlePresetItemsChanged = () => {
+      loadIfActive(false)
+    }
+
     window.addEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuItemStatusUpdate)
     window.addEventListener(MENU_PRESET_CHANGED, handlePresetChange)
+    window.addEventListener('menu-preset-items-changed', handlePresetItemsChanged)
     window.addEventListener('monolith-order-update', handleBroadcastOrderUpdate)
     window.addEventListener('storage', handlePresetChange)
     document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -224,6 +233,7 @@ function useMenuState(enabled: boolean): UseMenuResult {
       cancelled = true
       window.removeEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuItemStatusUpdate)
       window.removeEventListener(MENU_PRESET_CHANGED, handlePresetChange)
+      window.removeEventListener('menu-preset-items-changed', handlePresetItemsChanged)
       window.removeEventListener('monolith-order-update', handleBroadcastOrderUpdate)
       window.removeEventListener('storage', handlePresetChange)
       document.removeEventListener('visibilitychange', handleVisibilityChange)

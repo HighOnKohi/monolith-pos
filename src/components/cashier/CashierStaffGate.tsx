@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react'
-import { KeyRound, ShieldAlert, ArrowRight, UserCheck, Delete, Loader2 } from 'lucide-react'
+import { KeyRound, ShieldAlert, ArrowRight, Delete, Loader2, Store } from 'lucide-react'
 import { useCashierSession } from '@/hooks/useCashierSession'
 import monolithLogoYellow from '@/assets/images/monolith-logo-yellow.png'
 
@@ -14,7 +14,6 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Auto-focus on load
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
@@ -36,7 +35,7 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
       await startShift(parsedId)
       onSuccess?.()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Staff ID verification failed.'
+      const msg = err instanceof Error ? err.message : 'Cashier Staff ID verification failed.'
       setLocalError(msg)
       inputRef.current?.focus()
     } finally {
@@ -65,42 +64,35 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
     inputRef.current?.focus()
   }
 
-  const handleQuickSelect = (id: number) => {
-    setStaffIdInput(String(id))
-    setLocalError(null)
-    clearError()
-    inputRef.current?.focus()
-  }
-
   const displayedError = localError || error
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4 animate-fade-in overflow-y-auto">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden my-auto">
-        {/* Header Header */}
-        <div className="bg-[#14274E] px-8 pt-8 pb-7 text-center relative overflow-hidden">
-          {/* Subtle decorative glow */}
-          <div className="absolute -top-12 -right-12 w-36 h-36 rounded-full bg-blue-500/10 blur-2xl pointer-events-none" />
-          <div className="absolute -bottom-8 -left-8 w-28 h-28 rounded-full bg-[#E9C46A]/15 blur-xl pointer-events-none" />
-
-          <div className="flex justify-center mb-3">
-            <div className="w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/15 flex items-center justify-center shadow-lg p-2.5">
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-900/60 p-4 overflow-y-auto">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden my-auto">
+        {/* Header */}
+        <div className="bg-[#14274E] px-6 py-6 text-center">
+          <div className="flex justify-center mb-2.5">
+            <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center p-2">
               <img src={monolithLogoYellow} alt="Monolith POS" className="w-full h-full object-contain" />
             </div>
           </div>
 
-          <h2 className="text-xl font-black text-white tracking-tight">Cashier Operational Access</h2>
-          <p className="text-xs font-semibold text-slate-300 mt-1 max-w-xs mx-auto">
-            Please verify your Staff ID to begin your shift and unlock the cashier terminal.
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/10 text-[#E9C46A] text-[10px] font-black uppercase tracking-wider mb-2">
+            <Store className="w-3.5 h-3.5" />
+            <span>Cashier Station</span>
+          </div>
+
+          <h2 className="text-lg font-black text-white tracking-tight">Cashier Operational Access</h2>
+          <p className="text-xs text-slate-300 mt-1 max-w-xs mx-auto font-medium">
+            Enter your Cashier Staff Code to unlock the checkout terminal.
           </p>
         </div>
 
         {/* Form Body */}
-        <div className="p-6 sm:p-8 space-y-5">
-          {/* Error Banner */}
+        <div className="p-6 space-y-4">
           {displayedError && (
-            <div className="bg-rose-50 border border-rose-200/80 rounded-2xl p-3.5 flex items-start gap-3 animate-shake">
-              <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-start gap-2.5">
+              <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <div className="text-xs font-bold text-rose-700 leading-snug">
                 {displayedError}
               </div>
@@ -109,15 +101,15 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="staff-id-input" className="block text-xs font-black text-slate-600 uppercase tracking-wider mb-2">
-                Enter Cashier Staff ID
+              <label htmlFor="cashier-staff-id-input" className="block text-xs font-black text-slate-600 uppercase tracking-wider mb-1.5">
+                Staff Code (PIN)
               </label>
               <div className="relative flex items-center">
-                <div className="absolute left-4 pointer-events-none text-slate-400">
-                  <KeyRound className="w-5 h-5" />
+                <div className="absolute left-3.5 pointer-events-none text-slate-400">
+                  <KeyRound className="w-4 h-4" />
                 </div>
                 <input
-                  id="staff-id-input"
+                  id="cashier-staff-id-input"
                   ref={inputRef}
                   type="text"
                   inputMode="numeric"
@@ -129,23 +121,23 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
                     setLocalError(null)
                     clearError()
                   }}
-                  placeholder="e.g. 1003"
+                  placeholder="e.g. 1001"
                   autoFocus
                   disabled={loading || isSubmitting}
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border-2 border-slate-200 focus:border-[#14274E] focus:bg-white rounded-2xl text-center text-xl font-black tracking-widest text-[#14274E] placeholder:text-slate-300 placeholder:font-normal placeholder:tracking-normal outline-hidden transition-all shadow-inner"
+                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-slate-200 focus:border-[#14274E] focus:bg-white rounded-xl text-center text-xl font-black tracking-widest text-[#14274E] placeholder:text-slate-300 placeholder:font-normal placeholder:tracking-normal outline-none font-mono"
                 />
               </div>
             </div>
 
-            {/* Numeric Keypad for Touch Terminals */}
-            <div className="grid grid-cols-3 gap-2 pt-1">
+            {/* Numeric Keypad */}
+            <div className="grid grid-cols-3 gap-2">
               {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
                 <button
                   key={digit}
                   type="button"
                   onClick={() => handleKeypadPress(digit)}
                   disabled={loading || isSubmitting}
-                  className="py-3 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 border border-slate-200/80 rounded-xl text-lg font-black text-slate-700 shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                  className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-base font-black text-slate-700 cursor-pointer disabled:opacity-50 select-none"
                 >
                   {digit}
                 </button>
@@ -154,7 +146,7 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
                 type="button"
                 onClick={handleClear}
                 disabled={loading || isSubmitting || !staffIdInput}
-                className="py-3 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 border border-slate-200/80 rounded-xl text-xs font-black text-slate-500 shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-black text-slate-500 cursor-pointer disabled:opacity-50 select-none"
               >
                 CLEAR
               </button>
@@ -162,7 +154,7 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
                 type="button"
                 onClick={() => handleKeypadPress('0')}
                 disabled={loading || isSubmitting}
-                className="py-3 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 border border-slate-200/80 rounded-xl text-lg font-black text-slate-700 shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-base font-black text-slate-700 cursor-pointer disabled:opacity-50 select-none"
               >
                 0
               </button>
@@ -170,7 +162,7 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
                 type="button"
                 onClick={handleBackspace}
                 disabled={loading || isSubmitting || !staffIdInput}
-                className="py-3 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 border border-slate-200/80 rounded-xl flex items-center justify-center text-slate-500 shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl flex items-center justify-center text-slate-500 cursor-pointer disabled:opacity-50 select-none"
                 aria-label="Backspace"
               >
                 <Delete className="w-5 h-5" />
@@ -181,12 +173,12 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
             <button
               type="submit"
               disabled={loading || isSubmitting || !staffIdInput.trim()}
-              className="w-full py-4 bg-[#14274E] hover:bg-[#1f3b73] active:bg-[#0f1d3b] text-white rounded-2xl font-black text-sm tracking-wide shadow-lg shadow-[#14274E]/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.99]"
+              className="w-full py-3.5 bg-[#14274E] hover:bg-[#1f3b73] text-white rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
             >
               {isSubmitting || loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Verifying Staff ID...</span>
+                  <span>Verifying...</span>
                 </>
               ) : (
                 <>
@@ -196,37 +188,6 @@ export function CashierStaffGate({ onSuccess }: CashierStaffGateProps) {
               )}
             </button>
           </form>
-
-          {/* Demo / Quick Select Helpers */}
-          <div className="pt-2 border-t border-slate-100">
-            <p className="text-[11px] font-bold text-slate-400 mb-2 flex items-center gap-1.5">
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>Quick Select Authorized Staff:</span>
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={() => handleQuickSelect(1003)}
-                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-[11px] font-bold text-emerald-800 transition-colors cursor-pointer"
-              >
-                1003 — Juan (Cashier)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickSelect(1001)}
-                className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-[11px] font-bold text-blue-800 transition-colors cursor-pointer"
-              >
-                1001 — Admin
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickSelect(1002)}
-                className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg text-[11px] font-bold text-amber-800 transition-colors cursor-pointer"
-              >
-                1002 — Maria (Manager)
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </div>

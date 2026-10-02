@@ -126,14 +126,13 @@ export async function validateCashierStaff(staffId: number): Promise<CashierStaf
   }
 
   // 3. Check Role Authorization
-  // Authorized roles for Cashier interface: CASHIER, ADMIN, MANAGER
-  const authorizedRoles = ['CASHIER', 'ADMIN', 'MANAGER']
+  // Authorized roles for Cashier interface: CASHIER only
   const normalizedRole = staff.staffRole?.toUpperCase() || ''
 
-  if (!authorizedRoles.includes(normalizedRole)) {
+  if (normalizedRole !== 'CASHIER') {
     return {
       valid: false,
-      error: 'This Staff ID is not authorized to operate the cashier interface.',
+      error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only CASHIER staff can operate the checkout terminal.`,
     }
   }
 
@@ -180,8 +179,9 @@ export async function startCashierShift(staffId: number): Promise<CashierShift> 
 
   // Create new Shift record
   const now = new Date().toISOString()
+  const shiftId = Date.now()
   let newShift: CashierShift = {
-    shiftId: Date.now(),
+    shiftId,
     staffId,
     businessDayId: activeDay.businessDayId,
     startedAt: now,
@@ -193,39 +193,45 @@ export async function startCashierShift(staffId: number): Promise<CashierShift> 
     staffRole: staff.staffRole,
   }
 
+  // 1. Update Staff_Codes table
   try {
-    const payload = {
+    const codePayload = {
+      SHIFT_STATUS: 'ONGOING',
+      SHIFT_START: now,
+      SHIFT_END: null,
+    }
+    const { error: codeErr } = await supabase
+      .schema('staff')
+      .from('Staff_Codes')
+      .update(codePayload)
+      .eq('CODE_ID', staffId)
+
+    if (codeErr) {
+      await supabase.from('Staff_Codes').update(codePayload).eq('CODE_ID', staffId)
+    }
+  } catch (err) {
+    console.warn('[cashierShiftService] Update Staff_Codes shift error:', err)
+  }
+
+  // 2. Insert record into Cashier_Staff
+  try {
+    const cashierStaffPayload = {
+      CASHIER_ID: shiftId,
       STAFF_ID: staffId,
-      BUSINESS_DAY_ID: activeDay.businessDayId,
-      STARTED_AT: now,
-      STATUS: 'ACTIVE',
-      TOTAL_EARNING: 0,
+      TOTAL_SHIFT_EARNING: 0,
       TOTAL_TABLES_HANDLED: 0,
     }
 
-    const { data, error } = await supabase
+    const { error: csErr } = await supabase
       .schema('staff')
-      .from('Cashier_Shifts')
-      .insert([payload])
-      .select('*')
-      .single()
+      .from('Cashier_Staff')
+      .insert([cashierStaffPayload])
 
-    if (!error && data) {
-      newShift = mapDbRowToCashierShift(data, staff)
-    } else {
-      // Try public view
-      const { data: pubData, error: pubError } = await supabase
-        .from('Cashier_Shifts')
-        .insert([payload])
-        .select('*')
-        .single()
-
-      if (!pubError && pubData) {
-        newShift = mapDbRowToCashierShift(pubData, staff)
-      }
+    if (csErr) {
+      await supabase.from('Cashier_Staff').insert([cashierStaffPayload])
     }
   } catch (err) {
-    console.warn('[cashierShiftService] Supabase Cashier_Shifts insert failed, using fallback:', err)
+    console.warn('[cashierShiftService] Insert Cashier_Staff error:', err)
   }
 
   // Persist session references and fallback
@@ -369,26 +375,37 @@ export async function endCashierShift(
     staffRole: activeShift?.staffRole,
   }
 
-  // 1. Update in Supabase
+  // 1. Update in Supabase (Staff_Codes & Cashier_Staff)
   try {
-    const payload = {
-      STATUS: 'ENDED',
-      ENDED_AT: now,
-      TOTAL_EARNING: finalEarning,
-      TOTAL_TABLES_HANDLED: finalTables,
+    const codePayload = {
+      SHIFT_STATUS: 'ENDED',
+      SHIFT_END: now,
     }
+    if (updatedShift.staffId) {
+      const { error: codeErr } = await supabase
+        .schema('staff')
+        .from('Staff_Codes')
+        .update(codePayload)
+        .eq('CODE_ID', updatedShift.staffId)
 
-    const { error } = await supabase
-      .schema('staff')
-      .from('Cashier_Shifts')
-      .update(payload)
-      .eq('SHIFT_ID', shiftId)
+      if (codeErr) {
+        await supabase.from('Staff_Codes').update(codePayload).eq('CODE_ID', updatedShift.staffId)
+      }
 
-    if (error) {
-      await supabase
-        .from('Cashier_Shifts')
-        .update(payload)
-        .eq('SHIFT_ID', shiftId)
+      // Update Cashier_Staff metrics
+      const csPayload = {
+        TOTAL_SHIFT_EARNING: finalEarning,
+        TOTAL_TABLES_HANDLED: finalTables,
+      }
+      const { error: csErr } = await supabase
+        .schema('staff')
+        .from('Cashier_Staff')
+        .update(csPayload)
+        .eq('STAFF_ID', updatedShift.staffId)
+
+      if (csErr) {
+        await supabase.from('Cashier_Staff').update(csPayload).eq('STAFF_ID', updatedShift.staffId)
+      }
     }
   } catch (err) {
     console.warn('[cashierShiftService] Failed to update shift in Supabase:', err)
@@ -418,6 +435,66 @@ export async function endCashierShift(
   localStorage.removeItem(LOCAL_STORAGE_STAFF_ID)
 
   return updatedShift
+}
+
+/**
+ * Increments earnings and tables handled in Cashier_Staff upon settlement.
+ */
+export async function recordCashierSettlement(amount = 0): Promise<void> {
+  const staffIdStr = localStorage.getItem(LOCAL_STORAGE_STAFF_ID)
+  if (!staffIdStr) return
+  const staffId = Number(staffIdStr)
+  if (!staffId) return
+
+  try {
+    let currentRecord: Record<string, unknown> | null = null
+    const { data: schemaData } = await supabase
+      .schema('staff')
+      .from('Cashier_Staff')
+      .select('*')
+      .eq('STAFF_ID', staffId)
+      .order('CASHIER_ID', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (schemaData) currentRecord = schemaData as Record<string, unknown>
+    else {
+      const { data: pubData } = await supabase
+        .from('Cashier_Staff')
+        .select('*')
+        .eq('STAFF_ID', staffId)
+        .order('CASHIER_ID', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (pubData) currentRecord = pubData as Record<string, unknown>
+    }
+
+    const currentEarning = Number(currentRecord?.TOTAL_SHIFT_EARNING || 0)
+    const currentTables = Number(currentRecord?.TOTAL_TABLES_HANDLED || 0)
+    const newEarning = currentEarning + Number(amount)
+    const newTables = currentTables + 1
+
+    if (currentRecord?.CASHIER_ID) {
+      await supabase
+        .schema('staff')
+        .from('Cashier_Staff')
+        .update({
+          TOTAL_SHIFT_EARNING: newEarning,
+          TOTAL_TABLES_HANDLED: newTables,
+        })
+        .eq('CASHIER_ID', currentRecord.CASHIER_ID)
+    } else {
+      const payload = {
+        CASHIER_ID: Date.now(),
+        STAFF_ID: staffId,
+        TOTAL_SHIFT_EARNING: newEarning,
+        TOTAL_TABLES_HANDLED: newTables,
+      }
+      await supabase.schema('staff').from('Cashier_Staff').insert([payload])
+    }
+  } catch (err) {
+    console.warn('[cashierShiftService] recordCashierSettlement error:', err)
+  }
 }
 
 // ─── Shift Summary Calculator ────────────────────────────────────────────────

@@ -22,7 +22,7 @@ export default function AppLayout() {
     if (p.startsWith('menu')) return 'Menu Manager'
     if (p.startsWith('analytics')) return 'Analytics'
     if (p.startsWith('events')) return 'Events'
-    if (p.startsWith('accounts')) return 'Account Manager'
+    if (p.startsWith('accounts')) return 'Staff Manager'
     if (p.startsWith('order-logs')) return 'Order Logs'
     return 'Monolith POS'
   })()
@@ -57,7 +57,7 @@ export default function AppLayout() {
             </div>
           </div>
 
-          <main className="flex-1 min-h-0 overflow-hidden">
+          <main className="flex-1 min-h-0 overflow-hidden relative">
             <Outlet />
           </main>
         </div>

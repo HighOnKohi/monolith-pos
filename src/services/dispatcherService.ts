@@ -370,6 +370,8 @@ export async function moveOrderToCooking(orderId: number): Promise<void> {
 
   if (itemError) throw itemError
 
+  void import('@/services/dispatcherShiftService').then((m) => m.incrementDispatcherAccepted())
+
   logOrderEvent(orderId, {
     eventType: 'STATUS_COOKING',
     newStatus: 'PREPARING',
@@ -397,6 +399,8 @@ export async function moveOrderToReady(orderId: number): Promise<void> {
     .eq('ORDER_ID', orderId)
 
   if (orderError) throw orderError
+
+  void import('@/services/dispatcherShiftService').then((m) => m.incrementDispatcherCooked())
 
   logOrderEvent(orderId, {
     eventType: 'STATUS_READY',
@@ -438,6 +442,8 @@ export async function moveOrderToCompleted(orderId: number): Promise<void> {
     .eq('ORDER_ID', orderId)
 
   if (orderError) throw orderError
+
+  void import('@/services/dispatcherShiftService').then((m) => m.incrementDispatcherCompleted())
 
   logOrderEvent(orderId, {
     eventType: 'STATUS_COMPLETED',
@@ -488,6 +494,7 @@ export async function rejectOrderItems(
   orderId: number,
   itemRejections: Array<{ orderItemId: number; itemId: string; reason: string }>
 ): Promise<void> {
+  void import('@/services/dispatcherShiftService').then((m) => m.incrementDispatcherCancelled())
   // Update each rejected item with its rejection reason
   for (const rejection of itemRejections) {
     const { error } = await supabase

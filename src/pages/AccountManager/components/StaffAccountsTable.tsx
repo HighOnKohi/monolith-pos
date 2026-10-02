@@ -2,38 +2,45 @@ import React, { useState } from 'react'
 import {
   Edit2,
   KeyRound,
-  UserCheck,
-  UserX,
   Trash2,
   Copy,
   Check,
-  ShieldCheck,
   ChefHat,
   Store,
-  Users,
-  CheckCircle2,
+  UtensilsCrossed,
+  PowerOff,
+  Clock,
+  ShieldCheck,
 } from 'lucide-react'
 import type { StaffCodeItem, StaffRole } from '@/types/account'
 import { ROLE_DEFINITIONS } from '@/types/account'
 
+function formatShiftTime(isoString?: string | null): string {
+  if (!isoString) return 'Active'
+  try {
+    const d = new Date(isoString)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return 'Active'
+  }
+}
+
 interface StaffAccountsTableProps {
   codes: StaffCodeItem[]
   loading?: boolean
-  activeSessionCodeId?: number
   onEditCode: (code: StaffCodeItem) => void
   onToggleStatus: (code: StaffCodeItem) => void
   onDeleteCode: (code: StaffCodeItem) => void
-  onSelectForSession?: (code: StaffCodeItem) => void
+  onEndShift: (code: StaffCodeItem) => void
 }
 
 export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
   codes,
   loading = false,
-  activeSessionCodeId,
   onEditCode,
   onToggleStatus,
   onDeleteCode,
-  onSelectForSession,
+  onEndShift,
 }) => {
   const [copiedCodeId, setCopiedCodeId] = useState<number | null>(null)
 
@@ -52,24 +59,22 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
   }
 
   const renderRoleBadge = (role: StaffRole) => {
-    const meta = ROLE_DEFINITIONS[role] || ROLE_DEFINITIONS.STAFF
-    let RoleIcon = Users
-    if (role === 'ADMIN') RoleIcon = ShieldCheck
-    if (role === 'MANAGER') RoleIcon = ShieldCheck
+    const meta = ROLE_DEFINITIONS[role] || ROLE_DEFINITIONS.DISPATCHER
+    let RoleIcon = ChefHat
+    if (role === 'SERVICE') RoleIcon = UtensilsCrossed
     if (role === 'CASHIER') RoleIcon = Store
-    if (role === 'KITCHEN') RoleIcon = ChefHat
 
     return (
       <span
         className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-black border ${meta.badgeBg} ${meta.badgeText} ${meta.badgeBorder}`}
       >
-        <RoleIcon className="w-3 h-3 shrink-0" />
+        <RoleIcon className="w-3.5 h-3.5 shrink-0" />
         <span>{meta.label}</span>
       </span>
     )
   }
 
-  const renderStatusBadge = (status: string) => {
+  const renderCodeStatusBadge = (status: string) => {
     const isActive = status === 'ACTIVE'
     return (
       <span
@@ -80,9 +85,35 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
         }`}
       >
         <span
-          className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}
+          className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-400'}`}
         />
         <span>{isActive ? 'Active' : 'Inactive'}</span>
+      </span>
+    )
+  }
+
+  const renderShiftStatusBadge = (item: StaffCodeItem) => {
+    const isOngoing = item.shiftStatus === 'ONGOING'
+    if (isOngoing) {
+      return (
+        <div className="flex flex-col items-start gap-0.5">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-black border bg-amber-50 text-amber-800 border-amber-300 animate-pulse">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            <span>Shift Ongoing</span>
+          </span>
+          {item.shiftStart && (
+            <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1 ml-1">
+              <Clock className="w-2.5 h-2.5" />
+              Started {formatShiftTime(item.shiftStart)}
+            </span>
+          )}
+        </div>
+      )
+    }
+
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold text-slate-400 bg-slate-50 border border-slate-200">
+        <span>Shift Ended</span>
       </span>
     )
   }
@@ -96,7 +127,8 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
               <th className="py-3.5 px-4">Staff Member</th>
               <th className="py-3.5 px-4">Staff Code</th>
               <th className="py-3.5 px-4">Assigned Role</th>
-              <th className="py-3.5 px-4">Status</th>
+              <th className="py-3.5 px-4">Code Status</th>
+              <th className="py-3.5 px-4">Shift Status</th>
               <th className="py-3.5 px-4 text-right">Actions</th>
             </tr>
           </thead>
@@ -123,6 +155,9 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
                   <td className="py-3.5 px-4">
                     <div className="h-5 w-16 bg-slate-200 rounded-full" />
                   </td>
+                  <td className="py-3.5 px-4">
+                    <div className="h-5 w-20 bg-slate-200 rounded-full" />
+                  </td>
                   <td className="py-3.5 px-4 text-right">
                     <div className="h-7 w-7 bg-slate-200 rounded-lg ml-auto" />
                   </td>
@@ -132,7 +167,7 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
             {/* Empty State */}
             {!loading && codes.length === 0 && (
               <tr>
-                <td colSpan={5} className="py-12 px-4 text-center">
+                <td colSpan={6} className="py-12 px-4 text-center">
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 mb-3">
                     <KeyRound className="h-6 w-6" />
                   </div>
@@ -147,13 +182,13 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
             {/* Data Rows */}
             {!loading &&
               codes.map((item) => {
-                const isActiveSession = activeSessionCodeId === item.codeId
+                const isOngoing = item.shiftStatus === 'ONGOING'
 
                 return (
                   <tr
                     key={item.codeId}
                     className={`hover:bg-slate-50/75 transition-colors group ${
-                      isActiveSession ? 'bg-amber-50/30' : ''
+                      isOngoing ? 'bg-amber-50/20' : ''
                     }`}
                   >
                     {/* 1. Staff Member */}
@@ -167,14 +202,9 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
                             <span className="font-extrabold text-[#14274E] truncate">
                               {item.staffName}
                             </span>
-                            {isActiveSession && (
-                              <span className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-800 text-[10px] font-black tracking-tight">
-                                Current
-                              </span>
-                            )}
                           </div>
                           <span className="text-[11px] text-slate-400 font-medium">
-                            POS Terminal Staff
+                            POS Staff Account
                           </span>
                         </div>
                       </div>
@@ -205,29 +235,25 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
                     {/* 3. Assigned Role */}
                     <td className="py-3.5 px-4">{renderRoleBadge(item.staffRole)}</td>
 
-                    {/* 4. Status */}
-                    <td className="py-3.5 px-4">{renderStatusBadge(item.status)}</td>
+                    {/* 4. Code Status */}
+                    <td className="py-3.5 px-4">{renderCodeStatusBadge(item.codeStatus)}</td>
 
-                    {/* 5. Actions */}
+                    {/* 5. Shift Status */}
+                    <td className="py-3.5 px-4">{renderShiftStatusBadge(item)}</td>
+
+                    {/* 6. Actions */}
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1 relative">
-                        {/* Quick Set Active Session */}
-                        {onSelectForSession && item.status === 'ACTIVE' && (
+                        {/* Manual End Shift Button (Only if shift is ONGOING) */}
+                        {isOngoing && (
                           <button
                             type="button"
-                            onClick={() => onSelectForSession(item)}
-                            className={`p-1.5 rounded-lg transition-all cursor-pointer ${
-                              isActiveSession
-                                ? 'text-amber-600 bg-amber-50 cursor-default'
-                                : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50/60'
-                            }`}
-                            title={
-                              isActiveSession
-                                ? 'Currently active staff session on this terminal'
-                                : 'Set as active staff for terminal action logging'
-                            }
+                            onClick={() => onEndShift(item)}
+                            className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-black transition-all flex items-center gap-1.5 shadow-2xs active:scale-95 cursor-pointer"
+                            title={`Manually end ongoing shift for ${item.staffName}`}
                           >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <PowerOff className="w-3.5 h-3.5 text-rose-600" />
+                            <span>End Shift</span>
                           </button>
                         )}
 
@@ -246,24 +272,24 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
                           type="button"
                           onClick={() => onToggleStatus(item)}
                           className={`p-1.5 rounded-lg transition-all cursor-pointer ${
-                            item.status === 'ACTIVE'
+                            item.codeStatus === 'ACTIVE'
                               ? 'text-amber-600 hover:bg-amber-50'
                               : 'text-emerald-600 hover:bg-emerald-50'
                           }`}
-                          title={item.status === 'ACTIVE' ? 'Deactivate Code' : 'Activate Code'}
+                          title={
+                            item.codeStatus === 'ACTIVE'
+                              ? 'Deactivate Staff Code'
+                              : 'Activate Staff Code'
+                          }
                         >
-                          {item.status === 'ACTIVE' ? (
-                            <UserX className="w-3.5 h-3.5" />
-                          ) : (
-                            <UserCheck className="w-3.5 h-3.5" />
-                          )}
+                          <ShieldCheck className="w-3.5 h-3.5" />
                         </button>
 
                         {/* Delete Code */}
                         <button
                           type="button"
                           onClick={() => onDeleteCode(item)}
-                          className="p-1.5 rounded-lg text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-all cursor-pointer"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer"
                           title="Delete Staff Code"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

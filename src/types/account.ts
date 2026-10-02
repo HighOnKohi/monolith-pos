@@ -1,6 +1,10 @@
 // ─── Staff Account Types & Definitions ────────────────────────────────────────
 
-export type StaffRole = 'ADMIN' | 'MANAGER' | 'CASHIER' | 'KITCHEN' | 'STAFF'
+export type StaffRole = 'DISPATCHER' | 'SERVICE' | 'CASHIER'
+
+export type ShiftStatus = 'ONGOING' | 'ENDED'
+
+export type CodeStatus = 'ACTIVE' | 'INACTIVE'
 
 export type StaffStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED'
 
@@ -20,7 +24,11 @@ export interface StaffCodeItem {
   codeId: number // Primary Key / Staff PIN code e.g. 1001
   staffName: string
   staffRole: StaffRole
-  status: StaffStatus
+  shiftStatus: ShiftStatus // 'ONGOING' | 'ENDED'
+  codeStatus: CodeStatus // 'ACTIVE' | 'INACTIVE'
+  status: CodeStatus // alias for backward compatibility
+  shiftStart?: string | null
+  shiftEnd?: string | null
   createdAt?: string
   updatedAt?: string
 }
@@ -29,14 +37,16 @@ export interface StaffCodeFormData {
   codeId: number
   staffName: string
   staffRole: StaffRole
-  status: StaffStatus
+  codeStatus: CodeStatus
+  status?: CodeStatus
 }
 
 export interface StaffCodeFilterParams {
   searchQuery?: string
   role?: StaffRole | 'ALL'
-  status?: StaffStatus | 'ALL'
-  sortBy?: 'codeId' | 'staffName' | 'staffRole' | 'status'
+  status?: CodeStatus | 'ALL'
+  shiftStatus?: ShiftStatus | 'ALL'
+  sortBy?: 'codeId' | 'staffName' | 'staffRole' | 'status' | 'shiftStatus'
   sortOrder?: 'asc' | 'desc'
 }
 
@@ -44,11 +54,10 @@ export interface StaffCodeSummaryStats {
   totalCodes: number
   activeCount: number
   inactiveCount: number
-  adminCount: number
-  managerCount: number
+  dispatcherCount: number
+  serviceCount: number
   cashierCount: number
-  kitchenCount: number
-  floorStaffCount: number
+  ongoingShiftsCount: number
 }
 
 // ─── Legacy Primary Staff Account (Single store root account for terminal) ────
@@ -111,67 +120,32 @@ export interface RoleMeta {
 }
 
 export const ROLE_DEFINITIONS: Record<StaffRole, RoleMeta> = {
-  ADMIN: {
-    role: 'ADMIN',
-    label: 'Administrator',
-    description: 'Full store-wide access including account, financial, and system management.',
-    badgeBg: 'bg-purple-50',
-    badgeText: 'text-purple-700',
-    badgeBorder: 'border-purple-200/80',
-    defaultPermissions: [
-      'manage_accounts',
-      'manage_menu',
-      'manage_tables',
-      'manage_events',
-      'access_kitchen',
-      'access_cashier',
-      'access_analytics',
-      'view_order_logs',
-    ],
+  DISPATCHER: {
+    role: 'DISPATCHER',
+    label: 'Dispatcher',
+    description: 'Kitchen line & live order dispatching, acceptance, cooking, and completion.',
+    badgeBg: 'bg-amber-50',
+    badgeText: 'text-amber-700',
+    badgeBorder: 'border-amber-200/80',
+    defaultPermissions: ['access_kitchen', 'manage_menu', 'view_order_logs'],
   },
-  MANAGER: {
-    role: 'MANAGER',
-    label: 'Manager',
-    description: 'Shift supervisor overseeing menu, tables, operational queues, and analytics.',
+  SERVICE: {
+    role: 'SERVICE',
+    label: 'Service',
+    description: 'Dining floor attendants managing guest seating and table order punching.',
     badgeBg: 'bg-blue-50',
     badgeText: 'text-blue-700',
     badgeBorder: 'border-blue-200/80',
-    defaultPermissions: [
-      'manage_menu',
-      'manage_tables',
-      'manage_events',
-      'access_kitchen',
-      'access_cashier',
-      'access_analytics',
-      'view_order_logs',
-    ],
+    defaultPermissions: ['manage_tables', 'access_kitchen'],
   },
   CASHIER: {
     role: 'CASHIER',
     label: 'Cashier',
-    description: 'Front counter operations, table bill-out, payment receipt settlement.',
+    description: 'Front counter operations, table bill-out settlement, and payment checkouts.',
     badgeBg: 'bg-emerald-50',
     badgeText: 'text-emerald-700',
     badgeBorder: 'border-emerald-200/80',
     defaultPermissions: ['access_cashier', 'manage_tables', 'view_order_logs'],
-  },
-  KITCHEN: {
-    role: 'KITCHEN',
-    label: 'Kitchen Staff',
-    description: 'Live order preparation, cooking line display, and dish stock availability.',
-    badgeBg: 'bg-amber-50',
-    badgeText: 'text-amber-700',
-    badgeBorder: 'border-amber-200/80',
-    defaultPermissions: ['access_kitchen', 'manage_menu'],
-  },
-  STAFF: {
-    role: 'STAFF',
-    label: 'Floor Staff',
-    description: 'Dining floor attendants managing guest seating and table service.',
-    badgeBg: 'bg-slate-100',
-    badgeText: 'text-slate-700',
-    badgeBorder: 'border-slate-200',
-    defaultPermissions: ['manage_tables', 'access_kitchen'],
   },
 }
 

@@ -5,87 +5,12 @@ import type {
   StaffCodeFilterParams,
   StaffCodeSummaryStats,
   StaffRole,
-  StaffStatus,
-  StaffAccount,
+  CodeStatus,
+  ShiftStatus,
 } from '@/types/account'
 
 const LOCAL_STORAGE_CODES_FALLBACK = 'monolith_staff_codes_fallback'
-const LOCAL_STORAGE_STATUS_MAP = 'monolith_staff_codes_status_map'
 const LOCAL_STORAGE_ACTIVE_STAFF = 'monolith_active_staff_session'
-
-// Default seed codes if database is temporarily unavailable
-const DEFAULT_SEED_CODES: StaffCodeItem[] = [
-  {
-    codeId: 1001,
-    staffName: 'Vincent Administrator',
-    staffRole: 'ADMIN',
-    status: 'ACTIVE',
-  },
-  {
-    codeId: 1002,
-    staffName: 'Maria Santos',
-    staffRole: 'MANAGER',
-    status: 'ACTIVE',
-  },
-  {
-    codeId: 1003,
-    staffName: 'Juan Dela Cruz',
-    staffRole: 'CASHIER',
-    status: 'ACTIVE',
-  },
-  {
-    codeId: 1004,
-    staffName: 'Chef Roberto Gonzales',
-    staffRole: 'KITCHEN',
-    status: 'ACTIVE',
-  },
-  {
-    codeId: 1005,
-    staffName: 'Elena Reyes',
-    staffRole: 'STAFF',
-    status: 'ACTIVE',
-  },
-]
-
-// ─── Local Storage Helpers ───────────────────────────────────────────────────
-
-function getFallbackCodes(): StaffCodeItem[] {
-  try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_CODES_FALLBACK)
-    if (raw) return JSON.parse(raw) as StaffCodeItem[]
-  } catch (err) {
-    console.warn('[staffCodeService] Error reading fallback storage:', err)
-  }
-  return DEFAULT_SEED_CODES
-}
-
-function saveFallbackCodes(codes: StaffCodeItem[]): void {
-  try {
-    localStorage.setItem(LOCAL_STORAGE_CODES_FALLBACK, JSON.stringify(codes))
-  } catch (err) {
-    console.warn('[staffCodeService] Error saving fallback storage:', err)
-  }
-}
-
-function getLocalStatusMap(): Record<number, StaffStatus> {
-  try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_STATUS_MAP)
-    if (raw) return JSON.parse(raw) as Record<number, StaffStatus>
-  } catch {
-    // ignore
-  }
-  return {}
-}
-
-function saveLocalStatus(codeId: number, status: StaffStatus): void {
-  try {
-    const map = getLocalStatusMap()
-    map[codeId] = status
-    localStorage.setItem(LOCAL_STORAGE_STATUS_MAP, JSON.stringify(map))
-  } catch {
-    // ignore
-  }
-}
 
 // ─── Active Staff Session (For Order / Action Logging) ─────────────────────────
 
@@ -93,11 +18,22 @@ export function getActiveStaffSession(): StaffCodeItem | null {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ACTIVE_STAFF)
     if (raw) return JSON.parse(raw) as StaffCodeItem
+
+    // Check if any role interface is active on this terminal
+    const dispId = localStorage.getItem('monolith_dispatcher_staff_id')
+    const servId = localStorage.getItem('monolith_service_staff_id')
+    const cashId = localStorage.getItem('monolith_cashier_staff_id')
+    const fallback = getFallbackCodes()
+
+    const foundId = Number(dispId || servId || cashId)
+    if (foundId) {
+      const match = fallback.find((c) => c.codeId === foundId)
+      if (match) return match
+    }
   } catch {
     // ignore
   }
-  // Default to Admin 1001 if nothing selected yet
-  return DEFAULT_SEED_CODES[0]
+  return null
 }
 
 export function setActiveStaffSession(staff: StaffCodeItem | null): void {
@@ -112,27 +48,61 @@ export function setActiveStaffSession(staff: StaffCodeItem | null): void {
   }
 }
 
-// ─── Mapper ───────────────────────────────────────────────────────────────────
+// ─── Local Storage Helpers ───────────────────────────────────────────────────
+
+function getFallbackCodes(): StaffCodeItem[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_CODES_FALLBACK)
+    if (raw) return JSON.parse(raw) as StaffCodeItem[]
+  } catch (err) {
+    console.warn('[staffCodeService] Error reading fallback storage:', err)
+  }
+  return []
+}
+
+function saveFallbackCodes(codes: StaffCodeItem[]): void {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_CODES_FALLBACK, JSON.stringify(codes))
+  } catch (err) {
+    console.warn('[staffCodeService] Error saving fallback storage:', err)
+  }
+}
+
+// ─── Row Mapper ───────────────────────────────────────────────────────────────
 
 function mapDbRowToStaffCode(row: Record<string, unknown>): StaffCodeItem {
   const codeId = Number(row['CODE_ID'])
   const staffName = String(row['STAFF_NAME'] || 'Unnamed Staff')
-  const staffRole = (String(row['STAFF_ROLE'] || 'STAFF').toUpperCase() as StaffRole) || 'STAFF'
+  
+  // Normalize role to DISPATCHER | SERVICE | CASHIER
+  let rawRole = String(row['STAFF_ROLE'] || 'DISPATCHER').toUpperCase()
+  let staffRole: StaffRole = 'DISPATCHER'
+  if (rawRole === 'CASHIER') staffRole = 'CASHIER'
+  else if (rawRole === 'SERVICE' || rawRole === 'STAFF' || rawRole === 'SERVER') staffRole = 'SERVICE'
+  else if (rawRole === 'DISPATCHER' || rawRole === 'KITCHEN' || rawRole === 'ADMIN' || rawRole === 'MANAGER') staffRole = 'DISPATCHER'
 
-  // If DB column STATUS exists, use it; otherwise check local override, or default to ACTIVE
-  const statusMap = getLocalStatusMap()
-  let status: StaffStatus = 'ACTIVE'
-  if (row['STATUS']) {
-    status = (String(row['STATUS']).toUpperCase() as StaffStatus) || 'ACTIVE'
-  } else if (statusMap[codeId]) {
-    status = statusMap[codeId]
-  }
+  const rawCodeStatus = String(row['CODE_STATUS'] || row['STATUS'] || 'ACTIVE').toUpperCase()
+  const codeStatus: CodeStatus = rawCodeStatus === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE'
+
+  const rawShiftStatus = String(row['SHIFT_STATUS'] || 'ENDED').toUpperCase()
+  const shiftStatus: ShiftStatus = rawShiftStatus === 'ONGOING' ? 'ONGOING' : 'ENDED'
+
+  const shiftStart = row['SHIFT_START'] ? String(row['SHIFT_START']) : null
+  const shiftEnd = row['SHIFT_END'] ? String(row['SHIFT_END']) : null
+  const createdAt = row['CREATED_AT'] ? String(row['CREATED_AT']) : undefined
+  const updatedAt = row['UPDATED_AT'] ? String(row['UPDATED_AT']) : undefined
 
   return {
     codeId,
     staffName,
     staffRole,
-    status,
+    codeStatus,
+    status: codeStatus,
+    shiftStatus,
+    shiftStart,
+    shiftEnd,
+    createdAt,
+    updatedAt,
   }
 }
 
@@ -162,31 +132,38 @@ export async function fetchStaffCodes(
     searchQuery = '',
     role = 'ALL',
     status = 'ALL',
+    shiftStatus = 'ALL',
     sortBy = 'codeId',
     sortOrder = 'asc',
   } = filters
 
   try {
-    // 1. Try querying Supabase Staff_Codes
-    const { data: dbRows, error } = await supabase
+    // 1. Try querying Supabase Staff_Codes in schema 'staff' or public
+    let dbRows: Record<string, unknown>[] | null = null
+    const { data: schemaData, error: schemaError } = await supabase
+      .schema('staff')
       .from('Staff_Codes')
       .select('*')
       .order('CODE_ID', { ascending: sortOrder === 'asc' })
 
-    if (error) {
-      throw error
+    if (!schemaError && schemaData) {
+      dbRows = schemaData as Record<string, unknown>[]
+    } else {
+      const { data: pubData, error: pubError } = await supabase
+        .from('Staff_Codes')
+        .select('*')
+        .order('CODE_ID', { ascending: sortOrder === 'asc' })
+
+      if (pubError && !dbRows) throw pubError
+      if (pubData) dbRows = pubData as Record<string, unknown>[]
     }
 
     const allCodes: StaffCodeItem[] = (dbRows ?? []).map(mapDbRowToStaffCode)
     saveFallbackCodes(allCodes)
 
-    // Calculate overall stats before client-side query filters
     const summaryStats = calculateSummaryStats(allCodes)
+    const filtered = filterCodesList(allCodes, searchQuery, role, status, shiftStatus, sortBy, sortOrder)
 
-    // Apply filters
-    const filtered = filterCodesList(allCodes, searchQuery, role, status, sortBy, sortOrder)
-
-    // Pagination
     const totalCount = filtered.length
     const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
     const validPage = Math.min(Math.max(1, page), totalPages)
@@ -210,7 +187,7 @@ export async function fetchStaffCodes(
 
     const fallbackAll = getFallbackCodes()
     const summaryStats = calculateSummaryStats(fallbackAll)
-    const filtered = filterCodesList(fallbackAll, searchQuery, role, status, sortBy, sortOrder)
+    const filtered = filterCodesList(fallbackAll, searchQuery, role, status, shiftStatus, sortBy, sortOrder)
 
     const totalCount = filtered.length
     const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
@@ -244,52 +221,45 @@ export async function createStaffCode(data: StaffCodeFormData): Promise<StaffCod
     throw new Error('Staff name is required.')
   }
 
-  const staffRole = data.staffRole || 'STAFF'
-  const status = data.status || 'ACTIVE'
+  const staffRole: StaffRole = data.staffRole || 'DISPATCHER'
+  const codeStatus: CodeStatus = data.codeStatus || data.status || 'ACTIVE'
+  const shiftStatus: ShiftStatus = 'ENDED'
 
-  saveLocalStatus(codeId, status)
+  const payload = {
+    CODE_ID: codeId,
+    STAFF_NAME: staffName,
+    STAFF_ROLE: staffRole,
+    CODE_STATUS: codeStatus,
+    SHIFT_STATUS: shiftStatus,
+  }
 
-  // Try inserting with STATUS
   try {
-    const { data: inserted, error } = await supabase
+    let inserted: Record<string, unknown> | null = null
+    const { data: schemaInserted, error: schemaErr } = await supabase
+      .schema('staff')
       .from('Staff_Codes')
-      .insert({
-        CODE_ID: codeId,
-        STAFF_NAME: staffName,
-        STAFF_ROLE: staffRole,
-        STATUS: status,
-      })
+      .insert([payload])
       .select()
       .single()
 
-    if (error) {
-      // If error is 42703 (STATUS column does not exist yet), retry without STATUS column
-      if (error.code === '42703') {
-        const { data: insertedWithoutStatus, error: retryError } = await supabase
-          .from('Staff_Codes')
-          .insert({
-            CODE_ID: codeId,
-            STAFF_NAME: staffName,
-            STAFF_ROLE: staffRole,
-          })
-          .select()
-          .single()
+    if (!schemaErr && schemaInserted) {
+      inserted = schemaInserted as Record<string, unknown>
+    } else {
+      const { data: pubInserted, error: pubErr } = await supabase
+        .from('Staff_Codes')
+        .insert([payload])
+        .select()
+        .single()
 
-        if (retryError) throw retryError
-        const codeItem = mapDbRowToStaffCode(insertedWithoutStatus)
-        codeItem.status = status
-        updateFallbackCache(codeItem)
-        return codeItem
-      }
-      throw error
+      if (pubErr) throw pubErr
+      if (pubInserted) inserted = pubInserted as Record<string, unknown>
     }
 
-    const codeItem = mapDbRowToStaffCode(inserted)
+    const codeItem = mapDbRowToStaffCode(inserted || payload)
     updateFallbackCache(codeItem)
     return codeItem
   } catch (err: unknown) {
     console.warn('[staffCodeService] Insert failed in Supabase, applying to fallback cache:', err)
-    // Check if code is already taken in fallback
     const fallbackAll = getFallbackCodes()
     if (fallbackAll.some((c) => c.codeId === codeId)) {
       throw new Error(`Staff code #${codeId} is already in use. Please pick another code.`)
@@ -299,7 +269,11 @@ export async function createStaffCode(data: StaffCodeFormData): Promise<StaffCod
       codeId,
       staffName,
       staffRole,
-      status,
+      codeStatus,
+      status: codeStatus,
+      shiftStatus,
+      shiftStart: null,
+      shiftEnd: null,
     }
     fallbackAll.push(newCode)
     saveFallbackCodes(fallbackAll)
@@ -324,63 +298,64 @@ export async function updateStaffCode(
     throw new Error('Staff name is required.')
   }
 
-  const staffRole = data.staffRole || 'STAFF'
-  const status = data.status || 'ACTIVE'
+  const staffRole: StaffRole = data.staffRole || 'DISPATCHER'
+  const codeStatus: CodeStatus = data.codeStatus || data.status || 'ACTIVE'
 
-  saveLocalStatus(newCodeId, status)
+  const updatePayload = {
+    STAFF_NAME: staffName,
+    STAFF_ROLE: staffRole,
+    CODE_STATUS: codeStatus,
+  }
 
   try {
-    // If the codeId itself changed, we need to update PK or insert new & delete old
     if (newCodeId !== originalCodeId) {
+      // Need to delete and re-insert if PK changes
+      await supabase.schema('staff').from('Staff_Codes').delete().eq('CODE_ID', originalCodeId)
       await supabase.from('Staff_Codes').delete().eq('CODE_ID', originalCodeId)
       return await createStaffCode(data)
     }
 
-    // Try updating with STATUS
-    const { data: updated, error } = await supabase
+    let updated: Record<string, unknown> | null = null
+    const { data: schemaUpdated, error: schemaErr } = await supabase
+      .schema('staff')
       .from('Staff_Codes')
-      .update({
-        STAFF_NAME: staffName,
-        STAFF_ROLE: staffRole,
-        STATUS: status,
-      })
+      .update(updatePayload)
       .eq('CODE_ID', originalCodeId)
       .select()
       .single()
 
-    if (error) {
-      if (error.code === '42703') {
-        const { data: updatedWithoutStatus, error: retryError } = await supabase
-          .from('Staff_Codes')
-          .update({
-            STAFF_NAME: staffName,
-            STAFF_ROLE: staffRole,
-          })
-          .eq('CODE_ID', originalCodeId)
-          .select()
-          .single()
+    if (!schemaErr && schemaUpdated) {
+      updated = schemaUpdated as Record<string, unknown>
+    } else {
+      const { data: pubUpdated, error: pubErr } = await supabase
+        .from('Staff_Codes')
+        .update(updatePayload)
+        .eq('CODE_ID', originalCodeId)
+        .select()
+        .single()
 
-        if (retryError) throw retryError
-        const codeItem = mapDbRowToStaffCode(updatedWithoutStatus)
-        codeItem.status = status
-        updateFallbackCache(codeItem)
-        return codeItem
-      }
-      throw error
+      if (pubErr) throw pubErr
+      if (pubUpdated) updated = pubUpdated as Record<string, unknown>
     }
 
-    const codeItem = mapDbRowToStaffCode(updated)
+    const codeItem = mapDbRowToStaffCode(updated || { CODE_ID: originalCodeId, ...updatePayload })
     updateFallbackCache(codeItem)
     return codeItem
   } catch (err) {
     console.warn('[staffCodeService] Update failed in Supabase, updating fallback cache:', err)
     const fallbackAll = getFallbackCodes()
     const idx = fallbackAll.findIndex((c) => c.codeId === originalCodeId)
+    const existing = idx >= 0 ? fallbackAll[idx] : null
+
     const updatedItem: StaffCodeItem = {
       codeId: newCodeId,
       staffName,
       staffRole,
-      status,
+      codeStatus,
+      status: codeStatus,
+      shiftStatus: existing?.shiftStatus || 'ENDED',
+      shiftStart: existing?.shiftStart || null,
+      shiftEnd: existing?.shiftEnd || null,
     }
     if (idx >= 0) {
       fallbackAll[idx] = updatedItem
@@ -397,41 +372,35 @@ export async function updateStaffCode(
  */
 export async function toggleStaffCodeStatus(
   codeId: number,
-  currentStatus: StaffStatus,
+  currentStatus: CodeStatus | string,
 ): Promise<StaffCodeItem> {
-  const newStatus: StaffStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
-  saveLocalStatus(codeId, newStatus)
+  const newStatus: CodeStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
 
   try {
-    const { data: updated, error } = await supabase
+    let updated: Record<string, unknown> | null = null
+    const { data: schemaUpdated, error: schemaErr } = await supabase
+      .schema('staff')
       .from('Staff_Codes')
-      .update({ STATUS: newStatus })
+      .update({ CODE_STATUS: newStatus, STATUS: newStatus })
       .eq('CODE_ID', codeId)
       .select()
       .single()
 
-    if (error) {
-      if (error.code === '42703') {
-        // STATUS column doesn't exist yet; status is persisted in localStatusMap
-        const fallbackAll = getFallbackCodes()
-        const found = fallbackAll.find((c) => c.codeId === codeId)
-        if (found) {
-          found.status = newStatus
-          saveFallbackCodes(fallbackAll)
-          return found
-        }
-        return {
-          codeId,
-          staffName: 'Staff Member',
-          staffRole: 'STAFF',
-          status: newStatus,
-        }
-      }
-      throw error
+    if (!schemaErr && schemaUpdated) {
+      updated = schemaUpdated as Record<string, unknown>
+    } else {
+      const { data: pubUpdated, error: pubErr } = await supabase
+        .from('Staff_Codes')
+        .update({ CODE_STATUS: newStatus, STATUS: newStatus })
+        .eq('CODE_ID', codeId)
+        .select()
+        .single()
+
+      if (pubErr) throw pubErr
+      if (pubUpdated) updated = pubUpdated as Record<string, unknown>
     }
 
-    const codeItem = mapDbRowToStaffCode(updated)
-    codeItem.status = newStatus
+    const codeItem = mapDbRowToStaffCode(updated || { CODE_ID: codeId, CODE_STATUS: newStatus })
     updateFallbackCache(codeItem)
     return codeItem
   } catch (err) {
@@ -439,6 +408,7 @@ export async function toggleStaffCodeStatus(
     const fallbackAll = getFallbackCodes()
     const item = fallbackAll.find((c) => c.codeId === codeId)
     if (item) {
+      item.codeStatus = newStatus
       item.status = newStatus
       saveFallbackCodes(fallbackAll)
       return item
@@ -446,8 +416,86 @@ export async function toggleStaffCodeStatus(
     return {
       codeId,
       staffName: 'Staff Member',
-      staffRole: 'STAFF',
+      staffRole: 'DISPATCHER',
+      codeStatus: newStatus,
       status: newStatus,
+      shiftStatus: 'ENDED',
+    }
+  }
+}
+
+/**
+ * Manually ends an ongoing shift for a staff code.
+ */
+export async function endStaffShiftManually(codeId: number): Promise<StaffCodeItem> {
+  const now = new Date().toISOString()
+  const payload = {
+    SHIFT_STATUS: 'ENDED',
+    SHIFT_END: now,
+  }
+
+  try {
+    let updated: Record<string, unknown> | null = null
+    const { data: schemaUpdated, error: schemaErr } = await supabase
+      .schema('staff')
+      .from('Staff_Codes')
+      .update(payload)
+      .eq('CODE_ID', codeId)
+      .select()
+      .single()
+
+    if (!schemaErr && schemaUpdated) {
+      updated = schemaUpdated as Record<string, unknown>
+    } else {
+      const { data: pubUpdated, error: pubErr } = await supabase
+        .from('Staff_Codes')
+        .update(payload)
+        .eq('CODE_ID', codeId)
+        .select()
+        .single()
+
+      if (pubErr) throw pubErr
+      if (pubUpdated) updated = pubUpdated as Record<string, unknown>
+    }
+
+    // Clean up local storage if this terminal was running a shift for this code
+    const cashierStaffId = Number(localStorage.getItem('monolith_cashier_staff_id'))
+    if (cashierStaffId === codeId) {
+      localStorage.removeItem('monolith_cashier_shift_id')
+      localStorage.removeItem('monolith_cashier_staff_id')
+    }
+    const serviceStaffId = Number(localStorage.getItem('monolith_service_staff_id'))
+    if (serviceStaffId === codeId) {
+      localStorage.removeItem('monolith_service_shift_id')
+      localStorage.removeItem('monolith_service_staff_id')
+    }
+    const dispatcherStaffId = Number(localStorage.getItem('monolith_dispatcher_staff_id'))
+    if (dispatcherStaffId === codeId) {
+      localStorage.removeItem('monolith_dispatcher_shift_id')
+      localStorage.removeItem('monolith_dispatcher_staff_id')
+    }
+
+    const codeItem = mapDbRowToStaffCode(updated || { CODE_ID: codeId, ...payload })
+    updateFallbackCache(codeItem)
+    return codeItem
+  } catch (err) {
+    console.warn('[staffCodeService] Manual end shift Supabase error, updating fallback:', err)
+    const fallbackAll = getFallbackCodes()
+    const item = fallbackAll.find((c) => c.codeId === codeId)
+    if (item) {
+      item.shiftStatus = 'ENDED'
+      item.shiftEnd = now
+      saveFallbackCodes(fallbackAll)
+      return item
+    }
+    return {
+      codeId,
+      staffName: 'Staff Member',
+      staffRole: 'DISPATCHER',
+      codeStatus: 'ACTIVE',
+      status: 'ACTIVE',
+      shiftStatus: 'ENDED',
+      shiftEnd: now,
     }
   }
 }
@@ -457,8 +505,11 @@ export async function toggleStaffCodeStatus(
  */
 export async function deleteStaffCode(codeId: number): Promise<void> {
   try {
-    const { error } = await supabase.from('Staff_Codes').delete().eq('CODE_ID', codeId)
-    if (error) throw error
+    const { error: schemaErr } = await supabase.schema('staff').from('Staff_Codes').delete().eq('CODE_ID', codeId)
+    if (schemaErr) {
+      const { error: pubErr } = await supabase.from('Staff_Codes').delete().eq('CODE_ID', codeId)
+      if (pubErr) throw pubErr
+    }
   } catch (err) {
     console.warn('[staffCodeService] Delete error from Supabase, removing from fallback:', err)
   } finally {
@@ -468,11 +519,12 @@ export async function deleteStaffCode(codeId: number): Promise<void> {
 }
 
 /**
- * Suggests the next available numeric staff code (e.g. 1001, 1002, 1006...).
+ * Suggests the next available numeric staff code (e.g. 1001, 1002...).
  */
 export async function suggestNextCode(): Promise<number> {
   try {
     const { data } = await supabase
+      .schema('staff')
       .from('Staff_Codes')
       .select('CODE_ID')
       .order('CODE_ID', { ascending: false })
@@ -494,46 +546,14 @@ export async function suggestNextCode(): Promise<number> {
   return 1001
 }
 
-/**
- * Fetches the single primary store staff account from Staff_Accounts (Vincent Administrator).
- */
-export async function getPrimaryStaffAccount(): Promise<StaffAccount | null> {
-  try {
-    const { data, error } = await supabase
-      .from('Staff_Accounts')
-      .select('*')
-      .order('ACCOUNT_ID', { ascending: true })
-      .limit(1)
-      .maybeSingle()
-
-    if (error || !data) return null
-
-    return {
-      accountId: Number(data.ACCOUNT_ID),
-      authUserId: data.AUTH_USER_ID ? String(data.AUTH_USER_ID) : null,
-      fullName: String(data.FULL_NAME || 'Store Administrator'),
-      email: String(data.EMAIL || ''),
-      role: (data.ROLE as StaffRole) || 'ADMIN',
-      status: (data.STATUS as StaffStatus) || 'ACTIVE',
-      permissions: Array.isArray(data.PERMISSIONS) ? data.PERMISSIONS : [],
-      phone: data.PHONE ? String(data.PHONE) : null,
-      notes: data.NOTES ? String(data.NOTES) : null,
-      createdAt: String(data.CREATED_AT || new Date().toISOString()),
-      updatedAt: String(data.UPDATED_AT || new Date().toISOString()),
-      lastLogin: data.LAST_LOGIN ? String(data.LAST_LOGIN) : null,
-    }
-  } catch {
-    return null
-  }
-}
-
 // ─── Filter & Stats Helpers ───────────────────────────────────────────────────
 
 function filterCodesList(
   codes: StaffCodeItem[],
   searchQuery: string,
   role: StaffRole | 'ALL',
-  status: StaffStatus | 'ALL',
+  status: CodeStatus | 'ALL',
+  shiftStatus: ShiftStatus | 'ALL',
   sortBy: StaffCodeFilterParams['sortBy'],
   sortOrder: StaffCodeFilterParams['sortOrder'],
 ): StaffCodeItem[] {
@@ -554,7 +574,11 @@ function filterCodesList(
   }
 
   if (status && status !== 'ALL') {
-    list = list.filter((c) => c.status === status)
+    list = list.filter((c) => c.codeStatus === status)
+  }
+
+  if (shiftStatus && shiftStatus !== 'ALL') {
+    list = list.filter((c) => c.shiftStatus === shiftStatus)
   }
 
   list.sort((a, b) => {
@@ -564,7 +588,9 @@ function filterCodesList(
     } else if (sortBy === 'staffRole') {
       comparison = a.staffRole.localeCompare(b.staffRole)
     } else if (sortBy === 'status') {
-      comparison = a.status.localeCompare(b.status)
+      comparison = a.codeStatus.localeCompare(b.codeStatus)
+    } else if (sortBy === 'shiftStatus') {
+      comparison = a.shiftStatus.localeCompare(b.shiftStatus)
     } else {
       comparison = a.codeId - b.codeId
     }
@@ -579,36 +605,32 @@ function calculateSummaryStats(codes: StaffCodeItem[]): StaffCodeSummaryStats {
     totalCodes: codes.length,
     activeCount: 0,
     inactiveCount: 0,
-    adminCount: 0,
-    managerCount: 0,
+    dispatcherCount: 0,
+    serviceCount: 0,
     cashierCount: 0,
-    kitchenCount: 0,
-    floorStaffCount: 0,
+    ongoingShiftsCount: 0,
   }
 
   for (const c of codes) {
-    if (c.status === 'ACTIVE') {
+    if (c.codeStatus === 'ACTIVE') {
       stats.activeCount++
     } else {
       stats.inactiveCount++
     }
 
+    if (c.shiftStatus === 'ONGOING') {
+      stats.ongoingShiftsCount++
+    }
+
     switch (c.staffRole) {
-      case 'ADMIN':
-        stats.adminCount++
+      case 'DISPATCHER':
+        stats.dispatcherCount++
         break
-      case 'MANAGER':
-        stats.managerCount++
+      case 'SERVICE':
+        stats.serviceCount++
         break
       case 'CASHIER':
         stats.cashierCount++
-        break
-      case 'KITCHEN':
-        stats.kitchenCount++
-        break
-      case 'STAFF':
-      default:
-        stats.floorStaffCount++
         break
     }
   }

@@ -210,6 +210,9 @@ export async function createOrder(
     console.warn('[orderService] Failed to update ORDER_LIMIT stock:', stockErr)
   }
 
+  // Increment Service_Staff metric if service shift is active
+  void import('@/services/serviceShiftService').then((m) => m.recordServiceOrderPunched())
+
   // 3. Mark table as OCCUPIED if it was not already occupied/has_request
   try {
     const { data: tableData } = await supabase

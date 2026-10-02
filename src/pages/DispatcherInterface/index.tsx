@@ -22,6 +22,9 @@ import {
 } from '@/services/dispatcherService'
 import type { OrderStatus } from '@/types/order'
 import { CancelOrderModal } from '@/components/dispatcher/CancelOrderModal'
+import { DispatcherStaffGate } from '@/components/dispatcher/DispatcherStaffGate'
+import { DispatcherShiftHeaderBar } from '@/components/dispatcher/DispatcherShiftHeaderBar'
+import { getActiveDispatcherShift, type DispatcherShift } from '@/services/dispatcherShiftService'
 
 type TableStage = 'preparing' | 'cooking' | 'done'
 
@@ -57,6 +60,36 @@ export default function DispatcherInterface() {
   const ordersRef = useRef<DispatcherOrder[]>([])
   const [activeTableStage, setActiveTableStage] = useState<TableStage>('preparing')
   const [rejectingOrder, setRejectingOrder] = useState<DispatcherOrder | null>(null)
+
+  // Dispatcher Shift Session State
+  const [dispatcherShift, setDispatcherShift] = useState<DispatcherShift | null>(null)
+  const [shiftLoading, setShiftLoading] = useState(true)
+
+  const restoreDispatcherSession = useCallback(async () => {
+    setShiftLoading(true)
+    try {
+      const active = await getActiveDispatcherShift()
+      setDispatcherShift(active)
+    } catch {
+      setDispatcherShift(null)
+    } finally {
+      setShiftLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void restoreDispatcherSession()
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'monolith_dispatcher_shift_id' || e.key === 'monolith_dispatcher_staff_id') {
+        void restoreDispatcherSession()
+      }
+    }
+    window.addEventListener('storage', handleStorageChange)
+    return () => {
+      window.removeEventListener('storage', handleStorageChange)
+    }
+  }, [restoreDispatcherSession])
 
   const [isLoading, setIsLoading] = useState(false)
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null)
@@ -712,7 +745,22 @@ export default function DispatcherInterface() {
   const tableDoneCount = orders.filter((o) => ['READY', 'SERVED'].includes(o.orderStatus)).length
 
   return (
-    <div className="dispatcher-interface-container">
+    <div className="dispatcher-interface-container relative">
+      {/* Dispatcher Staff Access Gate (covers only this interface container) */}
+      {!shiftLoading && !dispatcherShift && (
+        <DispatcherStaffGate onSuccess={() => void restoreDispatcherSession()} />
+      )}
+
+      {/* Dispatcher Active Shift Header Bar */}
+      {dispatcherShift && (
+        <div className="px-4 pt-3 pb-0 shrink-0">
+          <DispatcherShiftHeaderBar
+            shift={dispatcherShift}
+            onShiftEnded={() => setDispatcherShift(null)}
+          />
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toastMessage && (
         <div

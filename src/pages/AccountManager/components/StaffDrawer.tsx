@@ -1,18 +1,16 @@
 import React, { useState, useEffect } from 'react'
 import {
   X,
-  Save,
   AlertCircle,
   KeyRound,
   User,
-  ShieldCheck,
   ChefHat,
   Store,
-  Users,
+  UtensilsCrossed,
   Sparkles,
   Check,
 } from 'lucide-react'
-import type { StaffCodeItem, StaffCodeFormData, StaffRole, StaffStatus } from '@/types/account'
+import type { StaffCodeItem, StaffCodeFormData, StaffRole, CodeStatus } from '@/types/account'
 import { ROLE_DEFINITIONS } from '@/types/account'
 import { suggestNextCode } from '@/services/staffCodeService'
 
@@ -36,8 +34,8 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
   // Form State
   const [staffName, setStaffName] = useState('')
   const [codeId, setCodeId] = useState<string>('')
-  const [staffRole, setStaffRole] = useState<StaffRole>('STAFF')
-  const [status, setStatus] = useState<StaffStatus>('ACTIVE')
+  const [staffRole, setStaffRole] = useState<StaffRole>('DISPATCHER')
+  const [codeStatus, setCodeStatus] = useState<CodeStatus>('ACTIVE')
 
   // UI State
   const [submitting, setSubmitting] = useState(false)
@@ -62,15 +60,15 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
 
     if (mode === 'create') {
       setStaffName('')
-      setStaffRole('STAFF')
-      setStatus('ACTIVE')
+      setStaffRole('DISPATCHER')
+      setCodeStatus('ACTIVE')
       // Auto-suggest next code
       suggestNextCode().then((next) => setCodeId(String(next)))
     } else if (codeItem) {
       setStaffName(codeItem.staffName)
       setCodeId(String(codeItem.codeId))
       setStaffRole(codeItem.staffRole)
-      setStatus(codeItem.status)
+      setCodeStatus(codeItem.codeStatus || codeItem.status || 'ACTIVE')
     }
   }, [isOpen, mode, codeItem])
 
@@ -107,7 +105,8 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
           codeId: numericCode,
           staffName: trimmedName,
           staffRole,
-          status,
+          codeStatus,
+          status: codeStatus,
         },
         mode === 'edit' && codeItem ? codeItem.codeId : undefined,
       )
@@ -122,7 +121,7 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
 
   if (!isOpen) return null
 
-  const rolesList: StaffRole[] = ['ADMIN', 'MANAGER', 'CASHIER', 'KITCHEN', 'STAFF']
+  const rolesList: StaffRole[] = ['DISPATCHER', 'SERVICE', 'CASHIER']
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -146,7 +145,7 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
               </h2>
             </div>
             <p className="text-xs text-slate-400 mt-0.5 ml-10">
-              Assign a numeric staff code and operational role for logging.
+              Assign a numeric staff code and operational role for terminal access.
             </p>
           </div>
           <button
@@ -215,24 +214,22 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
               />
             </div>
             <p className="text-[11px] text-slate-400">
-              Unique numeric code entered by this staff member when performing and logging actions.
+              Unique numeric code entered by this staff member to unlock their operational interface.
             </p>
           </div>
 
           {/* 3. Role Selector */}
           <div className="space-y-2">
             <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-              Assigned Role <span className="text-rose-500">*</span>
+              Assigned Operational Role <span className="text-rose-500">*</span>
             </label>
             <div className="grid grid-cols-1 gap-2">
               {rolesList.map((rKey) => {
                 const isSelected = staffRole === rKey
                 const meta = ROLE_DEFINITIONS[rKey]
-                let Icon = Users
-                if (rKey === 'ADMIN') Icon = ShieldCheck
-                if (rKey === 'MANAGER') Icon = ShieldCheck
+                let Icon = ChefHat
+                if (rKey === 'SERVICE') Icon = UtensilsCrossed
                 if (rKey === 'CASHIER') Icon = Store
-                if (rKey === 'KITCHEN') Icon = ChefHat
 
                 return (
                   <button
@@ -246,18 +243,22 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
                     }`}
                   >
                     <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${meta.badgeBg} ${meta.badgeText}`}
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${meta.badgeBg} ${meta.badgeText}`}
                     >
                       <Icon className="w-4 h-4" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-extrabold text-[#14274E]">
+                        <span className="font-extrabold text-xs text-[#14274E]">
                           {meta.label}
                         </span>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-[#14274E]" />}
+                        {isSelected && (
+                          <div className="w-4 h-4 rounded-full bg-[#14274E] text-[#E9C46A] flex items-center justify-center">
+                            <Check className="w-2.5 h-2.5" />
+                          </div>
+                        )}
                       </div>
-                      <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">
+                      <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">
                         {meta.description}
                       </p>
                     </div>
@@ -267,55 +268,57 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
             </div>
           </div>
 
-          {/* 4. Status Toggle */}
-          <div className="pt-2 border-t border-slate-100">
-            <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200/60">
-              <div>
-                <span className="text-xs font-extrabold text-[#14274E]">
-                  Staff Code Status
-                </span>
-                <p className="text-[11px] text-slate-400">
-                  {status === 'ACTIVE'
-                    ? 'Code is active and authorized for terminal logging'
-                    : 'Code is disabled; cannot be used for POS actions'}
-                </p>
-              </div>
+          {/* 4. Code Status Toggle */}
+          <div className="space-y-2 pt-2 border-t border-slate-100">
+            <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
+              Account Status
+            </label>
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => setStatus(status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE')}
-                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                  status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-slate-300'
+                onClick={() => setCodeStatus('ACTIVE')}
+                className={`py-2 px-3 rounded-xl border text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  codeStatus === 'ACTIVE'
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800 ring-1 ring-emerald-400'
+                    : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-white'
                 }`}
               >
-                <span
-                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                    status === 'ACTIVE' ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span>Active</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCodeStatus('INACTIVE')}
+                className={`py-2 px-3 rounded-xl border text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  codeStatus === 'INACTIVE'
+                    ? 'border-slate-400 bg-slate-100 text-slate-800 ring-1 ring-slate-400'
+                    : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-white'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-slate-400" />
+                <span>Inactive</span>
               </button>
             </div>
           </div>
-        </form>
 
-        {/* Drawer Footer */}
-        <div className="flex items-center justify-end gap-2.5 px-6 py-4 border-t border-slate-100 bg-slate-50/50">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-white transition-colors cursor-pointer"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs active:scale-98 transition-all cursor-pointer disabled:opacity-50"
-          >
-            <Save className="w-3.5 h-3.5" />
-            <span>{submitting ? 'Saving...' : mode === 'create' ? 'Create Code' : 'Save Changes'}</span>
-          </button>
-        </div>
+          {/* Form Actions */}
+          <div className="pt-4 flex items-center justify-end gap-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs active:scale-98 transition-all cursor-pointer disabled:opacity-50"
+            >
+              {submitting ? 'Saving...' : mode === 'create' ? 'Create Staff Code' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )

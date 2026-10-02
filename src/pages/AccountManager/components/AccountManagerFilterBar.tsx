@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Search, X, RotateCcw, Plus, Filter } from 'lucide-react'
-import type { StaffRole, StaffStatus, StaffCodeFilterParams } from '@/types/account'
+import { Search, X, Plus, Filter } from 'lucide-react'
+import type { StaffRole, CodeStatus, ShiftStatus, StaffCodeFilterParams } from '@/types/account'
 import { ROLE_DEFINITIONS } from '@/types/account'
 
 interface AccountManagerFilterBarProps {
@@ -36,7 +36,8 @@ export const AccountManagerFilterBar: React.FC<AccountManagerFilterBarProps> = (
   const hasActiveFilters = Boolean(
     (filters.searchQuery && filters.searchQuery.trim().length > 0) ||
       (filters.role && filters.role !== 'ALL') ||
-      (filters.status && filters.status !== 'ALL'),
+      (filters.status && filters.status !== 'ALL') ||
+      (filters.shiftStatus && filters.shiftStatus !== 'ALL'),
   )
 
   return (
@@ -94,36 +95,46 @@ export const AccountManagerFilterBar: React.FC<AccountManagerFilterBarProps> = (
             className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 hover:bg-white focus:outline-none focus:border-[#14274E] cursor-pointer"
           >
             <option value="ALL">All Roles</option>
-            <option value="ADMIN">{ROLE_DEFINITIONS.ADMIN.label}</option>
-            <option value="MANAGER">{ROLE_DEFINITIONS.MANAGER.label}</option>
+            <option value="DISPATCHER">{ROLE_DEFINITIONS.DISPATCHER.label}</option>
+            <option value="SERVICE">{ROLE_DEFINITIONS.SERVICE.label}</option>
             <option value="CASHIER">{ROLE_DEFINITIONS.CASHIER.label}</option>
-            <option value="KITCHEN">{ROLE_DEFINITIONS.KITCHEN.label}</option>
-            <option value="STAFF">{ROLE_DEFINITIONS.STAFF.label}</option>
           </select>
 
-          {/* Status Filter */}
+          {/* Account Status Filter */}
           <select
             value={filters.status || 'ALL'}
             onChange={(e) =>
-              onFilterChange({ status: e.target.value as StaffStatus | 'ALL' })
+              onFilterChange({ status: e.target.value as CodeStatus | 'ALL' })
             }
             className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 hover:bg-white focus:outline-none focus:border-[#14274E] cursor-pointer"
           >
-            <option value="ALL">All Statuses</option>
-            <option value="ACTIVE">Active Only</option>
-            <option value="INACTIVE">Inactive Only</option>
+            <option value="ALL">All Account Statuses</option>
+            <option value="ACTIVE">Active</option>
+            <option value="INACTIVE">Inactive</option>
+          </select>
+
+          {/* Shift Status Filter */}
+          <select
+            value={filters.shiftStatus || 'ALL'}
+            onChange={(e) =>
+              onFilterChange({ shiftStatus: e.target.value as ShiftStatus | 'ALL' })
+            }
+            className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 hover:bg-white focus:outline-none focus:border-[#14274E] cursor-pointer"
+          >
+            <option value="ALL">All Shift Statuses</option>
+            <option value="ONGOING">Shift Ongoing</option>
+            <option value="ENDED">Shift Ended</option>
           </select>
         </div>
 
-        {/* Clear Filters Button */}
+        {/* Clear Filters */}
         {hasActiveFilters && (
           <button
             type="button"
             onClick={onClearFilters}
-            className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+            className="text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
           >
-            <RotateCcw className="w-3 h-3" />
-            <span>Reset Filters</span>
+            Reset Filters
           </button>
         )}
       </div>

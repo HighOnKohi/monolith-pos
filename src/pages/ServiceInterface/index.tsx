@@ -76,7 +76,7 @@ export default function CashierPage() {
   }, [])
 
   // ── 3. Menu Data Hook ──
-  const { categories, activePresetId } = useMenu()
+  const { categories, activePresetId, presets } = useMenu()
   const [liveItems, setLiveItems] = useState<MenuItem[]>([])
 
   useEffect(() => {
@@ -720,8 +720,11 @@ export default function CashierPage() {
 
   // ── 8. Filtered Items & Pagination ──
   const filteredItems = useMemo(() => {
+    const activePreset = presets.find((p) => p.PRESET_ID === activePresetId)
+    const activeItemIds = new Set((activePreset?.ITEM_IDS ?? []).map(String))
+
     const list = liveItems.filter((item) => {
-      if (item.presetId !== activePresetId) return false
+      if (activeItemIds.size > 0 && !activeItemIds.has(item.id)) return false
       // 1. Search Query
       if (searchQuery) {
         const q = searchQuery.toLowerCase()
@@ -744,7 +747,7 @@ export default function CashierPage() {
       if (!a.isBestSeller && b.isBestSeller) return 1
       return 0
     })
-  }, [liveItems, searchQuery, selectedCategory, activePresetId])
+  }, [liveItems, searchQuery, selectedCategory, activePresetId, presets])
 
 
   const currentCategoryName = useMemo(() => {

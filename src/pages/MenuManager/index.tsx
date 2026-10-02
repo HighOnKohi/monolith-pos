@@ -1,52 +1,75 @@
-import { useEffect, useState } from 'react'
-import { Search, Plus, Edit2, Trash2, ChevronDown, Pencil, Lock } from 'lucide-react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
+import {
+  Search,
+  Plus,
+  Edit2,
+  Trash2,
+  ChevronDown,
+  Pencil,
+  Lock,
+  Layers,
+  UtensilsCrossed,
+  Grid,
+  CheckCircle2,
+  XCircle,
+  FolderKanban,
+  MinusCircle,
+  Loader2,
+} from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { useMenu } from '@/hooks/useMenu'
 import { useActiveEvent } from '@/hooks/useActiveEvent'
 import { useBusinessDay } from '@/hooks/useBusinessDay'
 import {
-  createMenuItem,
-  createCategory,
-  deleteMenuItem,
+  fetchCatalogItems,
+  fetchPresetItemIds,
+  savePresetItems,
   updateMenuItem,
-  updateCategory,
-  deleteCategory,
-  fetchMenuItemGroups,
-  updateMenuItemGroup,
-  deleteMenuItemGroup,
   updateMenuPreset,
   deleteMenuPreset,
-  type MenuItemGroup
+  deleteMenuItem,
 } from '@/services/menuService'
-import type { MenuItem, Category } from '@/types/menu'
-import { categoryIconMap, categoryIcons, NewMenuCategoryModal } from '@/components/menu/NewMenuCategoryModal'
+import type { MenuItem } from '@/types/menu'
+import { DEFAULT_FOOD_PLACEHOLDER } from '@/types/menu'
+import { PresetItemPickerModal } from '@/components/menu/PresetItemPickerModal'
 import { NewMenuItemModal, type NewMenuItemForm } from '@/components/menu/NewMenuItemModal'
+import { categoryIconMap, categoryIcons } from '@/components/menu/NewMenuCategoryModal'
 import { ConfirmModal } from '@/components/menu/ConfirmModal'
 
 export default function MenuManagerPage() {
-  const { items, categories, loadState, setItems, setCategories, reload, presets, activePresetId, setActivePresetId, createPreset } = useMenu()
+  const {
+    items: presetItems,
+    categories,
+    loadState,
+    setItems,
+    reload,
+    presets,
+    activePresetId,
+    setActivePresetId,
+    createPreset,
+  } = useMenu()
+
   const { activeEvent, isEventActive } = useActiveEvent()
   const { isOpen: isBusinessDayOpen } = useBusinessDay()
 
-  const [activeCat, setActiveCat]             = useState<string>('all')
-  const [editingItem, setEditingItem]         = useState<MenuItem | null>(null)
-  const [isCategoryModalOpen, setCategoryModalOpen] = useState(false)
-  const [editingCategory, setEditingCategory]       = useState<Category | null>(null)
-  const [isItemModalOpen, setItemModalOpen]   = useState(false)
-  const [editingGroup, setEditingGroup] = useState<MenuItemGroup | null>(null)
-  const [isEditModalOpen, setEditModalOpen]   = useState(false)
-  const [groups, setGroups] = useState<MenuItemGroup[]>([])
-  const [search, setSearch]             = useState('')
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
-  const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
-  const [selectedGroup, setSelectedGroup] = useState<MenuItemGroup | null>(null)
-  const [availabilitySaving, setAvailabilitySaving] = useState<string | null>(null)
-  const [isPresetModalOpen, setPresetModalOpen] = useState(false)
+  // State
+  const [catalogItems, setCatalogItems] = useState<MenuItem[]>([])
+  const [search, setSearch] = useState('')
+  const [activeCat, setActiveCat] = useState<string>('all')
   const [isPresetDropdownOpen, setPresetDropdownOpen] = useState(false)
-  const [presetName, setPresetName] = useState('')
+  const [isPickerModalOpen, setPickerModalOpen] = useState(false)
+  const [pickerMode, setPickerMode] = useState<'create' | 'edit'>('create')
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null)
+  const [isItemModalOpen, setItemModalOpen] = useState(false)
+  const [availabilitySaving, setAvailabilitySaving] = useState<string | null>(null)
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
 
   // Confirm modal state
   const [confirmState, setConfirmState] = useState<{
-    title: string; message: string; warning?: string; onConfirm: () => void
+    title: string
+    message: string
+    warning?: string
+    onConfirm: () => void
   } | null>(null)
 
   function showToast(text: string, type: 'success' | 'info' | 'error' = 'success') {
@@ -54,116 +77,201 @@ export default function MenuManagerPage() {
     setTimeout(() => setToastMessage(null), 3500)
   }
 
-  useEffect(() => {
-    void fetchMenuItemGroups().then(setGroups).catch(() => setGroups([]))
+  // Fetch all master catalog items
+  const loadCatalog = useCallback(async () => {
+    try {
+      const allItems = await fetchCatalogItems()
+      setCatalogItems(allItems)
+    } catch (err) {
+      console.warn('[MenuManager] Notice fetching master catalog:', err)
+    }
   }, [])
 
-  async function handleDeleteGroup(group: MenuItemGroup) {
+  useEffect(() => {
+    void loadCatalog()
+  }, [loadCatalog])
+
+  // Current active preset object
+  const activePreset = useMemo(() => {
+    return presets.find((p) => p.PRESET_ID === activePresetId) ?? presets[0]
+  }, [presets, activePresetId])
+
+  // Active preset items filtered by active preset ITEM_IDS array
+  const currentPresetItems = useMemo(() => {
+    const activeItemIds = new Set((activePreset?.ITEM_IDS ?? []).map(String))
+    const sourceItems = catalogItems.length > 0 ? catalogItems : presetItems
+    if (activeItemIds.size > 0) {
+      return sourceItems.filter((item) => !item.isItemGroup && activeItemIds.has(item.id))
+    }
+    return sourceItems.filter((item) => !item.isItemGroup)
+  }, [activePreset, catalogItems, presetItems])
+
+  const filtered = useMemo(() => {
+    return currentPresetItems.filter((item) => {
+      const matchesSearch =
+        search.trim() === '' ||
+        item.name.toLowerCase().includes(search.toLowerCase()) ||
+        item.code.toLowerCase().includes(search.toLowerCase())
+      const matchesCat = activeCat === 'all' || item.categoryId === activeCat
+      return matchesSearch && matchesCat
+    })
+  }, [currentPresetItems, search, activeCat])
+
+  // Category counts based on items currently in this preset
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    currentPresetItems.forEach((item) => {
+      counts[item.categoryId] = (counts[item.categoryId] ?? 0) + 1
+    })
+    return counts
+  }, [currentPresetItems])
+
+  const displayCategories = useMemo(() => {
+    return categories.map((category) => ({
+      ...category,
+      count: category.id === 'all' ? currentPresetItems.length : categoryCounts[category.id] ?? 0,
+    }))
+  }, [categories, currentPresetItems.length, categoryCounts])
+
+  // ── Preset Actions ────────────────────────────────────────────────────────
+  const handleOpenCreatePresetModal = () => {
+    if (isBusinessDayOpen) {
+      showToast('Cannot create or switch menu presets while Business Day is active.', 'error')
+      return
+    }
+    if (isEventActive) {
+      showToast(`Cannot create preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
+      return
+    }
+    setPickerMode('create')
+    setPickerModalOpen(true)
+    setPresetDropdownOpen(false)
+  }
+
+  const handleOpenEditPresetItems = () => {
+    setPickerMode('edit')
+    setPickerModalOpen(true)
+  }
+
+  const handlePickerSubmit = async ({
+    presetName,
+    selectedItemIds,
+  }: {
+    presetName?: string
+    selectedItemIds: string[]
+  }) => {
+    if (pickerMode === 'create') {
+      if (!presetName) return
+      try {
+        const created = await createPreset(presetName, selectedItemIds)
+        await setActivePresetId(created.PRESET_ID)
+        await loadCatalog()
+        reload()
+        showToast(`Created preset "${presetName}" with ${selectedItemIds.length} dishes!`, 'success')
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Failed to create preset.', 'error')
+      }
+    } else {
+      try {
+        await savePresetItems(activePresetId, selectedItemIds)
+        await loadCatalog()
+        reload()
+        showToast(`Preset items updated (${selectedItemIds.length} items in set).`, 'success')
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Failed to update preset items.', 'error')
+      }
+    }
+  }
+
+  const handleRemoveItemFromPreset = (item: MenuItem) => {
     setConfirmState({
-      title: `Delete Group "${group.name}"?`,
-      message: `Are you sure you want to remove the group item "${group.name}" from the menu? This cannot be undone.`,
+      title: `Remove from Preset?`,
+      message: `Remove "${item.name}" from the active preset "${activePreset?.PRESET_NAME ?? 'Preset'}"? (The item will remain safe in the Menu Catalog).`,
       onConfirm: async () => {
         setConfirmState(null)
-        const previous = group
-        setGroups((current) => current.filter((g) => g.id !== previous.id))
-        handleClose()
+        const remainingIds = currentPresetItems.filter((i) => i.id !== item.id).map((i) => i.id)
         try {
-          await deleteMenuItemGroup(previous.id)
-          showToast(`Deleted group "${previous.name}".`, 'info')
-        } catch (err: unknown) {
-          setGroups((current) => [...current, previous])
-          showToast(err instanceof Error ? err.message : 'Failed to delete group item.', 'error')
+          await savePresetItems(activePresetId, remainingIds)
+          reload()
+          showToast(`Removed "${item.name}" from "${activePreset?.PRESET_NAME}".`, 'info')
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'Failed to remove item from preset.', 'error')
         }
       },
     })
   }
 
-  // ── Filtered items ─────────────────────────────────────────────────────────
-  const filtered = items.filter((item) => {
-    if (item.presetId !== activePresetId) return false
-    if (search.trim() !== '') return item.name.toLowerCase().includes(search.toLowerCase())
-    return activeCat === 'all' || item.categoryId === activeCat
-  })
-  const filteredGroups = groups.filter((group) => {
-    if (group.presetId !== activePresetId) return false
-    if (search.trim() !== '') return group.name.toLowerCase().includes(search.toLowerCase())
-    return activeCat === 'all' || group.categoryId === activeCat
-  })
-  const presetItems = items.filter((item) => item.presetId === activePresetId)
-  const presetGroups = groups.filter((group) => group.presetId === activePresetId)
-  const categoryCounts = [...presetItems, ...presetGroups].reduce<Record<string, number>>((counts, item) => {
-    const categoryId = 'categoryId' in item ? item.categoryId : ''
-    if (categoryId) counts[categoryId] = (counts[categoryId] ?? 0) + 1
-    return counts
-  }, {})
-  const displayCategories = categories.map((category) => ({
-    ...category,
-    count: category.id === 'all' ? presetItems.length + presetGroups.length : categoryCounts[category.id] ?? 0,
-  }))
-
-  // ── Edit handlers ──────────────────────────────────────────────────────────
-  function handleEdit(item: MenuItem) {
-    setSelectedItem(item)
-    setSelectedGroup(null)
-    setEditingItem(item)
-    setEditModalOpen(true)
-  }
-
-  async function handleAvailabilityChange(item: MenuItem, isAvailable: boolean) {
-    const previous = item
-    const updated = { ...item, isAvailable, isSoldOut: !isAvailable }
-    setAvailabilitySaving(item.id)
-    setItems((current) => current.map((entry) => entry.id === item.id ? updated : entry))
-    setSelectedItem((current) => current?.id === item.id ? updated : current)
+  const handleRenamePreset = async (presetId: number, currentName: string) => {
+    if (isBusinessDayOpen) {
+      showToast('Cannot rename menu preset while Business Day is active. Please end the business day first.', 'error')
+      return
+    }
+    const newName = window.prompt('Enter new name for menu preset:', currentName)
+    if (!newName || !newName.trim() || newName.trim() === currentName) return
     try {
-      await updateMenuItem(item.id, { isAvailable })
-      const updatedGroups = await fetchMenuItemGroups()
-      setGroups(updatedGroups)
-      setSelectedGroup((current) => {
-        if (!current) return current
-        return updatedGroups.find((group) => group.id === current.id) ?? current
-      })
+      await updateMenuPreset(presetId, newName.trim())
       reload()
-      showToast(`${item.name} is now ${isAvailable ? 'available' : 'not available'}.`, 'success')
-    } catch (err: unknown) {
-      setItems((current) => current.map((entry) => entry.id === item.id ? previous : entry))
-      setSelectedItem((current) => current?.id === item.id ? previous : current)
-      showToast(err instanceof Error ? err.message : 'Failed to update availability.', 'error')
-    } finally {
-      setAvailabilitySaving(null)
+      showToast(`Preset renamed to "${newName.trim()}".`, 'success')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to rename preset.', 'error')
     }
   }
 
-  async function handleGroupAvailabilityChange(group: MenuItemGroup, isAvailable: boolean) {
-    const previous = group
-    const updated = { ...group, status: isAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK' }
-    setAvailabilitySaving(group.id)
-    setGroups((current) => current.map((entry) => entry.id === group.id ? updated : entry))
-    setSelectedGroup((current) => current?.id === group.id ? updated : current)
+  const handleDeletePreset = async (presetId: number, presetName: string) => {
+    if (isBusinessDayOpen) {
+      showToast('Cannot delete menu preset while Business Day is active. Please end the business day first.', 'error')
+      return
+    }
+    if (isEventActive) {
+      showToast(`Cannot delete preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
+      return
+    }
+    if (presets.length <= 1) {
+      showToast('Cannot delete the only remaining preset.', 'error')
+      return
+    }
+    setConfirmState({
+      title: `Delete Preset "${presetName}"?`,
+      message: `Are you sure you want to delete the preset "${presetName}"? Master catalog items will not be deleted.`,
+      onConfirm: async () => {
+        setConfirmState(null)
+        try {
+          await deleteMenuPreset(presetId)
+          const remaining = presets.filter((p) => p.PRESET_ID !== presetId)
+          if (remaining.length > 0 && activePresetId === presetId) {
+            await setActivePresetId(remaining[0].PRESET_ID)
+          }
+          reload()
+          showToast(`Deleted preset "${presetName}".`, 'info')
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'Failed to delete preset.', 'error')
+        }
+      },
+    })
+  }
+
+  // Availability toggle
+  const handleAvailabilityToggle = async (item: MenuItem) => {
+    const newStatus = !item.isAvailable
+    const previous = item
+    const updated = { ...item, isAvailable: newStatus, isSoldOut: !newStatus }
+    setAvailabilitySaving(item.id)
+    setItems((current) => current.map((entry) => (entry.id === item.id ? updated : entry)))
     try {
-      await updateMenuItem(group.id, { isAvailable })
-      const updatedGroups = await fetchMenuItemGroups()
-      setGroups(updatedGroups)
-      setSelectedGroup(updatedGroups.find((entry) => entry.id === group.id) ?? updated)
-      showToast(`${group.name} is now ${isAvailable ? 'available' : 'not available'}.`, 'success')
-    } catch (err: unknown) {
-      setGroups((current) => current.map((entry) => entry.id === group.id ? previous : entry))
-      setSelectedGroup((current) => current?.id === group.id ? previous : current)
+      await updateMenuItem(item.id, { isAvailable: newStatus })
+      reload()
+      showToast(`${item.name} is now ${newStatus ? 'available' : 'out of stock'}.`, 'success')
+    } catch (err) {
+      setItems((current) => current.map((entry) => (entry.id === item.id ? previous : entry)))
       showToast(err instanceof Error ? err.message : 'Failed to update availability.', 'error')
     } finally {
       setAvailabilitySaving(null)
     }
   }
 
-  function handleClose() {
-    setEditingItem(null)
-    setSelectedItem(null)
-    setSelectedGroup(null)
-  }
-
-  async function submitEdit(form: NewMenuItemForm) {
+  const handleEditItemSubmit = async (form: NewMenuItemForm) => {
     if (!editingItem) return
-    const previous = editingItem
+    const prev = editingItem
     const updated: MenuItem = {
       ...editingItem,
       name: form.name,
@@ -179,766 +287,491 @@ export default function MenuManagerPage() {
       imageUrl: form.imageUrl,
       description: form.description,
     }
-    setItems((current) => current.map((item) => item.id === editingItem.id ? updated : item))
-    setSelectedItem((current) => current?.id === editingItem.id ? updated : current)
+    setItems((current) => current.map((i) => (i.id === editingItem.id ? updated : i)))
     try {
       await updateMenuItem(editingItem.id, {
-        name:            form.name,
-        price:           form.price,
-        originalPrice:   form.originalPrice,
+        name: form.name,
+        price: form.price,
+        originalPrice: form.originalPrice,
         discountPercent: form.discountPercent,
-        discountAmount:  form.discountAmount,
-        isBestSeller:    form.isBestSeller,
-        categoryId:      form.categoryId,
-        dietaryType:     form.dietaryType,
-        isAvailable:     form.isAvailable,
-        imageUrl:        form.imageUrl,
-        description:     form.description,
-        orderLimit:      form.orderLimit,
-        itemIds:         form.itemIds,
+        discountAmount: form.discountAmount,
+        isBestSeller: form.isBestSeller,
+        categoryId: form.categoryId,
+        dietaryType: form.dietaryType,
+        isAvailable: form.isAvailable,
+        imageUrl: form.imageUrl,
+        description: form.description,
+        orderLimit: form.orderLimit,
+        itemIds: form.itemIds,
       })
+      await loadCatalog()
       reload()
-      void fetchMenuItemGroups().then(setGroups).catch(() => {})
       showToast(`Updated "${form.name}" successfully!`, 'success')
-    } catch (err: unknown) {
-      setItems((current) => current.map((item) => item.id === editingItem.id ? previous : item))
-      setSelectedItem((current) => current?.id === editingItem.id ? previous : current)
+    } catch (err) {
+      setItems((current) => current.map((i) => (i.id === editingItem.id ? prev : i)))
       throw err
     }
   }
 
-  // ── Add Category ───────────────────────────────────────────────────────────
-  function handleAddCategory() {
-    setCategoryModalOpen(true)
-  }
-
-  function handleAddDish() {
-    setItemModalOpen(true)
-  }
-
-  const selectedCategoryId = categories.find(c => c.id === activeCat && c.id !== 'all')?.id
-    ?? categories.find(c => c.id !== 'all')?.id
-
-  async function submitCategory(name: string, icon: string) {
-    if (editingCategory) {
-      const previous = editingCategory
-      const updated = { ...editingCategory, name, icon }
-      setCategories((current) => current.map((category) => category.id === editingCategory.id ? updated : category))
-      try {
-        await updateCategory(editingCategory.id, name, icon)
-        reload()
-        showToast(`Updated "${name}".`, 'success')
-      } catch (err: unknown) {
-        setCategories((current) => current.map((category) => category.id === editingCategory.id ? previous : category))
-        throw err
-      }
-    } else {
-      const temporaryId = `temporary-${Date.now()}`
-      const temporaryCategory: Category = { id: temporaryId, name, icon, count: 0 }
-      setCategories((current) => [...current, temporaryCategory])
-      try {
-        await createCategory(name, icon, activePresetId)
-        reload()
-        showToast(`Added "${name}".`, 'success')
-      } catch (err: unknown) {
-        setCategories((current) => current.filter((category) => category.id !== temporaryId))
-        throw err
-      }
-    }
-    setEditingCategory(null)
-  }
-
-  async function handleDeleteCategory(cat: Category) {
-    const hasItems = items.some(i => i.categoryId === cat.id)
-    setConfirmState({
-      title: `Delete "${cat.name}"?`,
-      message: `Are you sure you want to delete the category "${cat.name}"?`,
-      warning: hasItems
-        ? `This category still has ${cat.count} item(s). Remove all items from it before deleting.`
-        : undefined,
-      onConfirm: async () => {
-        if (hasItems) {
-          showToast(`Remove all items from "${cat.name}" before deleting.`, 'error')
-          setConfirmState(null)
-          return
-        }
-        setConfirmState(null)
-        setCategories((current) => current.filter((category) => category.id !== cat.id))
-        if (activeCat === cat.id) setActiveCat('all')
-        if (cat.id.startsWith('temporary-')) {
-          showToast(`Deleted "${cat.name}".`, 'info')
-          return
-        }
-        try {
-          await deleteCategory(cat.id)
-          reload()
-          showToast(`Deleted "${cat.name}".`, 'info')
-        } catch (err: unknown) {
-          setCategories((current) => [...current, cat])
-          showToast(err instanceof Error ? err.message : 'Failed to delete category.', 'error')
-        }
-      },
-    })
-  }
-
-  async function submitDish(form: NewMenuItemForm) {
-    await createMenuItem({ ...form, presetId: activePresetId })
-    await reload()
-    showToast(`Added "${form.name}".`, 'success')
-  }
-
-  async function handleRenamePreset(presetId: number, currentName: string) {
-    if (isBusinessDayOpen) {
-      showToast('Cannot rename menu preset while Business Day is active. Please end the business day first.', 'error')
-      return
-    }
-    const newName = window.prompt('Enter new name for menu preset:', currentName)
-    if (!newName || !newName.trim() || newName.trim() === currentName) return
-    try {
-      await updateMenuPreset(presetId, newName.trim())
-      reload()
-      showToast(`Preset renamed to "${newName.trim()}".`, 'success')
-    } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Failed to rename preset.', 'error')
-    }
-  }
-
-  async function handleDeletePreset(presetId: number, presetName: string) {
-    if (isBusinessDayOpen) {
-      showToast('Cannot delete menu preset while Business Day is active. Please end the business day first.', 'error')
-      return
-    }
-    if (isEventActive) {
-      showToast(`Cannot delete preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
-      return
-    }
-    if (presets.length <= 1) {
-      showToast('Cannot delete the only remaining preset.', 'error')
-      return
-    }
-    setConfirmState({
-      title: `Delete Preset "${presetName}"?`,
-      message: `Are you sure you want to delete the preset "${presetName}"? Items in this preset will no longer be accessible.`,
-      onConfirm: async () => {
-        setConfirmState(null)
-        try {
-          await deleteMenuPreset(presetId)
-          const remaining = presets.filter((p) => p.PRESET_ID !== presetId)
-          if (remaining.length > 0 && activePresetId === presetId) {
-            setActivePresetId(remaining[0].PRESET_ID)
-          }
-          reload()
-          showToast(`Deleted preset "${presetName}".`, 'info')
-        } catch (err: unknown) {
-          showToast(err instanceof Error ? err.message : 'Failed to delete preset.', 'error')
-        }
-      },
-    })
-  }
-
-  const paginated = filtered
+  // Currently selected item IDs for the active preset
+  const activePresetItemIds = useMemo(() => {
+    return currentPresetItems.map((i) => i.id)
+  }, [currentPresetItems])
 
   return (
-    <>
-    <div className="menu-manager-page-container staff-page">
+    <div className="flex flex-col h-full bg-[#CBD5E1] overflow-hidden">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div
+          className={`fixed top-5 right-5 z-50 px-4 py-2.5 rounded-2xl shadow-xl border text-xs sm:text-sm font-black flex items-center gap-2 animate-in fade-in slide-in-from-top-3 ${
+            toastMessage.type === 'success'
+              ? 'bg-[#14274E] text-[#E9C46A] border-[#E9C46A]/40'
+              : toastMessage.type === 'error'
+                ? 'bg-rose-700 text-white border-rose-500'
+                : 'bg-slate-800 text-white border-slate-600'
+          }`}
+        >
+          <span>{toastMessage.text}</span>
+        </div>
+      )}
 
-      {/* ── LEFT: Menu browser ───────────────────────────── */}
-      <div className="inner-menu-manager-container">
+      {/* Header Bar */}
+      <div className="p-4 sm:p-5 pb-0 shrink-0">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+          {/* Title & Preset Switcher */}
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#14274E] text-[#E9C46A] flex items-center justify-center shrink-0 shadow-xs">
+              <Layers className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-black text-[#14274E] tracking-tight">Menu Manager</h1>
 
-        <div className="inner-menu-manager-header">
-          <div className="menu-item-searchbar-container">
-          <div className="menu-search flex items-center gap-2 rounded-xl bg-white border border-[#9BA4B4]/30 px-3 py-2">
-            <Search className="menu-searchbar-icon" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search menu items, categories, SKU..."
-              className="menu-searchbar-input flex-1 bg-transparent outline-none"
-            />
-          </div>
-          </div>
-          <div className="menu-manager-header-actions">
-            <div className="menu-preset-dropdown">
-              <button
-                type="button"
-                className={`menu-preset-dropdown-trigger ${isEventActive || isBusinessDayOpen ? 'opacity-85 cursor-not-allowed border-amber-300' : ''}`}
-                onClick={() => {
-                  if (isBusinessDayOpen) {
-                    showToast(
-                      'Menu preset switching is locked while Business Day is active. Please end the business day to switch presets.',
-                      'error'
-                    )
-                    return
-                  }
-                  if (isEventActive) {
-                    showToast(
-                      `Preset switching is locked while event "${activeEvent?.title ?? 'Active Event'}" is active. Deactivate the event in Events to switch presets.`,
-                      'error'
-                    )
-                    return
-                  }
-                  setPresetDropdownOpen((open) => !open)
-                }}
-                aria-expanded={isPresetDropdownOpen}
-                title={
-                  isEventActive
-                    ? `Locked: Event "${activeEvent?.title}" is active`
-                    : isBusinessDayOpen
-                    ? 'Locked: Business Day is active'
-                    : undefined
-                }
-              >
-                {(isEventActive || isBusinessDayOpen) && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0 mr-1" />}
-                <span className="menu-preset-dropdown-label">
-                  <span className="menu-preset-dropdown-prefix">Preset: </span>
-                  {presets.find((preset) => preset.PRESET_ID === activePresetId)?.PRESET_NAME ?? 'Default'}
-                  {isEventActive ? (
-                    <span className="ml-1.5 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                      Event Active
-                    </span>
-                  ) : isBusinessDayOpen ? (
-                    <span className="ml-1.5 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                      Day Active
-                    </span>
-                  ) : null}
-                </span>
-                <ChevronDown className={`menu-preset-dropdown-chevron ${isPresetDropdownOpen ? 'is-open' : ''}`} />
-              </button>
-              {isPresetDropdownOpen && (
-                <div className="menu-preset-dropdown-menu">
-                  <div className="menu-preset-dropdown-options">
-                    {presets.map((preset) => {
-                      const isSelected = preset.PRESET_ID === activePresetId
-                      return (
-                        <div
-                          key={preset.PRESET_ID}
-                          className={`menu-preset-dropdown-option group ${isSelected ? 'is-selected' : ''}`}
-                          onClick={() => {
-                            if (isBusinessDayOpen) {
-                              showToast('Cannot switch menu preset while Business Day is active.', 'error')
-                              setPresetDropdownOpen(false)
-                              return
-                            }
-                            if (isEventActive) {
-                              showToast(`Cannot switch preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
-                              setPresetDropdownOpen(false)
-                              return
-                            }
-                            void setActivePresetId(preset.PRESET_ID)
-                            setPresetDropdownOpen(false)
-                          }}
-                        >
-                          <span className="truncate flex-1">{preset.PRESET_NAME}</span>
-                          <div
-                            className={`menu-preset-dropdown-actions flex items-center gap-1 ${isSelected ? 'opacity-90' : 'opacity-0 group-hover:opacity-100'}`}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              title="Rename Preset"
-                              className="menu-preset-action-btn"
-                              disabled={isEventActive || isBusinessDayOpen}
-                              onClick={() => {
-                                setPresetDropdownOpen(false)
-                                void handleRenamePreset(preset.PRESET_ID, preset.PRESET_NAME)
-                              }}
-                            >
-                              <Pencil className="w-2.5 h-2.5" />
-                            </button>
-                            {presets.length > 1 && (
-                              <button
-                                type="button"
-                                title="Delete Preset"
-                                className="menu-preset-action-btn delete"
-                                disabled={isEventActive || isBusinessDayOpen}
-                                onClick={() => {
-                                  setPresetDropdownOpen(false)
-                                  void handleDeletePreset(preset.PRESET_ID, preset.PRESET_NAME)
-                                }}
-                              >
-                                <Trash2 className="w-2.5 h-2.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
+                {/* Preset Dropdown Trigger */}
+                <div className="relative">
                   <button
                     type="button"
-                    className="menu-preset-dropdown-footer"
-                    disabled={isEventActive || isBusinessDayOpen}
                     onClick={() => {
                       if (isBusinessDayOpen) {
-                        showToast('Cannot create preset while Business Day is active.', 'error')
+                        showToast(
+                          'Menu preset switching is locked while Business Day is active. Please end the business day to switch presets.',
+                          'error'
+                        )
                         return
                       }
                       if (isEventActive) {
-                        showToast(`Cannot create or switch preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
+                        showToast(
+                          `Preset switching is locked while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
+                          'error'
+                        )
                         return
                       }
-                      setPresetDropdownOpen(false)
-                      setPresetModalOpen(true)
-                    }}
+                      setPresetDropdownOpen((v) => !v)}
+                    }
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+                      isEventActive || isBusinessDayOpen
+                        ? 'bg-amber-50 text-amber-900 border-amber-300'
+                        : 'bg-slate-100 text-[#14274E] border-slate-300 hover:bg-slate-200'
+                    }`}
                   >
-                    <Plus className="menu-preset-dropdown-plus" /> Create a new Preset
+                    {(isEventActive || isBusinessDayOpen) && <Lock className="w-3.5 h-3.5 text-amber-600" />}
+                    <span className="text-slate-500 font-bold">Preset:</span>
+                    <span>{activePreset?.PRESET_NAME || 'Default'}</span>
+                    {activePreset?.IS_DEFAULT && (
+                      <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.2 rounded font-black">
+                        DEFAULT
+                      </span>
+                    )}
+                    <ChevronDown className="w-3.5 h-3.5 ml-0.5 text-slate-500" />
                   </button>
+
+                  {/* Dropdown Menu */}
+                  {isPresetDropdownOpen && (
+                    <div className="absolute left-0 top-full mt-1.5 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                      <div className="px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-100 mb-1">
+                        Select Menu Preset
+                      </div>
+                      <div className="space-y-1 max-h-56 overflow-y-auto">
+                        {presets.map((p) => {
+                          const isSelected = p.PRESET_ID === activePresetId
+                          return (
+                            <div
+                              key={p.PRESET_ID}
+                              className={`flex items-center justify-between p-2 rounded-xl text-xs transition-colors ${
+                                isSelected ? 'bg-slate-100 font-black text-[#14274E]' : 'hover:bg-slate-50 text-slate-700'
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void setActivePresetId(p.PRESET_ID)
+                                  setPresetDropdownOpen(false)
+                                  showToast(`Switched to "${p.PRESET_NAME}".`, 'info')
+                                }}
+                                className="flex-1 text-left truncate cursor-pointer"
+                              >
+                                {p.PRESET_NAME}
+                                {p.IS_DEFAULT && (
+                                  <span className="ml-1.5 text-[9px] bg-blue-100 text-blue-700 px-1 rounded font-bold">
+                                    DEFAULT
+                                  </span>
+                                )}
+                              </button>
+
+                              <div className="flex items-center gap-1 shrink-0 ml-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRenamePreset(p.PRESET_ID, p.PRESET_NAME)}
+                                  className="p-1 text-slate-400 hover:text-slate-700 rounded hover:bg-slate-200/60 transition-colors"
+                                  title="Rename"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                                {presets.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeletePreset(p.PRESET_ID, p.PRESET_NAME)}
+                                    className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      <div className="border-t border-slate-100 pt-1.5 mt-1">
+                        <button
+                          type="button"
+                          onClick={handleOpenCreatePresetModal}
+                          className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-[#14274E] hover:bg-[#1f3b73] text-[#E9C46A] rounded-xl text-xs font-black transition-colors cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ Create New Preset</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
+
+              <p className="text-xs text-slate-500 font-medium">
+                Active menu preset containing{' '}
+                <strong className="text-[#14274E]">{currentPresetItems.length} items</strong>.
+              </p>
             </div>
-            <button type="button" className="menu-manager-add-category" onClick={handleAddCategory}><Plus className="menu-manager-plus-icon" /> Add Category</button>
-            <button type="button" className="menu-manager-add-item" onClick={handleAddDish}><Plus className="menu-item-add-icon" /> Add Item</button>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-2.5 w-full sm:w-auto">
+            {/* Search */}
+            <div className="relative flex-1 sm:w-56">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search preset dishes..."
+                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 focus:border-[#14274E] focus:bg-white rounded-xl text-xs font-semibold text-[#14274E] outline-none"
+              />
+            </div>
+
+            {/* Edit Preset Items from Catalog */}
+            <button
+              type="button"
+              onClick={handleOpenEditPresetItems}
+              className="px-3.5 py-2 bg-[#14274E] hover:bg-[#1f3b73] text-[#E9C46A] text-xs font-black rounded-xl flex items-center gap-1.5 shrink-0 transition-colors shadow-xs cursor-pointer"
+              title="Add or remove items from the master catalog"
+            >
+              <Grid className="w-3.5 h-3.5" />
+              <span>Select Items from Catalog</span>
+            </button>
+
+            {/* View Catalog Link */}
+            <Link
+              to="/catalog"
+              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 shrink-0 transition-colors border border-slate-300 shadow-2xs"
+            >
+              <FolderKanban className="w-3.5 h-3.5 text-slate-500" />
+              <span className="hidden sm:inline">Go to Catalog</span>
+            </Link>
           </div>
         </div>
+      </div>
 
-        <section className="menu-item-category-buttons-section">
-          <div className="menu-item-category-buttons-header">
-          <div className="menu-item-category-buttons-row">
-            <div className="menu-item-category-buttons-container">
-              {displayCategories.map((cat: Category, index) => {
-                const CategoryIcon = categoryIconMap[cat.icon as keyof typeof categoryIconMap]
-                  ?? categoryIcons[index % categoryIcons.length].component
-                return (
-                  <div
-                    key={cat.id}
-                    className={['menu-item-category-button shrink-0', activeCat === cat.id ? 'is-active' : ''].join(' ')}
-                  >
-                    <button
-                      type="button"
-                      className="menu-item-category-default"
-                      onClick={() => setActiveCat(cat.id)}
-                    >
-                      <div className="menu-item-category-body">
-                        <CategoryIcon className="menu-item-category-icon" />
-                        <span className="menu-item-category-title">{cat.name}</span>
-                      </div>
-                      <span className="menu-item-category-count">{cat.count} Items</span>
-                    </button>
-                    {cat.id !== 'all' && activeCat === cat.id && (
-                      <div className="menu-item-category-hover-panel">
-                        <button type="button" title="Edit category" onClick={() => { setEditingCategory(cat); setCategoryModalOpen(true) }}>
-                          <Edit2 className="menu-item-category-action-icon" />
-                        </button>
-                        <button type="button" title="Delete category" onClick={() => handleDeleteCategory(cat)}>
-                          <Trash2 className="menu-item-category-action-icon" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-          </div>
-        </section>
+      {/* Category Tabs Row */}
+      <div className="relative px-4 sm:px-5 py-3 shrink-0 group/catbar">
+        <div
+          onWheel={(e) => {
+            const target = e.currentTarget
+            if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+              target.scrollLeft += e.deltaY
+            }
+          }}
+          className="flex items-center gap-2.5 overflow-x-auto pb-1 no-scrollbar scroll-smooth w-full"
+        >
+          {displayCategories.map((cat, idx) => {
+            const isActive = activeCat === cat.id
+            const isAll = cat.id === 'all'
+            const CategoryIcon = isAll
+              ? Grid
+              : (cat.icon ? categoryIconMap[cat.icon as keyof typeof categoryIconMap] : undefined)
+                ?? categoryIcons[idx % categoryIcons.length]?.component
+                ?? UtensilsCrossed
 
-        {/* Item grid */}
-        <section className="menu-item-grid">
-          <div className="menu-items-container">
-            <div className="menu-item-card-grid">
-            {loadState === 'loading' && (
-            <div className="flex h-full items-center justify-center text-sm text-[#9BA4B4]">
-              Loading menu...
-            </div>
-          )}
-          {loadState === 'error' && (
-            <div className="flex h-full items-center justify-center text-sm text-[#C94A4A]">
-              Failed to load menu.
-            </div>
-          )}
-          {(loadState === 'loaded' || loadState === 'empty') && (
-            <div className="menu-item-card-grid-content">
-              {filteredGroups.map((group) => (
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setActiveCat(cat.id)}
+                className={`px-3 py-2 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 min-w-max border-2 ${
+                  isActive
+                    ? 'bg-[#14274E] border-[#14274E] text-white shadow-md shadow-[#14274E]/15 scale-[1.01]'
+                    : 'bg-white border-slate-200/80 text-slate-700 hover:border-slate-300 hover:bg-slate-50 shadow-2xs'
+                }`}
+              >
                 <div
-                  key={`group-${group.id}`}
-                  className={[
-                    'menu-item-card-container relative flex flex-col rounded-xl border bg-white overflow-hidden transition-all cursor-pointer',
-                    selectedGroup?.id === group.id
-                      ? 'selected border-[#14274E] ring-2 ring-[#14274E]/30 shadow-md'
-                      : 'border-[#9BA4B4]/20 hover:border-[#14274E]/30',
-                  ].join(' ')}
-                  onClick={() => { setSelectedGroup(group); setSelectedItem(null) }}
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                    isActive ? 'bg-[#E9C46A] text-[#14274E]' : 'bg-slate-100 text-[#394867] group-hover:bg-slate-200/70'
+                  }`}
                 >
-                  {group.status === 'OUT_OF_STOCK' && (
-                    <div className="absolute top-2 right-2 z-10 rounded-md bg-[#C94A4A] px-2 py-0.5 text-[10px] font-bold text-white shadow">
-                      SOLD OUT
-                    </div>
-                  )}
-                  <div className="menu-item-image-container h-32 w-full overflow-hidden">
-                    <img
-                      src={group.imageUrl}
-                      alt={group.name}
-                      className={`menu-item-image h-full w-full object-cover ${group.status === 'OUT_OF_STOCK' ? 'opacity-60 grayscale-[40%]' : ''}`}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1 pt-2">
-                    <p className="menu-item-name text-sm font-semibold text-[#14274E] line-clamp-2">{group.name}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="menu-item-price text-sm font-bold text-[#14274E]">₱{group.price.toFixed(2)}</span>
-                      <span className="text-[10px] font-semibold text-[#14274E]">Group</span>
-                    </div>
-                  </div>
+                  <CategoryIcon className="w-4 h-4 shrink-0" />
                 </div>
-              ))}
-              {paginated.map((item) => (
+                <span className="font-extrabold">{cat.name}</span>
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-md font-extrabold transition-colors ${
+                    isActive ? 'bg-white/20 text-[#E9C46A]' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {cat.count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Main Grid View */}
+      <div className="flex-1 overflow-y-auto px-4 sm:px-5 pb-5">
+        {loadState === 'loading' ? (
+          <div className="py-24 text-center">
+            <Loader2 className="w-8 h-8 animate-spin text-[#14274E] mx-auto mb-2" />
+            <p className="text-xs font-bold text-slate-500">Loading preset dishes...</p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center max-w-md mx-auto my-12 shadow-xs">
+            <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mx-auto mb-3 text-slate-400">
+              <UtensilsCrossed className="w-6 h-6" />
+            </div>
+            <h3 className="text-sm font-extrabold text-[#14274E]">
+              {search ? 'No matching dishes in this preset' : 'No dishes added to this preset yet'}
+            </h3>
+            <p className="text-xs text-slate-400 mt-1 mb-4">
+              {search
+                ? 'Try a different search query or select another category.'
+                : 'Select items from your Master Menu Catalog to add them to this preset.'}
+            </p>
+            <button
+              type="button"
+              onClick={handleOpenEditPresetItems}
+              className="px-4 py-2 bg-[#14274E] text-[#E9C46A] rounded-xl text-xs font-black shadow-xs hover:bg-[#1f3b73] transition-colors cursor-pointer"
+            >
+              + Select Items from Catalog
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            {filtered.map((item) => {
+              const category = categories.find((c) => c.id === item.categoryId)
+              const isSavingThis = availabilitySaving === item.id
+
+              return (
                 <div
                   key={item.id}
-                  className={[
-                    'menu-item-card-container relative flex flex-col rounded-xl border bg-white overflow-hidden transition-all cursor-pointer',
-                    selectedItem?.id === item.id
-                      ? 'selected border-[#14274E] ring-2 ring-[#14274E]/30 shadow-md'
-                      : 'border-[#9BA4B4]/20 hover:border-[#14274E]/30',
-                  ].join(' ')}
-                  onClick={() => { setSelectedItem(item); setSelectedGroup(null) }}
+                  className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs hover:shadow-md transition-all overflow-hidden flex flex-col justify-between group"
                 >
-                  {/* Sold out status badge */}
-                  {item.isSoldOut && (
-                    <div className="absolute top-2 right-2 z-10 rounded-md bg-[#C94A4A] px-2 py-0.5 text-[10px] font-bold text-white shadow">
-                      SOLD OUT
-                    </div>
-                  )}
+                  {/* Image & Badges */}
+                  <div>
+                    <div className="relative aspect-4/3 bg-slate-100 overflow-hidden">
+                      <img
+                        src={item.imageUrl || DEFAULT_FOOD_PLACEHOLDER}
+                        alt={item.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        onError={(e) => {
+                          ;(e.currentTarget as HTMLImageElement).src = DEFAULT_FOOD_PLACEHOLDER
+                        }}
+                      />
 
-                  {/* Promo Badges (Best Seller, Discount) */}
-                  {!item.isSoldOut && (item.isBestSeller || (item.discountPercent && item.discountPercent > 0)) && (
-                    <div className="absolute top-2 left-2 z-10 flex flex-wrap items-center gap-1 max-w-[85%]">
-                      {item.isBestSeller && (
-                        <span className="rounded-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-xs">
-                          ★ Best Seller
-                        </span>
+                      {/* Dietary Badge */}
+                      <div className="absolute top-2 left-2">
+                        {item.dietaryType === 'veg' ? (
+                          <span className="text-[9px] font-black tracking-wide text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-1.5 py-0.5 rounded-md shadow-2xs">
+                            VEG
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-black tracking-wide text-rose-800 bg-rose-100/90 border border-rose-300 px-1.5 py-0.5 rounded-md shadow-2xs">
+                            NON-VEG
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Discount / Best Seller Badge */}
+                      {item.badge && (
+                        <div className="absolute top-2 right-2">
+                          <span
+                            className={`text-[9px] font-black tracking-wide px-1.5 py-0.5 rounded-md shadow-2xs ${
+                              item.badge.type === 'discount'
+                                ? 'bg-amber-400 text-amber-950 border border-amber-500'
+                                : 'bg-[#14274E] text-[#E9C46A] border border-[#E9C46A]/30'
+                            }`}
+                          >
+                            {item.badge.label}
+                          </span>
+                        </div>
                       )}
-                      {item.discountPercent && item.discountPercent > 0 && (
-                        <span className="rounded-md bg-[#E9C46A] px-1.5 py-0.5 text-[10px] font-bold text-[#14274E] shadow-xs">
-                          {item.discountPercent}% OFF
-                        </span>
+
+                      {/* Stock limit */}
+                      {item.orderLimit != null && item.orderLimit > 0 && (
+                        <div className="absolute bottom-2 left-2 bg-slate-900/80 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-2xs">
+                          Stock: {item.orderLimit}
+                        </div>
                       )}
                     </div>
-                  )}
 
-                  {/* Image */}
-                  <div className="menu-item-image-container h-32 w-full overflow-hidden">
-                    <img
-                      src={item.imageUrl}
-                      alt={item.name}
-                      className={`menu-item-image h-full w-full object-cover ${item.isSoldOut ? 'opacity-60 grayscale-[40%]' : ''}`}
-                    />
-                  </div>
+                    {/* Content */}
+                    <div className="p-3.5 space-y-2">
+                      <div className="flex items-center justify-between gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        <span>{category?.name || 'Dish'}</span>
+                        <span className="font-mono">#{item.code}</span>
+                      </div>
 
-                  {/* Info */}
-                  <div className="flex flex-col gap-1 pt-2">
-                    <p className="menu-item-name text-sm font-semibold text-[#14274E] line-clamp-2">{item.name}</p>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="menu-item-price text-sm font-bold text-[#14274E]">₱{item.price.toFixed(2)}</span>
+                      <h3 className="font-extrabold text-sm text-[#14274E] leading-snug line-clamp-1" title={item.name}>
+                        {item.name}
+                      </h3>
+
+                      {item.description && (
+                        <p className="text-[11px] text-slate-500 line-clamp-2 leading-tight">
+                          {item.description}
+                        </p>
+                      )}
+
+                      <div className="flex items-baseline gap-1.5 pt-0.5">
+                        <span className="font-black text-sm text-[#14274E]">
+                          ₱{item.price.toFixed(2)}
+                        </span>
                         {item.originalPrice && item.originalPrice > item.price && (
-                          <span className="text-[11px] text-[#9BA4B4] line-through font-semibold">
+                          <span className="text-[11px] text-slate-400 line-through font-semibold">
                             ₱{item.originalPrice.toFixed(2)}
                           </span>
                         )}
                       </div>
-                      <span className={[
-                        ' gap-1 text-[10px] font-semibold',
-                        item.dietaryType === 'veg' ? 'text-yellow-600' : 'text-[#C94A4A]',
-                      ].join(' ')}>
-                        <span className={[
-                          'h-1.5 w-1.5 rounded-full',
-                          item.dietaryType === 'veg' ? 'bg-yellow-500' : 'bg-[#C94A4A]',
-                        ].join(' ')} />
-                        {item.dietaryType === 'veg' ? 'Vegetarian' : 'Non-vegetarian'}
-                      </span>
                     </div>
-
                   </div>
-                </div>
-              ))}
 
-              {paginated.length === 0 && filteredGroups.length === 0 && (
-                <div className="col-span-full flex flex-col items-center justify-center py-12 text-center">
-                  <p className="text-sm font-semibold text-[#14274E]">No items found</p>
-                  <p className="text-xs text-[#9BA4B4]">Try a different category or search term.</p>
-                </div>
-              )}
-            </div>
-          )}
-          </div>
-
-          </div>
-      </section>
-      </div>
-
-      <aside className="menu-manager-sidebar">
-        {selectedGroup ? (
-          <div className="menu-manager-sidebar-content">
-            <div className="menu-manager-sidebar-hero">
-              <img className="menu-manager-sidebar-image" src={selectedGroup.imageUrl} alt={selectedGroup.name} />
-              <div className="menu-manager-sidebar-title">
-                <div>
-                  <h3>{selectedGroup.name}</h3>
-                  <p className="menu-manager-sidebar-category">
-                    {categories.find(category => category.id === selectedGroup.categoryId)?.name ?? 'Uncategorized'}
-                  </p>
-                </div>
-                <strong>₱{selectedGroup.price.toFixed(2)}</strong>
-              </div>
-            </div>
-            <div className="menu-manager-sidebar-summary">
-              <span>Description</span>
-              <p>{selectedGroup.description || 'No description available.'}</p>
-            </div>
-            <div className="menu-manager-sidebar-meta">
-              <div>
-                <span>Dietary</span>
-                <strong>Varied</strong>
-              </div>
-              <div>
-                <span>Menu type</span>
-                <strong>Item group</strong>
-              </div>
-            </div>
-            {selectedGroup.itemNames.length > 0 && (
-              <section className="menu-manager-sidebar-included">
-                <div className="menu-manager-sidebar-section-title">
-                  <span>Items Included</span>
-                  <strong>{selectedGroup.itemNames.length}</strong>
-                </div>
-                <ul>
-                  {selectedGroup.itemNames.map((name, idx) => (
-                    <li
-                      key={selectedGroup.itemIds[idx] ?? name}
-                      className={selectedGroup.itemAvailability[idx] === false ? 'is-unavailable' : ''}
+                  {/* Actions Bar */}
+                  <div className="px-3.5 py-2.5 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between gap-2">
+                    {/* Availability toggle */}
+                    <button
+                      type="button"
+                      onClick={() => handleAvailabilityToggle(item)}
+                      disabled={isSavingThis}
+                      className={`px-2.5 py-1 rounded-xl text-[10px] font-black flex items-center gap-1 transition-all cursor-pointer ${
+                        item.isAvailable
+                          ? 'bg-emerald-100/70 text-emerald-800 hover:bg-emerald-200/70'
+                          : 'bg-rose-100 text-rose-700 hover:bg-rose-200'
+                      }`}
+                      title="Toggle availability in POS & customer interfaces"
                     >
-                      {selectedGroup.itemImages[idx] ? (
-                        <img src={selectedGroup.itemImages[idx]} alt="" />
+                      {isSavingThis ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : item.isAvailable ? (
+                        <>
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>Available</span>
+                        </>
                       ) : (
-                        <span className="menu-manager-sidebar-item-placeholder" />
+                        <>
+                          <XCircle className="w-3 h-3 text-rose-600" />
+                          <span>Out of Stock</span>
+                        </>
                       )}
-                      <span className="menu-manager-sidebar-item-name">{name}</span>
-                      {selectedGroup.itemAvailability[idx] === false && (
-                        <strong className="menu-manager-sidebar-item-status">Sold Out</strong>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-            <label className="menu-sidebar-availability-toggle">
-              <span>Availability</span>
-              <span className="menu-sidebar-toggle-row">
-                <input
-                  type="checkbox"
-                  checked={selectedGroup.status !== 'OUT_OF_STOCK'}
-                  disabled={availabilitySaving === selectedGroup.id}
-                  onChange={(event) => void handleGroupAvailabilityChange(selectedGroup, event.target.checked)}
-                />
-                <span>{selectedGroup.status !== 'OUT_OF_STOCK' ? 'Available' : 'Not Available'}</span>
-              </span>
-            </label>
-            <footer className="menu-manager-sidebar-footer">
-              <div className="menu-manager-sidebar-actions">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingGroup(selectedGroup)
-                    setItemModalOpen(true)
-                  }}
-                >
-                  <Edit2 /> Edit
-                </button>
-                <button
-                  type="button"
-                  className="is-danger"
-                  onClick={() => handleDeleteGroup(selectedGroup)}
-                >
-                  <Trash2 /> Delete
-                </button>
-              </div>
-            </footer>
-          </div>
-        ) : !selectedItem ? (
-          <div className="menu-manager-sidebar-empty">
-            <p>Select a menu item to view its details.</p>
-          </div>
-        ) : (
-          <div className="menu-manager-sidebar-content">
-            <div className="menu-manager-sidebar-hero">
-              <img className="menu-manager-sidebar-image" src={selectedItem.imageUrl} alt={selectedItem.name} />
-              <div className="menu-manager-sidebar-title">
-                <div>
-                  <div className="flex items-center gap-1.5 mb-1">
-                    {selectedItem.isBestSeller && (
-                      <span className="rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-xs">
-                        ★ Best Seller
-                      </span>
-                    )}
-                    {selectedItem.discountPercent && selectedItem.discountPercent > 0 && (
-                      <span className="rounded bg-[#E9C46A] px-1.5 py-0.5 text-[10px] font-bold text-[#14274E] shadow-xs">
-                        {selectedItem.discountPercent}% OFF
-                      </span>
-                    )}
-                  </div>
-                  <h3>{selectedItem.name}</h3>
-                  <p className="menu-manager-sidebar-category">
-                    {categories.find(category => category.id === selectedItem.categoryId)?.name ?? 'Uncategorized'}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <strong>₱{selectedItem.price.toFixed(2)}</strong>
-                  {selectedItem.originalPrice && selectedItem.originalPrice > selectedItem.price && (
-                    <div className="text-xs text-[#9BA4B4] line-through font-semibold">
-                      ₱{selectedItem.originalPrice.toFixed(2)}
+                    </button>
+
+                    {/* Actions: Edit & Remove from Preset */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingItem(item)
+                          setItemModalOpen(true)
+                        }}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-[#14274E] hover:bg-slate-200/80 transition-colors cursor-pointer"
+                        title="Edit Dish"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveItemFromPreset(item)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-amber-700 hover:bg-amber-50 transition-colors cursor-pointer"
+                        title="Remove from this Preset (Keeps in Catalog)"
+                      >
+                        <MinusCircle className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                  )}
+                  </div>
                 </div>
-              </div>
-            </div>
-            <div className="menu-manager-sidebar-summary">
-              <span>Description</span>
-              <p>{selectedItem.description || 'No description available.'}</p>
-            </div>
-            <div className="menu-manager-sidebar-meta">
-              <div>
-                <span>Dietary</span>
-                <strong>{selectedItem.dietaryType === 'veg' ? 'Vegetarian' : 'Non-vegetarian'}</strong>
-              </div>
-              <div>
-                <span>Menu type</span>
-                <strong>Single item</strong>
-              </div>
-            </div>
-            <label className="menu-sidebar-availability-toggle">
-              <span>Availability</span>
-              <span className="menu-sidebar-toggle-row">
-                <input
-                  type="checkbox"
-                  checked={selectedItem.isAvailable}
-                  disabled={availabilitySaving === selectedItem.id}
-                  onChange={(event) => void handleAvailabilityChange(selectedItem, event.target.checked)}
-                />
-                <span>{selectedItem.isAvailable ? 'Available' : 'Not Available'}</span>
-              </span>
-            </label>
-            <footer className="menu-manager-sidebar-footer">
-              <div className="menu-manager-sidebar-actions">
-                <button type="button" onClick={() => handleEdit(selectedItem)}><Edit2 /> Edit</button>
-              <button type="button" className="is-danger" onClick={() => setConfirmState({
-                title: `Delete "${selectedItem.name}"?`,
-                message: `Are you sure you want to remove "${selectedItem.name}" from the menu? This cannot be undone.`,
-                onConfirm: async () => {
-                  setConfirmState(null)
-                  const previous = selectedItem
-                  setItems((current) => current.filter((item) => item.id !== previous.id))
-                  handleClose()
-                  try {
-                    await deleteMenuItem(previous.id)
-                    reload()
-                    showToast(`Deleted "${previous.name}".`, 'info')
-                  } catch (err: unknown) {
-                    setItems((current) => [...current, previous])
-                    showToast(err instanceof Error ? err.message : 'Failed to delete dish.', 'error')
-                  }
-                },
-                })}><Trash2 /> Delete</button>
-              </div>
-            </footer>
+              )
+            })}
           </div>
         )}
-      </aside>
-
-    <NewMenuItemModal
-      isOpen={isEditModalOpen}
-      categories={categories}
-      items={items.filter((item) => item.presetId === (editingItem?.presetId ?? activePresetId))}
-      presetId={editingItem?.presetId ?? activePresetId}
-      editItem={editingItem}
-      onClose={() => { setEditModalOpen(false); setEditingItem(null) }}
-      onSubmit={async (form) => {
-        await submitEdit(form)
-        setEditModalOpen(false)
-        setEditingItem(null)
-      }}
-    />
-
-    <NewMenuCategoryModal
-      isOpen={isCategoryModalOpen}
-      editCategory={editingCategory}
-      onClose={() => { setCategoryModalOpen(false); setEditingCategory(null) }}
-      onSubmit={submitCategory}
-    />
-    <NewMenuItemModal
-      isOpen={isItemModalOpen}
-      categories={categories}
-      items={items.filter((item) => item.presetId === (editingGroup?.presetId ?? activePresetId))}
-      presetId={editingGroup?.presetId ?? activePresetId}
-      editGroup={editingGroup}
-      defaultCategoryId={selectedCategoryId}
-      onClose={() => { setItemModalOpen(false); setEditingGroup(null) }}
-      onSubmit={async (form) => {
-        if (editingGroup) {
-          await updateMenuItemGroup(editingGroup.id, {
-            name: form.name,
-            description: form.description ?? '',
-            price: form.price,
-            imageUrl: form.imageUrl,
-            status: form.isAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK',
-            orderLimit: form.orderLimit,
-            categoryId: form.categoryId,
-            itemIds: form.itemIds,
-          })
-          const updatedGroups = await fetchMenuItemGroups()
-          setGroups(updatedGroups)
-          setSelectedGroup(updatedGroups.find((group) => group.id === editingGroup.id) ?? null)
-          showToast(`Updated "${form.name}".`, 'success')
-        } else {
-          await submitDish(form)
-          }
-      }}
-    />
-
-    {isPresetModalOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 animate-backdrop-fade" onClick={() => setPresetModalOpen(false)}>
-        <form className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl animate-modal-pop" onClick={(event) => event.stopPropagation()} onSubmit={async (event) => {
-          event.preventDefault()
-          if (!presetName.trim()) return
-          if (isEventActive) {
-            showToast(`Cannot create or switch preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`, 'error')
-            return
-          }
-          try {
-            const preset = await createPreset(presetName.trim())
-            void setActivePresetId(preset.PRESET_ID)
-            setPresetName('')
-            setPresetModalOpen(false)
-            reload()
-            showToast(`Created preset "${preset.PRESET_NAME}".`, 'success')
-          } catch (err) { showToast(err instanceof Error ? err.message : 'Failed to create preset.', 'error') }
-        }}>
-          <h2 className="mb-3 text-lg font-bold text-[#14274E]">Create a new Preset</h2>
-          <input required value={presetName} onChange={(event) => setPresetName(event.target.value)} placeholder="Preset name" className="mb-2 w-full rounded-lg border p-2" />
-          <div className="flex justify-end gap-2"><button type="button" onClick={() => setPresetModalOpen(false)} className="rounded-lg px-3 py-2">Cancel</button><button type="submit" className="rounded-lg bg-[#14274E] px-3 py-2 text-white">Save</button></div>
-        </form>
       </div>
-    )}
 
-    <ConfirmModal
-      isOpen={confirmState !== null}
-      title={confirmState?.title ?? ''}
-      message={confirmState?.message ?? ''}
-      warning={confirmState?.warning}
-      onConfirm={confirmState?.onConfirm ?? (() => {})}
-      onCancel={() => setConfirmState(null)}
-    />
+      {/* Preset Item Picker Modal (Grid selection from Catalog) */}
+      <PresetItemPickerModal
+        isOpen={isPickerModalOpen}
+        title={pickerMode === 'create' ? 'Create New Preset from Catalog' : `Edit Preset "${activePreset?.PRESET_NAME}"`}
+        subtitle={
+          pickerMode === 'create'
+            ? 'Choose catalog dishes to include in your new preset set.'
+            : 'Select or unselect dishes from the catalog for this preset.'
+        }
+        presetName={pickerMode === 'create' ? '' : activePreset?.PRESET_NAME}
+        isCreatingNewPreset={pickerMode === 'create'}
+        catalogItems={catalogItems}
+        categories={categories}
+        initialSelectedItemIds={pickerMode === 'create' ? catalogItems.map((i) => i.id) : activePresetItemIds}
+        onClose={() => setPickerModalOpen(false)}
+        onSubmit={handlePickerSubmit}
+      />
 
-    {/* ── Toast Alert Banner ── */}
-    {toastMessage && (
-      <div
-        className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl shadow-xl text-xs font-bold text-white flex items-center gap-2 ${
-          toastMessage.type === 'error' ? 'bg-[#C94A4A]' : 'bg-[#14274E]'
-        }`}
-      >
-        <span>{toastMessage.text}</span>
-      </div>
-    )}
+      {/* Edit Item Modal */}
+      <NewMenuItemModal
+        isOpen={isItemModalOpen}
+        categories={categories}
+        defaultCategoryId={activeCat !== 'all' ? activeCat : undefined}
+        editItem={editingItem}
+        items={catalogItems}
+        onClose={() => {
+          setItemModalOpen(false)
+          setEditingItem(null)
+        }}
+        onSubmit={handleEditItemSubmit}
+      />
+
+      {/* Confirm Modal */}
+      {confirmState && (
+        <ConfirmModal
+          title={confirmState.title}
+          message={confirmState.message}
+          warning={confirmState.warning}
+          onConfirm={confirmState.onConfirm}
+          onCancel={() => setConfirmState(null)}
+        />
+      )}
     </div>
-  </>
   )
 }

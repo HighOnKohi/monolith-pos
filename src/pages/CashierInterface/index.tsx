@@ -730,6 +730,9 @@ export default function CashierInterface() {
       })
       if (activeBillRequest) await updateBillRequestStatus(activeBillRequest.requestId, 'PAID')
       await resolveBillOutRequest(selectedTableGroup.group.anchorTableId)
+      
+      void import('@/services/cashierShiftService').then((m) => m.recordCashierSettlement(settledTotal))
+
       setReceipt(snapshot)
       await load(true)
 

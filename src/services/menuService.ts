@@ -5,19 +5,54 @@ export interface MenuPreset {
   PRESET_ID: number
   PRESET_NAME: string
   IS_DEFAULT?: boolean
+  ITEM_IDS: string[]
 }
 
 export async function fetchMenuPresets(): Promise<MenuPreset[]> {
-  const { data, error } = await supabase
+  try {
+    const { data, error } = await supabase
+      .schema('menu')
+      .from('Menu_Presets')
+      .select('PRESET_ID, PRESET_NAME, IS_DEFAULT, ITEM_IDS')
+      .order('PRESET_ID')
+
+    if (!error && data) {
+      return data.map((row) => ({
+        PRESET_ID: Number(row.PRESET_ID),
+        PRESET_NAME: String(row.PRESET_NAME),
+        IS_DEFAULT: Boolean(row.IS_DEFAULT),
+        ITEM_IDS: Array.isArray(row.ITEM_IDS)
+          ? row.ITEM_IDS.map((id: unknown) => String(id))
+          : [],
+      }))
+    }
+  } catch {
+    // Fallback if ITEM_IDS column is being migrated
+  }
+
+  const { data: fallbackData, error: fallbackError } = await supabase
     .schema('menu')
     .from('Menu_Presets')
     .select('PRESET_ID, PRESET_NAME, IS_DEFAULT')
     .order('PRESET_ID')
-  if (error) throw error
-  return (data ?? []).map((row) => ({
+
+  if (fallbackError) throw fallbackError
+
+  const fallbackPresetMap: Record<number, string[]> = {
+    1: ['5', '6', '7', '8'],
+    2: ['10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '33', '34'],
+    5: ['27', '28', '29'],
+    6: [],
+    7: ['32'],
+  }
+
+
+
+  return (fallbackData ?? []).map((row) => ({
     PRESET_ID: Number(row.PRESET_ID),
     PRESET_NAME: String(row.PRESET_NAME),
     IS_DEFAULT: Boolean(row.IS_DEFAULT),
+    ITEM_IDS: fallbackPresetMap[Number(row.PRESET_ID)] ?? [],
   }))
 }
 
@@ -74,16 +109,66 @@ export async function setDefaultMenuPreset(presetId: number): Promise<void> {
   }
 }
 
-export async function createMenuPreset(name: string): Promise<MenuPreset> {
-  const { data, error } = await supabase.schema('menu').from('Menu_Presets').insert({
-    PRESET_NAME: name,
-    IS_DEFAULT: false,
-  }).select('PRESET_ID, PRESET_NAME, IS_DEFAULT').single()
+export async function createMenuPreset(name: string, initialItemIds: string[] = []): Promise<MenuPreset> {
+  const numericItemIds = initialItemIds.map(Number).filter((n) => !isNaN(n))
+  const { data, error } = await supabase
+    .schema('menu')
+    .from('Menu_Presets')
+    .insert({
+      PRESET_NAME: name,
+      IS_DEFAULT: false,
+      ITEM_IDS: numericItemIds,
+    })
+    .select('PRESET_ID, PRESET_NAME, IS_DEFAULT, ITEM_IDS')
+    .single()
   if (error) throw error
   return {
     PRESET_ID: Number(data.PRESET_ID),
     PRESET_NAME: String(data.PRESET_NAME),
     IS_DEFAULT: Boolean(data.IS_DEFAULT),
+    ITEM_IDS: Array.isArray(data.ITEM_IDS) ? data.ITEM_IDS.map(String) : [],
+  }
+}
+
+export async function fetchPresetItemIds(presetId: number): Promise<string[]> {
+  try {
+    const { data, error } = await supabase
+      .schema('menu')
+      .from('Menu_Presets')
+      .select('ITEM_IDS')
+      .eq('PRESET_ID', presetId)
+      .single()
+
+    if (error) throw error
+    return Array.isArray(data?.ITEM_IDS) ? data.ITEM_IDS.map(String) : []
+  } catch (err) {
+    console.warn('[menuService] Error fetching preset ITEM_IDS:', err)
+    return []
+  }
+}
+
+export async function savePresetItems(presetId: number, itemIds: string[]): Promise<void> {
+  const numericItemIds = itemIds.map(Number).filter((n) => !isNaN(n))
+  const { error } = await supabase
+    .schema('menu')
+    .from('Menu_Presets')
+    .update({ ITEM_IDS: numericItemIds })
+    .eq('PRESET_ID', presetId)
+
+  if (error) throw error
+
+  // Broadcast preset items change event
+  if (typeof window !== 'undefined') {
+    const detail = { type: 'menu_preset_items_changed', presetId, itemIds }
+    window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
+    window.dispatchEvent(new CustomEvent('menu-preset-items-changed', { detail }))
+    try {
+      const bc = new BroadcastChannel('monolith_order_events')
+      bc.postMessage(detail)
+      bc.close()
+    } catch {
+      // Ignore
+    }
   }
 }
 
@@ -164,7 +249,6 @@ function mapItem(row: Record<string, unknown>): MenuItem {
     discountPercent,
     discountAmount,
     categoryId: String(row['CATEGORY_ID']),
-    presetId: row['PRESET_ID'] == null ? undefined : Number(row['PRESET_ID']),
     dietaryType: mapDietaryType(row['MENU_ITEM_DIETARY']),
     imageUrl: (row['ITEM_IMAGE_URL'] as string | undefined) || DEFAULT_FOOD_PLACEHOLDER,
     isAvailable: String(row['ITEM_STATUS'] ?? 'AVAILABLE') !== 'OUT_OF_STOCK',
@@ -182,7 +266,6 @@ function mapCategory(row: Record<string, unknown>, count: number): Category {
     id: String(row['CATEGORY_ID']),
     name: String(row['CATEGORY_NAME']),
     count,
-    presetId: row['PRESET_ID'] == null ? undefined : Number(row['PRESET_ID']),
     icon: typeof row['CATEGORY_ICON'] === 'string' ? row['CATEGORY_ICON'] : undefined,
   }
 }
@@ -199,6 +282,7 @@ export async function fetchMenuItems(): Promise<MenuItem[]> {
     .order('ITEM_NAME')
 
   if (error) throw error
+
   const rawItems = (data ?? [])
     .filter((row) => (row as Record<string, unknown>)['IS_ITEM_GROUP'] !== true)
     .map((row) => mapItem(row as Record<string, unknown>))
@@ -286,7 +370,9 @@ export async function fetchMenuItems(): Promise<MenuItem[]> {
   }
 }
 
-export async function fetchCategories(items: MenuItem[], presetId?: number): Promise<Category[]> {
+export const fetchCatalogItems = fetchMenuItems
+
+export async function fetchCategories(items: MenuItem[]): Promise<Category[]> {
   const { data, error } = await supabase
     .schema('menu')
     .from('Menu_Categories')
@@ -301,9 +387,9 @@ export async function fetchCategories(items: MenuItem[], presetId?: number): Pro
     return acc
   }, {})
 
-  const categoryRows = (data ?? [])
-    .filter((row) => presetId == null || Number((row as Record<string, unknown>)['PRESET_ID']) === presetId)
-    .map((row) => mapCategory(row as Record<string, unknown>, countMap[String(row['CATEGORY_ID'])] ?? 0))
+  const categoryRows = (data ?? []).map((row) =>
+    mapCategory(row as Record<string, unknown>, countMap[String(row['CATEGORY_ID'])] ?? 0),
+  )
 
   // Prepend "All Menu" virtual category
   const allCategory: Category = { id: 'all', name: 'All Menu', count: items.length }
@@ -327,7 +413,6 @@ export async function createMenuItem(payload: {
   isAvailable?: boolean
   orderLimit?: number
   itemIds?: string[]
-  presetId?: number
 }): Promise<MenuItem> {
   const meta: MenuItemMetadata = {}
   if (payload.originalPrice !== undefined) meta.originalPrice = payload.originalPrice
@@ -350,7 +435,6 @@ export async function createMenuItem(payload: {
       ITEM_DESCRIPTION: formattedDesc || null,
       ORDER_LIMIT: payload.orderLimit ?? 0,
       IS_ITEM_GROUP: (payload.itemIds?.length ?? 0) > 0,
-      PRESET_ID: payload.presetId ?? null,
     })
     .select()
     .single()
@@ -505,7 +589,7 @@ export async function fetchMenuItemGroups(): Promise<MenuItemGroup[]> {
   const { data, error } = await supabase
     .schema('menu')
     .from('Menu_Items')
-    .select('ITEM_ID, ITEM_NAME, ITEM_DESCRIPTION, ITEM_PRICE, ITEM_IMAGE_URL, ITEM_STATUS, ORDER_LIMIT, CATEGORY_ID, PRESET_ID, IS_ITEM_GROUP, Item_Groups(ITEM_ID)')
+    .select('ITEM_ID, ITEM_NAME, ITEM_DESCRIPTION, ITEM_PRICE, ITEM_IMAGE_URL, ITEM_STATUS, ORDER_LIMIT, CATEGORY_ID, IS_ITEM_GROUP, Item_Groups(ITEM_ID)')
     .eq('IS_ITEM_GROUP', true)
     .order('ITEM_ID')
   if (error) throw error
@@ -545,7 +629,6 @@ export async function fetchMenuItemGroups(): Promise<MenuItemGroup[]> {
     const itemIds = linksByGroup.get(id) ?? []
     return {
       id,
-      presetId: raw['PRESET_ID'] == null ? undefined : Number(raw['PRESET_ID']),
       name: String(raw['ITEM_NAME'] ?? ''),
       description: String(raw['ITEM_DESCRIPTION'] ?? ''),
       price: Number(raw['ITEM_PRICE'] ?? 0),
@@ -573,7 +656,6 @@ export async function fetchServiceMenuItems(): Promise<MenuItem[]> {
     code: group.id,
     price: group.price,
     categoryId: group.categoryId,
-    presetId: group.presetId,
     dietaryType: 'non-veg',
     imageUrl: group.imageUrl || DEFAULT_FOOD_PLACEHOLDER,
     isAvailable: group.status !== 'OUT_OF_STOCK',
@@ -595,7 +677,6 @@ export async function createMenuItemGroup(payload: {
   orderLimit: number
   categoryId: string
   itemIds: string[]
-  presetId?: number
 }): Promise<void> {
   const { data, error } = await supabase
     .schema('menu')
@@ -609,7 +690,6 @@ export async function createMenuItemGroup(payload: {
       ITEM_STATUS: payload.status,
       ORDER_LIMIT: payload.orderLimit,
       CATEGORY_ID: Number(payload.categoryId),
-      PRESET_ID: payload.presetId ?? null,
     })
     .select('ITEM_ID')
     .single()
@@ -656,11 +736,11 @@ export async function deleteMenuItem(id: string): Promise<void> {
   if (error) throw error
 }
 
-export async function createCategory(name: string, icon: string, presetId?: number): Promise<Category> {
+export async function createCategory(name: string, icon: string): Promise<Category> {
   const { data, error } = await supabase
     .schema('menu')
     .from('Menu_Categories')
-    .insert({ CATEGORY_NAME: name, CATEGORY_ICON: icon, PRESET_ID: presetId ?? null })
+    .insert({ CATEGORY_NAME: name, CATEGORY_ICON: icon })
     .select()
     .single()
 

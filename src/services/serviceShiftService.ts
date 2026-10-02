@@ -117,14 +117,13 @@ export async function validateServiceStaff(staffId: number): Promise<ServiceStaf
     }
   }
 
-  // Authorized roles for Service Interface
-  const authorizedRoles = ['STAFF', 'SERVER', 'WAITER', 'CASHIER', 'ADMIN', 'MANAGER']
+  // Authorized roles for Service Interface: SERVICE only
   const normalizedRole = staff.staffRole?.toUpperCase() || ''
 
-  if (!authorizedRoles.includes(normalizedRole)) {
+  if (normalizedRole !== 'SERVICE') {
     return {
       valid: false,
-      error: 'This Staff ID is not authorized to operate the service interface.',
+      error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only SERVICE staff can operate the floor ordering terminal.`,
     }
   }
 
@@ -169,8 +168,9 @@ export async function startServiceShift(staffId: number): Promise<ServiceShift> 
   }
 
   const now = new Date().toISOString()
+  const shiftId = Date.now()
   let newShift: ServiceShift = {
-    shiftId: Date.now(),
+    shiftId,
     staffId,
     businessDayId: activeDay.businessDayId,
     startedAt: now,
@@ -182,38 +182,44 @@ export async function startServiceShift(staffId: number): Promise<ServiceShift> 
     staffRole: staff.staffRole,
   }
 
+  // 1. Update Staff_Codes table
   try {
-    const payload = {
-      STAFF_ID: staffId,
-      BUSINESS_DAY_ID: activeDay.businessDayId,
-      STARTED_AT: now,
-      STATUS: 'ACTIVE',
-      TOTAL_ORDERS_PUNCHED: 0,
-      TOTAL_TABLES_SERVED: 0,
+    const codePayload = {
+      SHIFT_STATUS: 'ONGOING',
+      SHIFT_START: now,
+      SHIFT_END: null,
     }
-
-    const { data, error } = await supabase
+    const { error: codeErr } = await supabase
       .schema('staff')
-      .from('Service_Shifts')
-      .insert([payload])
-      .select('*')
-      .single()
+      .from('Staff_Codes')
+      .update(codePayload)
+      .eq('CODE_ID', staffId)
 
-    if (!error && data) {
-      newShift = mapDbRowToServiceShift(data, staff)
-    } else {
-      const { data: pubData, error: pubError } = await supabase
-        .from('Service_Shifts')
-        .insert([payload])
-        .select('*')
-        .single()
-
-      if (!pubError && pubData) {
-        newShift = mapDbRowToServiceShift(pubData, staff)
-      }
+    if (codeErr) {
+      await supabase.from('Staff_Codes').update(codePayload).eq('CODE_ID', staffId)
     }
   } catch (err) {
-    console.warn('[serviceShiftService] Supabase Service_Shifts insert failed, using fallback:', err)
+    console.warn('[serviceShiftService] Update Staff_Codes shift error:', err)
+  }
+
+  // 2. Insert record into Service_Staff
+  try {
+    const serviceStaffPayload = {
+      SERVICE_ID: shiftId,
+      STAFF_ID: staffId,
+      TOTAL_ORDERS_PUNCHED: 0,
+    }
+
+    const { error: ssErr } = await supabase
+      .schema('staff')
+      .from('Service_Staff')
+      .insert([serviceStaffPayload])
+
+    if (ssErr) {
+      await supabase.from('Service_Staff').insert([serviceStaffPayload])
+    }
+  } catch (err) {
+    console.warn('[serviceShiftService] Insert Service_Staff error:', err)
   }
 
   localStorage.setItem(LOCAL_STORAGE_SERVICE_SHIFT_ID, String(newShift.shiftId))
@@ -365,26 +371,36 @@ export async function endServiceShift(
     staffRole: activeShift?.staffRole,
   }
 
-  // 1. Update in Supabase
+  // 1. Update in Supabase (Staff_Codes & Service_Staff)
   try {
-    const payload = {
-      STATUS: 'ENDED',
-      ENDED_AT: now,
-      TOTAL_ORDERS_PUNCHED: finalOrders,
-      TOTAL_TABLES_SERVED: finalTables,
+    const codePayload = {
+      SHIFT_STATUS: 'ENDED',
+      SHIFT_END: now,
     }
+    if (updatedShift.staffId) {
+      const { error: codeErr } = await supabase
+        .schema('staff')
+        .from('Staff_Codes')
+        .update(codePayload)
+        .eq('CODE_ID', updatedShift.staffId)
 
-    const { error } = await supabase
-      .schema('staff')
-      .from('Service_Shifts')
-      .update(payload)
-      .eq('SHIFT_ID', shiftId)
+      if (codeErr) {
+        await supabase.from('Staff_Codes').update(codePayload).eq('CODE_ID', updatedShift.staffId)
+      }
 
-    if (error) {
-      await supabase
-        .from('Service_Shifts')
-        .update(payload)
-        .eq('SHIFT_ID', shiftId)
+      // Update Service_Staff
+      const ssPayload = {
+        TOTAL_ORDERS_PUNCHED: finalOrders,
+      }
+      const { error: ssErr } = await supabase
+        .schema('staff')
+        .from('Service_Staff')
+        .update(ssPayload)
+        .eq('STAFF_ID', updatedShift.staffId)
+
+      if (ssErr) {
+        await supabase.from('Service_Staff').update(ssPayload).eq('STAFF_ID', updatedShift.staffId)
+      }
     }
   } catch (err) {
     console.warn('[serviceShiftService] Failed to update shift in Supabase:', err)
@@ -416,6 +432,60 @@ export async function endServiceShift(
   localStorage.removeItem(LOCAL_STORAGE_SERVICE_STAFF_ID)
 
   return updatedShift
+}
+
+/**
+ * Increments total orders punched in Service_Staff when a server punches an order.
+ */
+export async function recordServiceOrderPunched(amount = 1): Promise<void> {
+  const staffIdStr = localStorage.getItem(LOCAL_STORAGE_SERVICE_STAFF_ID)
+  if (!staffIdStr) return
+  const staffId = Number(staffIdStr)
+  if (!staffId) return
+
+  try {
+    let currentRecord: Record<string, unknown> | null = null
+    const { data: schemaData } = await supabase
+      .schema('staff')
+      .from('Service_Staff')
+      .select('*')
+      .eq('STAFF_ID', staffId)
+      .order('SERVICE_ID', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (schemaData) currentRecord = schemaData as Record<string, unknown>
+    else {
+      const { data: pubData } = await supabase
+        .from('Service_Staff')
+        .select('*')
+        .eq('STAFF_ID', staffId)
+        .order('SERVICE_ID', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (pubData) currentRecord = pubData as Record<string, unknown>
+    }
+
+    const currentPunched = Number(currentRecord?.TOTAL_ORDERS_PUNCHED || 0)
+    const newPunched = currentPunched + amount
+
+    if (currentRecord?.SERVICE_ID) {
+      await supabase
+        .schema('staff')
+        .from('Service_Staff')
+        .update({ TOTAL_ORDERS_PUNCHED: newPunched })
+        .eq('SERVICE_ID', currentRecord.SERVICE_ID)
+    } else {
+      const payload = {
+        SERVICE_ID: Date.now(),
+        STAFF_ID: staffId,
+        TOTAL_ORDERS_PUNCHED: newPunched,
+      }
+      await supabase.schema('staff').from('Service_Staff').insert([payload])
+    }
+  } catch (err) {
+    console.warn('[serviceShiftService] recordServiceOrderPunched error:', err)
+  }
 }
 
 // ─── Shift Summary Calculator ────────────────────────────────────────────────
