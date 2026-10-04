@@ -76,6 +76,8 @@ export async function validateServiceStaff(staffId: number): Promise<ServiceStaf
           codeId: Number(pubData.CODE_ID),
           staffName: String(pubData.STAFF_NAME || 'Staff'),
           staffRole: String(pubData.STAFF_ROLE || 'STAFF').toUpperCase() as StaffCodeItem['staffRole'],
+          shiftStatus: 'ENDED',
+          codeStatus: String(pubData.STATUS || 'ACTIVE').toUpperCase() as StaffCodeItem['codeStatus'],
           status: String(pubData.STATUS || 'ACTIVE').toUpperCase() as StaffCodeItem['status'],
         }
       }
@@ -84,6 +86,8 @@ export async function validateServiceStaff(staffId: number): Promise<ServiceStaf
         codeId: Number(data.CODE_ID),
         staffName: String(data.STAFF_NAME || 'Staff'),
         staffRole: String(data.STAFF_ROLE || 'STAFF').toUpperCase() as StaffCodeItem['staffRole'],
+        shiftStatus: 'ENDED',
+        codeStatus: String(data.STATUS || 'ACTIVE').toUpperCase() as StaffCodeItem['codeStatus'],
         status: String(data.STATUS || 'ACTIVE').toUpperCase() as StaffCodeItem['status'],
       }
     }

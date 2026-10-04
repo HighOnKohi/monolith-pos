@@ -34,11 +34,9 @@ interface NewMenuItemModalProps {
 }
 
 export const NewMenuItemModal = memo(function NewMenuItemModal({
-  isOpen, categories, defaultCategoryId, editItem, editGroup, items = [], presetId, onClose, onSubmit,
+  isOpen, categories, defaultCategoryId, editItem, editGroup, items = [], onClose, onSubmit,
 }: NewMenuItemModalProps) {
   const isEditMode = Boolean(editItem || editGroup)
-
-  const effectivePresetId = presetId ?? editItem?.presetId ?? editGroup?.presetId
 
   const selectableItems = useMemo(() => {
     return items.filter((item) => {

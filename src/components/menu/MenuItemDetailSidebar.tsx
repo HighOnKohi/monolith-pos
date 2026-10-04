@@ -7,7 +7,6 @@ import {
   UtensilsCrossed,
   Sparkles,
   Layers,
-  Tag,
   Percent,
   Grid,
   Loader2,

@@ -21,12 +21,10 @@ import { useActiveEvent } from '@/hooks/useActiveEvent'
 import { useBusinessDay } from '@/hooks/useBusinessDay'
 import {
   fetchCatalogItems,
-  fetchPresetItemIds,
   savePresetItems,
   updateMenuItem,
   updateMenuPreset,
   deleteMenuPreset,
-  deleteMenuItem,
   sortMenuPresets,
 } from '@/services/menuService'
 import type { MenuItem } from '@/types/menu'

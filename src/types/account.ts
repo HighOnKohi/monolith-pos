@@ -1,10 +1,17 @@
 // ─── Staff Account Types & Definitions ────────────────────────────────────────
 
-export type StaffRole = 'DISPATCHER' | 'SERVICE' | 'CASHIER'
+export type StaffRole =
+  | 'DISPATCHER'
+  | 'SERVICE'
+  | 'CASHIER'
+  | 'ADMIN'
+  | 'MANAGER'
+  | 'KITCHEN'
+  | 'STAFF'
 
 export type ShiftStatus = 'ONGOING' | 'ENDED'
 
-export type CodeStatus = 'ACTIVE' | 'INACTIVE'
+export type CodeStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED'
 
 export type StaffStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED'
 
@@ -25,7 +32,7 @@ export interface StaffCodeItem {
   staffName: string
   staffRole: StaffRole
   shiftStatus: ShiftStatus // 'ONGOING' | 'ENDED'
-  codeStatus: CodeStatus // 'ACTIVE' | 'INACTIVE'
+  codeStatus: CodeStatus // 'ACTIVE' | 'INACTIVE' | 'SUSPENDED'
   status: CodeStatus // alias for backward compatibility
   shiftStart?: string | null
   shiftEnd?: string | null
@@ -146,6 +153,59 @@ export const ROLE_DEFINITIONS: Record<StaffRole, RoleMeta> = {
     badgeText: 'text-emerald-700',
     badgeBorder: 'border-emerald-200/80',
     defaultPermissions: ['access_cashier', 'manage_tables', 'view_order_logs'],
+  },
+  ADMIN: {
+    role: 'ADMIN',
+    label: 'Administrator',
+    description: 'Full store system configuration, menu, accounts, analytics, and business day operations.',
+    badgeBg: 'bg-purple-50',
+    badgeText: 'text-purple-700',
+    badgeBorder: 'border-purple-200/80',
+    defaultPermissions: [
+      'manage_accounts',
+      'manage_menu',
+      'manage_tables',
+      'manage_events',
+      'access_kitchen',
+      'access_cashier',
+      'access_analytics',
+      'view_order_logs',
+    ],
+  },
+  MANAGER: {
+    role: 'MANAGER',
+    label: 'Manager',
+    description: 'Shift supervision, operations management, refunds, discounts, and overrides.',
+    badgeBg: 'bg-indigo-50',
+    badgeText: 'text-indigo-700',
+    badgeBorder: 'border-indigo-200/80',
+    defaultPermissions: [
+      'manage_menu',
+      'manage_tables',
+      'manage_events',
+      'access_kitchen',
+      'access_cashier',
+      'access_analytics',
+      'view_order_logs',
+    ],
+  },
+  KITCHEN: {
+    role: 'KITCHEN',
+    label: 'Kitchen',
+    description: 'Food preparation and order line cooking fulfillment.',
+    badgeBg: 'bg-rose-50',
+    badgeText: 'text-rose-700',
+    badgeBorder: 'border-rose-200/80',
+    defaultPermissions: ['access_kitchen', 'manage_menu'],
+  },
+  STAFF: {
+    role: 'STAFF',
+    label: 'Floor Staff',
+    description: 'General floor service and table support staff.',
+    badgeBg: 'bg-slate-50',
+    badgeText: 'text-slate-700',
+    badgeBorder: 'border-slate-200/80',
+    defaultPermissions: ['manage_tables', 'access_kitchen'],
   },
 }
 

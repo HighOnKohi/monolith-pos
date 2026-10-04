@@ -28,7 +28,7 @@ interface NewMenuGroupModalProps {
   onSubmit: (form: NewMenuGroupForm) => Promise<void> | void
 }
 
-export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items, categories, editGroup, presetId, onClose, onSubmit }: NewMenuGroupModalProps) {
+export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items, categories, editGroup, onClose, onSubmit }: NewMenuGroupModalProps) {
   const [form, setForm] = useState({ name: '', description: '', price: '', imageUrl: '', status: 'AVAILABLE', orderLimit: '0', categoryId: '', itemIds: [] as string[] })
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -38,9 +38,6 @@ export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items
 
   const selectableItems = items.filter((item) => {
     if (item.id === editGroup?.id) return false
-    if (presetId !== undefined && item.presetId !== undefined) {
-      return item.presetId === presetId
-    }
     return true
   })
 

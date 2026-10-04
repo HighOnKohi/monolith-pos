@@ -8,7 +8,6 @@ import {
   ChevronRight,
   FolderKanban,
   UtensilsCrossed,
-  Layers,
   CheckCircle2,
   XCircle,
   Pencil,
