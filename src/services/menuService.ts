@@ -8,6 +8,22 @@ export interface MenuPreset {
   ITEM_IDS: string[]
 }
 
+export function sortMenuPresets(presets: MenuPreset[]): MenuPreset[] {
+  return [...presets].sort((a, b) => {
+    const aGlobal = a.PRESET_NAME.trim().toLowerCase() === 'global'
+    const bGlobal = b.PRESET_NAME.trim().toLowerCase() === 'global'
+    if (aGlobal && !bGlobal) return -1
+    if (!aGlobal && bGlobal) return 1
+
+    const aDefault = Boolean(a.IS_DEFAULT)
+    const bDefault = Boolean(b.IS_DEFAULT)
+    if (aDefault && !bDefault) return -1
+    if (!aDefault && bDefault) return 1
+
+    return a.PRESET_ID - b.PRESET_ID
+  })
+}
+
 export async function fetchMenuPresets(): Promise<MenuPreset[]> {
   try {
     const { data, error } = await supabase
@@ -17,7 +33,7 @@ export async function fetchMenuPresets(): Promise<MenuPreset[]> {
       .order('PRESET_ID')
 
     if (!error && data) {
-      return data.map((row) => ({
+      let presets: MenuPreset[] = data.map((row) => ({
         PRESET_ID: Number(row.PRESET_ID),
         PRESET_NAME: String(row.PRESET_NAME),
         IS_DEFAULT: Boolean(row.IS_DEFAULT),
@@ -25,6 +41,20 @@ export async function fetchMenuPresets(): Promise<MenuPreset[]> {
           ? row.ITEM_IDS.map((id: unknown) => String(id))
           : [],
       }))
+
+      // Ensure Global preset exists
+      const hasGlobal = presets.some((p) => p.PRESET_NAME.trim().toLowerCase() === 'global')
+      if (!hasGlobal) {
+        try {
+          const globalPreset = await createMenuPreset('Global', [])
+          presets.push(globalPreset)
+        } catch {
+          // Non-fatal if creation fails
+        }
+      }
+
+      // Sort: 1st Global, 2nd Default, followed by other presets
+      return sortMenuPresets(presets)
     }
   } catch {
     // Fallback if ITEM_IDS column is being migrated
@@ -728,11 +758,37 @@ export async function deleteMenuItemGroup(id: string): Promise<void> {
 }
 
 export async function deleteMenuItem(id: string): Promise<void> {
+  const numId = Number(id)
+  if (isNaN(numId)) return
+
+  // 1. Clean up any item group references where this item is a combo parent or child inclusion
+  try {
+    await supabase.schema('menu').from('Item_Groups').delete().or(`MENU_GROUP_ID.eq.${numId},ITEM_ID.eq.${numId}`)
+  } catch (err) {
+    console.warn('[menuService] Non-fatal cleanup of Item_Groups failed:', err)
+  }
+
+  // 2. Remove this item ID from any presets that currently include it
+  try {
+    const { data: presets } = await supabase.schema('menu').from('Menu_Presets').select('PRESET_ID, ITEM_IDS')
+    if (presets && presets.length > 0) {
+      for (const p of presets) {
+        if (Array.isArray(p.ITEM_IDS) && p.ITEM_IDS.includes(numId)) {
+          const updatedIds = p.ITEM_IDS.filter((itemId: number) => itemId !== numId)
+          await supabase.schema('menu').from('Menu_Presets').update({ ITEM_IDS: updatedIds }).eq('PRESET_ID', p.PRESET_ID)
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[menuService] Non-fatal cleanup of Menu_Presets failed:', err)
+  }
+
+  // 3. Delete the master item
   const { error } = await supabase
     .schema('menu')
     .from('Menu_Items')
     .delete()
-    .eq('ITEM_ID', Number(id))
+    .eq('ITEM_ID', numId)
   if (error) throw error
 }
 

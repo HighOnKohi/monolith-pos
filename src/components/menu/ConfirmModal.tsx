@@ -2,7 +2,7 @@ import { memo } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
 
 interface ConfirmModalProps {
-  isOpen: boolean
+  isOpen?: boolean
   title: string
   message: string
   warning?: string        // optional extra warning line in red
@@ -14,7 +14,7 @@ interface ConfirmModalProps {
 }
 
 export const ConfirmModal = memo(function ConfirmModal({
-  isOpen, title, message, warning, confirmLabel = 'Confirm', cancelLabel = 'Cancel',
+  isOpen = true, title, message, warning, confirmLabel = 'Confirm', cancelLabel = 'Cancel',
   isDanger = true, onConfirm, onCancel,
 }: ConfirmModalProps) {
   if (!isOpen) return null

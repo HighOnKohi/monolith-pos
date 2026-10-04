@@ -56,15 +56,15 @@ function useMenuState(enabled: boolean): UseMenuResult {
 
       // Determine target preset:
       // 1. Explicit targetId passed to load()
-      // 2. Default preset in database (IS_DEFAULT = true)
-      // 3. Current active preset if exists in fetched presets
+      // 2. Current active preset if exists in fetched presets
+      // 3. Default preset in database (IS_DEFAULT = true)
       // 4. First preset or 1
       let targetPresetId = targetId
       if (!targetPresetId) {
-        if (defaultPreset) {
-          targetPresetId = defaultPreset.PRESET_ID
-        } else if (fetchedPresets.some((p) => p.PRESET_ID === activePresetIdRef.current)) {
+        if (fetchedPresets.some((p) => p.PRESET_ID === activePresetIdRef.current)) {
           targetPresetId = activePresetIdRef.current
+        } else if (defaultPreset) {
+          targetPresetId = defaultPreset.PRESET_ID
         } else {
           targetPresetId = fetchedPresets[0]?.PRESET_ID ?? 1
         }
@@ -74,10 +74,17 @@ function useMenuState(enabled: boolean): UseMenuResult {
       localStorage.setItem(ACTIVE_PRESET_KEY, String(targetPresetId))
 
       const targetPreset = fetchedPresets.find((p) => p.PRESET_ID === targetPresetId)
-      const targetItemIds = new Set((targetPreset?.ITEM_IDS ?? []).map(String))
-      const activeItems = targetItemIds.size > 0
-        ? fetchedItems.filter((item) => targetItemIds.has(item.id))
-        : fetchedItems
+      const globalPreset = fetchedPresets.find((p) => p.PRESET_NAME.trim().toLowerCase() === 'global')
+      const globalItemIds = (globalPreset?.ITEM_IDS ?? []).map(String)
+
+      let activeItems = fetchedItems
+      if (targetPreset && Array.isArray(targetPreset.ITEM_IDS)) {
+        const isGlobal = targetPreset.PRESET_NAME.trim().toLowerCase() === 'global'
+        const targetItemIds = isGlobal
+          ? new Set(targetPreset.ITEM_IDS.map(String))
+          : new Set([...targetPreset.ITEM_IDS.map(String), ...globalItemIds])
+        activeItems = fetchedItems.filter((item) => targetItemIds.has(item.id))
+      }
       const fetchedCategories = await fetchCategories(activeItems)
       setPresets(fetchedPresets)
       setItems((current) => {

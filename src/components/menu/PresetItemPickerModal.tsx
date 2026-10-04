@@ -1,7 +1,18 @@
-import { useState, useMemo, useEffect } from 'react'
-import { Search, X, Check, CheckSquare, Square, Layers, Loader2, UtensilsCrossed } from 'lucide-react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import {
+  Search,
+  X,
+  Check,
+  Minus,
+  Grid,
+  Loader2,
+  UtensilsCrossed,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react'
 import type { MenuItem, Category } from '@/types/menu'
 import { DEFAULT_FOOD_PLACEHOLDER } from '@/types/menu'
+import { categoryIconMap, categoryIcons } from '@/components/menu/NewMenuCategoryModal'
 
 interface PresetItemPickerModalProps {
   isOpen: boolean
@@ -35,6 +46,52 @@ export function PresetItemPickerModal({
   const [nameError, setNameError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
+  // Category scroll row refs & state
+  const catScrollRef = useRef<HTMLDivElement>(null)
+  const [canScrollLeft, setCanScrollLeft] = useState(false)
+  const [canScrollRight, setCanScrollRight] = useState(false)
+
+  const checkScroll = useCallback(() => {
+    const el = catScrollRef.current
+    if (!el) return
+    setCanScrollLeft(el.scrollLeft > 2)
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 2)
+  }, [])
+
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(checkScroll, 100)
+      setTimeout(checkScroll, 300)
+    }
+  }, [isOpen, checkScroll])
+
+  useEffect(() => {
+    const el = catScrollRef.current
+    if (!el) return
+    el.addEventListener('scroll', checkScroll, { passive: true })
+    window.addEventListener('resize', checkScroll)
+    return () => {
+      el.removeEventListener('scroll', checkScroll)
+      window.removeEventListener('resize', checkScroll)
+    }
+  }, [checkScroll])
+
+  const handleCatWheel = (e: React.WheelEvent) => {
+    const el = catScrollRef.current
+    if (!el) return
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+      el.scrollLeft += e.deltaY
+      checkScroll()
+    }
+  }
+
+  const scrollCategories = (offset: number) => {
+    catScrollRef.current?.scrollBy({ left: offset, behavior: 'smooth' })
+    setTimeout(checkScroll, 100)
+    setTimeout(checkScroll, 250)
+    setTimeout(checkScroll, 400)
+  }
+
   // Sync initial selection when modal opens
   useEffect(() => {
     if (isOpen) {
@@ -46,10 +103,14 @@ export function PresetItemPickerModal({
     }
   }, [isOpen, initialSelectedItemIds, initialPresetName])
 
+  // Non-combo catalog items
+  const nonGroupItems = useMemo(() => {
+    return catalogItems.filter((item) => !item.isItemGroup)
+  }, [catalogItems])
+
   // Filtered catalog items
   const filteredItems = useMemo(() => {
-    return catalogItems.filter((item) => {
-      if (item.isItemGroup) return false
+    return nonGroupItems.filter((item) => {
       const matchesSearch =
         search.trim() === '' ||
         item.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -57,21 +118,27 @@ export function PresetItemPickerModal({
       const matchesCat = activeCategory === 'all' || item.categoryId === activeCategory
       return matchesSearch && matchesCat
     })
-  }, [catalogItems, search, activeCategory])
+  }, [nonGroupItems, search, activeCategory])
 
-  // Category counts based on catalog
-  const selectableCategories = useMemo(() => {
-    const counts: Record<string, number> = {}
-    catalogItems.forEach((it) => {
-      counts[it.categoryId] = (counts[it.categoryId] ?? 0) + 1
+  // Category counts and selection state
+  const categoryStats = useMemo(() => {
+    const stats: Record<string, { total: number; selected: number }> = {}
+
+    nonGroupItems.forEach((it) => {
+      if (!stats[it.categoryId]) {
+        stats[it.categoryId] = { total: 0, selected: 0 }
+      }
+      stats[it.categoryId].total += 1
+      if (selectedIds.has(it.id)) {
+        stats[it.categoryId].selected += 1
+      }
     })
-    return categories
-      .filter((c) => c.id !== 'all')
-      .map((c) => ({
-        ...c,
-        count: counts[c.id] ?? 0,
-      }))
-  }, [categories, catalogItems])
+
+    return stats
+  }, [nonGroupItems, selectedIds])
+
+  const allItemsCount = nonGroupItems.length
+  const allSelectedCount = nonGroupItems.filter((i) => selectedIds.has(i.id)).length
 
   if (!isOpen) return null
 
@@ -87,28 +154,27 @@ export function PresetItemPickerModal({
     })
   }
 
-  const handleSelectAllFiltered = () => {
+  const toggleCategorySelection = (categoryId: string) => {
+    const categoryItems =
+      categoryId === 'all'
+        ? nonGroupItems
+        : nonGroupItems.filter((it) => it.categoryId === categoryId)
+
+    const allCatSelected =
+      categoryItems.length > 0 &&
+      categoryItems.every((it) => selectedIds.has(it.id))
+
     setSelectedIds((prev) => {
       const next = new Set(prev)
-      filteredItems.forEach((item) => next.add(item.id))
+      if (allCatSelected) {
+        // Deselect all in category
+        categoryItems.forEach((it) => next.delete(it.id))
+      } else {
+        // Select all in category
+        categoryItems.forEach((it) => next.add(it.id))
+      }
       return next
     })
-  }
-
-  const handleDeselectAllFiltered = () => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      filteredItems.forEach((item) => next.delete(item.id))
-      return next
-    })
-  }
-
-  const handleSelectAllGlobal = () => {
-    setSelectedIds(new Set(catalogItems.map((item) => item.id)))
-  }
-
-  const handleDeselectAllGlobal = () => {
-    setSelectedIds(new Set())
   }
 
   const handleSave = async () => {
@@ -131,24 +197,16 @@ export function PresetItemPickerModal({
     }
   }
 
-  const totalCatalogCount = catalogItems.filter((i) => !i.isItemGroup).length
-  const selectedCount = selectedIds.size
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 sm:p-5 overflow-y-auto">
-      <div className="w-full max-w-5xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-auto flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 sm:p-5 select-none">
+      <div className="w-full max-w-5xl h-[85vh] max-h-[850px] min-h-[600px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 bg-[#14274E] text-white flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-[#E9C46A]">
-              <Layers className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-black tracking-tight">{title}</h2>
-              <p className="text-xs text-slate-300 font-medium">
-                {subtitle || 'Select catalog dishes to include in this menu preset.'}
-              </p>
-            </div>
+          <div>
+            <h2 className="text-base font-black tracking-tight">{title}</h2>
+            <p className="text-xs text-slate-300 font-medium mt-0.5">
+              {subtitle || 'Select catalog dishes to include in this menu preset.'}
+            </p>
           </div>
           <button
             type="button"
@@ -186,91 +244,166 @@ export function PresetItemPickerModal({
           </div>
         )}
 
-        {/* Filters & Actions Bar */}
-        <div className="px-6 py-3 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          {/* Search bar */}
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        {/* Search Bar Row */}
+        <div className="px-6 py-3 bg-white border-b border-slate-200 shrink-0">
+          <div className="relative w-full max-w-md">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search catalog items..."
-              className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-[#14274E] focus:bg-white rounded-xl text-xs font-semibold outline-none"
+              className="w-full pl-10 pr-3.5 py-2 bg-slate-50 border border-slate-200 focus:border-[#14274E] focus:bg-white rounded-xl text-xs font-semibold text-[#14274E] outline-none transition-colors"
             />
-          </div>
-
-          {/* Quick selection stats & actions */}
-          <div className="flex items-center gap-2 flex-wrap text-xs">
-            <span className="font-extrabold text-[#14274E] bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200/80">
-              <span className="text-[#E9C46A] bg-[#14274E] px-1.5 py-0.5 rounded-md text-[11px] font-black mr-1.5">
-                {selectedCount} / {totalCatalogCount}
-              </span>
-              Items Selected
-            </span>
-
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={handleSelectAllFiltered}
-                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-[11px] transition-colors cursor-pointer"
-                title="Select all currently visible items"
-              >
-                Select Page ({filteredItems.length})
-              </button>
-              <button
-                type="button"
-                onClick={handleDeselectAllFiltered}
-                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-[11px] transition-colors cursor-pointer"
-                title="Deselect visible items"
-              >
-                Clear Page
-              </button>
-              <button
-                type="button"
-                onClick={selectedCount === totalCatalogCount ? handleDeselectAllGlobal : handleSelectAllGlobal}
-                className="px-2.5 py-1.5 bg-[#14274E]/10 hover:bg-[#14274E]/15 text-[#14274E] font-black rounded-lg text-[11px] transition-colors cursor-pointer"
-              >
-                {selectedCount === totalCatalogCount ? 'Deselect All' : 'Select All Catalog'}
-              </button>
-            </div>
           </div>
         </div>
 
-        {/* Category Pills */}
-        <div className="px-6 py-2 bg-slate-50 border-b border-slate-200/70 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0">
-          <button
-            type="button"
-            onClick={() => setActiveCategory('all')}
-            className={`px-3 py-1 rounded-full text-xs font-black transition-all cursor-pointer shrink-0 ${
-              activeCategory === 'all'
-                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
-                : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            All Categories ({catalogItems.filter((i) => !i.isItemGroup).length})
-          </button>
-          {selectableCategories.map((cat) => (
+        {/* Category Pills with Scroll Arrows */}
+        <div className="relative bg-slate-50 border-b border-slate-200/70 px-4 sm:px-6 py-2.5 shrink-0 group/row">
+          {/* Scroll Left (Back) Button */}
+          {canScrollLeft && (
             <button
-              key={cat.id}
               type="button"
-              onClick={() => setActiveCategory(cat.id)}
-              className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
-                activeCategory === cat.id
-                  ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
-              }`}
+              onClick={() => scrollCategories(-240)}
+              className="absolute left-1.5 top-1/2 -translate-y-1/2 z-10 w-7 h-7 rounded-full bg-white/95 border border-slate-200 shadow-md flex items-center justify-center text-slate-700 hover:bg-[#14274E] hover:text-white transition-all cursor-pointer"
+              title="Scroll Left"
             >
-              <span>{cat.name}</span>
-              <span className="text-[10px] opacity-70">({cat.count})</span>
+              <ChevronLeft className="w-4 h-4" />
             </button>
-          ))}
+          )}
+
+          {/* Scroll Right (Forward) Button */}
+          {canScrollRight && (
+            <button
+              type="button"
+              onClick={() => scrollCategories(240)}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 w-7 h-7 rounded-full bg-white/95 border border-slate-200 shadow-md flex items-center justify-center text-slate-700 hover:bg-[#14274E] hover:text-white transition-all cursor-pointer"
+              title="Scroll Right"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
+
+          <div
+            ref={catScrollRef}
+            onWheel={handleCatWheel}
+            className="flex items-center gap-2 overflow-x-auto scrollbar-none scroll-smooth w-full py-0.5"
+          >
+            {/* All Categories Pill */}
+            {(() => {
+              const isAllActive = activeCategory === 'all'
+              const isAllSelected = allItemsCount > 0 && allSelectedCount === allItemsCount
+              const isPartiallySelected = allSelectedCount > 0 && allSelectedCount < allItemsCount
+
+              return (
+                <div
+                  onClick={() => setActiveCategory('all')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-2 border ${
+                    isAllActive
+                      ? 'bg-[#14274E] text-white border-[#14274E] shadow-2xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  {/* Category Checkbox */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleCategorySelection('all')
+                    }}
+                    className={`w-4 h-4 rounded flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
+                      isAllSelected
+                        ? isAllActive
+                          ? 'bg-[#E9C46A] text-[#14274E]'
+                          : 'bg-[#14274E] text-[#E9C46A]'
+                        : isPartiallySelected
+                          ? isAllActive
+                            ? 'bg-[#E9C46A] text-[#14274E]'
+                            : 'bg-[#14274E] text-white'
+                          : isAllActive
+                            ? 'border border-white/60 bg-white/20'
+                            : 'border border-slate-300 bg-slate-50'
+                    }`}
+                    title="Select / Deselect all dishes"
+                  >
+                    {isAllSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                    {isPartiallySelected && <Minus className="w-3 h-3 stroke-[3]" />}
+                  </button>
+
+                  <Grid className="w-3.5 h-3.5 shrink-0 opacity-80" />
+                  <span>All Categories</span>
+                  <span className={`text-[10px] ${isAllActive ? 'text-[#E9C46A]' : 'text-slate-400'}`}>
+                    ({allItemsCount})
+                  </span>
+                </div>
+              )
+            })()}
+
+            {/* Individual Category Pills */}
+            {categories
+              .filter((c) => c.id !== 'all')
+              .map((cat, idx) => {
+                const isActive = activeCategory === cat.id
+                const stats = categoryStats[cat.id] ?? { total: 0, selected: 0 }
+                const isAllCatSelected = stats.total > 0 && stats.selected === stats.total
+                const isPartiallyCatSelected = stats.selected > 0 && stats.selected < stats.total
+
+                const CategoryIcon =
+                  (cat.icon ? categoryIconMap[cat.icon as keyof typeof categoryIconMap] : undefined) ??
+                  categoryIcons[idx % categoryIcons.length]?.component ??
+                  UtensilsCrossed
+
+                return (
+                  <div
+                    key={cat.id}
+                    onClick={() => setActiveCategory(cat.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-2 border ${
+                      isActive
+                        ? 'bg-[#14274E] text-white border-[#14274E] shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {/* Checkbox for Category */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleCategorySelection(cat.id)
+                      }}
+                      className={`w-4 h-4 rounded flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
+                        isAllCatSelected
+                          ? isActive
+                            ? 'bg-[#E9C46A] text-[#14274E]'
+                            : 'bg-[#14274E] text-[#E9C46A]'
+                          : isPartiallyCatSelected
+                            ? isActive
+                              ? 'bg-[#E9C46A] text-[#14274E]'
+                              : 'bg-[#14274E] text-white'
+                            : isActive
+                              ? 'border border-white/60 bg-white/20'
+                              : 'border border-slate-300 bg-slate-50'
+                      }`}
+                      title={`Select / Deselect all in ${cat.name}`}
+                    >
+                      {isAllCatSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                      {isPartiallyCatSelected && <Minus className="w-3 h-3 stroke-[3]" />}
+                    </button>
+
+                    <CategoryIcon className="w-3.5 h-3.5 shrink-0 opacity-80" />
+                    <span>{cat.name}</span>
+                    <span className={`text-[10px] ${isActive ? 'text-[#E9C46A]' : 'text-slate-400'}`}>
+                      ({stats.total})
+                    </span>
+                  </div>
+                )
+              })}
+          </div>
         </div>
 
         {/* Item Grid Body */}
         <div className="p-6 overflow-y-auto flex-1 bg-slate-50/50">
           {filteredItems.length === 0 ? (
-            <div className="py-16 text-center">
+            <div className="h-full flex flex-col items-center justify-center py-16 text-center">
               <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center mx-auto mb-3 text-slate-400">
                 <UtensilsCrossed className="w-6 h-6" />
               </div>
@@ -278,34 +411,35 @@ export function PresetItemPickerModal({
               <p className="text-xs text-slate-400 mt-1">Try changing your search term or category filter.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
               {filteredItems.map((item) => {
                 const isSelected = selectedIds.has(item.id)
-                const category = categories.find((c) => c.id === item.categoryId)
 
                 return (
                   <div
                     key={item.id}
                     onClick={() => toggleItem(item.id)}
-                    className={`relative rounded-2xl border-2 transition-all p-3 bg-white flex flex-col justify-between cursor-pointer select-none group hover:shadow-md ${
+                    className={`relative rounded-2xl border-2 transition-colors p-2.5 bg-white flex flex-col justify-between cursor-pointer select-none ${
                       isSelected
-                        ? 'border-[#14274E] ring-2 ring-[#14274E]/15 bg-blue-50/30 shadow-xs'
-                        : 'border-slate-200 hover:border-slate-300 opacity-80 hover:opacity-100'
+                        ? 'border-[#14274E] shadow-sm shadow-[#14274E]/10 ring-1 ring-[#14274E]/20'
+                        : 'border-slate-200 hover:border-slate-300 shadow-2xs'
                     }`}
                   >
-                    {/* Checkbox indicator badge */}
-                    <div className="flex items-start gap-3">
-                      <div className="relative w-16 h-16 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0">
+                    {/* Picture & Badges */}
+                    <div>
+                      <div className="relative w-full aspect-4/3 rounded-xl overflow-hidden bg-slate-100 mb-2 shrink-0">
                         <img
                           src={item.imageUrl || DEFAULT_FOOD_PLACEHOLDER}
                           alt={item.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          className="w-full h-full object-cover"
                           onError={(e) => {
                             ;(e.currentTarget as HTMLImageElement).src = DEFAULT_FOOD_PLACEHOLDER
                           }}
                         />
+
+                        {/* Top-Right Selection Indicator */}
                         <div
-                          className={`absolute top-1 left-1 w-5 h-5 rounded-md flex items-center justify-center transition-all ${
+                          className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-md flex items-center justify-center transition-colors ${
                             isSelected
                               ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
                               : 'bg-white/90 border border-slate-300 text-transparent'
@@ -315,45 +449,31 @@ export function PresetItemPickerModal({
                         </div>
                       </div>
 
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
-                            {category?.name || 'Dish'}
-                          </span>
-                          {item.dietaryType === 'veg' ? (
-                            <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 rounded">
-                              VEG
-                            </span>
-                          ) : (
-                            <span className="text-[9px] font-black text-rose-700 bg-rose-50 border border-rose-200 px-1 rounded">
-                              NON-VEG
-                            </span>
-                          )}
-                        </div>
-
-                        <h3 className="font-extrabold text-xs text-[#14274E] leading-snug line-clamp-2 mt-0.5">
-                          {item.name}
-                        </h3>
-
-                        <div className="flex items-center justify-between mt-1.5">
-                          <span className="font-black text-xs text-[#14274E]">
-                            ₱{item.price.toFixed(2)}
-                          </span>
-                          {!item.isAvailable && (
-                            <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded">
-                              Out of Stock
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      {/* Full Name Display */}
+                      <h3
+                        className="font-black text-xs text-[#14274E] leading-snug break-words"
+                        title={item.name}
+                      >
+                        {item.name}
+                      </h3>
                     </div>
 
-                    {/* Bottom active pill */}
-                    <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-extrabold">
-                      <span className={isSelected ? 'text-[#14274E]' : 'text-slate-400'}>
-                        {isSelected ? '✓ In this preset' : 'Click to add'}
+                    {/* Price & Vegan / Dietary Badge */}
+                    <div className="mt-2.5 pt-1.5 border-t border-slate-100 flex items-center justify-between gap-1">
+                      <span className="font-black text-xs text-[#14274E]">
+                        ₱{item.price.toFixed(2)}
                       </span>
-                      <span className="text-slate-400 font-mono">#{item.code}</span>
+
+                      {/* Vegan / Dietary Badge */}
+                      {item.dietaryType === 'veg' ? (
+                        <span className="text-[8.5px] font-black tracking-wide text-emerald-800 bg-emerald-100/95 border border-emerald-300 px-1.5 py-0.5 rounded-md shadow-2xs">
+                          VEG
+                        </span>
+                      ) : (
+                        <span className="text-[8.5px] font-black tracking-wide text-rose-800 bg-rose-100/95 border border-rose-300 px-1.5 py-0.5 rounded-md shadow-2xs">
+                          NON-VEG
+                        </span>
+                      )}
                     </div>
                   </div>
                 )
@@ -364,8 +484,8 @@ export function PresetItemPickerModal({
 
         {/* Modal Footer */}
         <div className="px-6 py-4 bg-white border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
-          <div className="text-xs text-slate-500 font-semibold">
-            <strong className="text-[#14274E] font-black">{selectedCount}</strong> dishes selected for this preset
+          <div className="text-xs text-slate-500 font-medium">
+            Toggle dishes or entire categories to update the active menu preset.
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -391,7 +511,7 @@ export function PresetItemPickerModal({
               ) : (
                 <>
                   <Check className="w-4 h-4" />
-                  <span>{isCreatingNewPreset ? 'Create Preset with Selected' : 'Save Preset Items'}</span>
+                  <span>{isCreatingNewPreset ? 'Create Preset with Selected' : 'Save Menu Preset'}</span>
                 </>
               )}
             </button>
