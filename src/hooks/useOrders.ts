@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { CartItem, DiningType } from '@/types/cart'
 import type { Order, OrderStatus } from '@/types/order'
-import { createOrder, fetchOrdersByTable, fetchRecentCompletedOrders } from '@/services/orderService'
+import { createOrder, fetchOrdersByTable, fetchRecentCompletedOrders, cancelOrder as cancelOrderService } from '@/services/orderService'
 import { subscribeToOrderUpdates } from '@/services/dispatcherService'
 
 export type NotificationStatus = OrderStatus | 'FLAGGED'
@@ -58,6 +58,7 @@ interface UseOrdersResult {
   isSubmitting: boolean
   submitError: string | null
   placeOrder: (items: CartItem[], diningType: DiningType, total: number, serverNote?: string) => Promise<boolean>
+  cancelOrder: (orderId: number) => Promise<boolean>
   clearError: () => void
   latestStatusUpdate: OrderStatusNotification | null
   hasUnreadStatusChange: boolean
@@ -80,6 +81,7 @@ export function useOrders(
   const targetTableIds = useMemo(() => {
     if (memberTableIds && memberTableIds.length > 0) return memberTableIds
     return tableId ? [tableId] : []
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tableId, memberIdsKey])
 
   // Shared function to update orders and detect status changes
@@ -292,8 +294,8 @@ export function useOrders(
           table: 'Restaurant_Orders',
         },
         (payload) => {
-          const newRow = payload.new as Record<string, any> | null
-          const oldRow = payload.old as Record<string, any> | null
+          const newRow = payload.new as Record<string, unknown> | null
+          const oldRow = payload.old as Record<string, unknown> | null
           const rowTableId = Number(newRow?.TABLE_ID || oldRow?.TABLE_ID)
           if (targetTableIds.includes(rowTableId)) {
             refreshOrders()
@@ -344,6 +346,27 @@ export function useOrders(
     [tableId],
   )
 
+  const cancelOrder = useCallback(
+    async (orderId: number): Promise<boolean> => {
+      // Only allow cancelling REQUESTED orders from the customer side
+      const target = orders.find((o) => o.orderId === orderId)
+      if (!target || target.orderStatus !== 'REQUESTED') return false
+
+      try {
+        await cancelOrderService(orderId, 'Cancelled by customer')
+        // Optimistic update: remove or mark as cancelled locally
+        setOrders((prev) => prev.filter((o) => o.orderId !== orderId))
+        // Refresh to get consistent state from DB
+        refreshOrders()
+        return true
+      } catch (err) {
+        console.error('[useOrders] cancelOrder error', err)
+        return false
+      }
+    },
+    [orders, refreshOrders],
+  )
+
   const markStatusUpdateAsRead = useCallback(() => {
     setHasUnreadStatusChange(false)
   }, [])
@@ -358,6 +381,7 @@ export function useOrders(
     isSubmitting,
     submitError,
     placeOrder,
+    cancelOrder,
     clearError: () => setSubmitError(null),
     latestStatusUpdate,
     hasUnreadStatusChange,

@@ -145,6 +145,7 @@ export default function CustomerPage() {
     pastOrders,
     isSubmitting: isSubmittingOrder,
     placeOrder,
+    cancelOrder,
     latestStatusUpdate,
     hasUnreadStatusChange,
     markStatusUpdateAsRead,
@@ -342,6 +343,7 @@ export default function CustomerPage() {
             pastOrders={pastOrders}
             onRequestBill={() => setIsBillOutOpen(true)}
             onBrowseMenu={() => handleTabChange('menu')}
+            onCancelOrder={cancelOrder}
           />
         </div>
       )}

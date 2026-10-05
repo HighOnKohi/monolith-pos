@@ -25,6 +25,7 @@ const AnalyticsPage = lazy(() => import('@/pages/Analytics'))
 const AccountManagerPage = lazy(() => import('@/pages/AccountManager'))
 const OrderLogsPage = lazy(() => import('@/pages/OrderLogs'))
 const EventsPage = lazy(() => import('@/pages/Events'))
+const AdminPanelPage = lazy(() => import('@/pages/AdminPanel'))
 
 import { LocationVerificationProvider } from '@/contexts/LocationVerificationContext'
 import { CustomerLocationGuard } from '@/components/customer/CustomerLocationGuard'
@@ -53,12 +54,35 @@ function wrapKitchen(Component: React.ComponentType) {
   )
 }
 
-function wrapAdvanceOrder(Component: React.ComponentType) {
+function AdvanceOrderRouteWrapper() {
+  const location = useLocation()
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const hostname = window.location.hostname
+      const isLocalhost =
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '0.0.0.0' ||
+        hostname.endsWith('.local')
+
+      const searchParams = new URLSearchParams(location.search)
+      if (isLocalhost && !searchParams.has('local')) {
+        const dest = `${VERCEL_APP_URL}${location.pathname}${location.search}`
+        window.location.replace(dest)
+      }
+    }
+  }, [location])
+
   return (
     <CustomerDayGuard>
-      <Suspense fallback={<PageLoader />}>
-        <Component />
-      </Suspense>
+      <LocationVerificationProvider>
+        <CustomerLocationGuard>
+          <Suspense fallback={<PageLoader />}>
+            <AdvanceOrderPage />
+          </Suspense>
+        </CustomerLocationGuard>
+      </LocationVerificationProvider>
     </CustomerDayGuard>
   )
 }
@@ -164,11 +188,11 @@ export const router = createBrowserRouter([
       },
       {
         path: 'advance-order',
-        element: wrapAdvanceOrder(AdvanceOrderPage),
+        element: <AdvanceOrderRouteWrapper />,
       },
       {
         path: 'advance-order/:token',
-        element: wrapAdvanceOrder(AdvanceOrderPage),
+        element: <AdvanceOrderRouteWrapper />,
       },
     ],
   },
@@ -194,6 +218,7 @@ export const router = createBrowserRouter([
           { path: 'events', element: wrap(EventsPage) },
           { path: 'accounts', element: wrap(AccountManagerPage) },
           { path: 'order-logs', element: wrap(OrderLogsPage) },
+          { path: 'admin', element: wrap(AdminPanelPage) },
         ],
       },
     ],

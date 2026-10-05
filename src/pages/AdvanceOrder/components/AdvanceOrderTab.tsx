@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Clock,
   Check,
+  CheckCircle2,
   Copy,
   RotateCcw,
   Receipt,
@@ -14,7 +15,9 @@ import {
   MapPin,
 } from 'lucide-react'
 import type { AdvanceOrder } from '@/types/advanceOrder'
+import type { Order, OrderStatus } from '@/types/order'
 import { getRemainingSeconds, formatCountdown } from '@/services/advanceOrderService'
+import { OrderStatusTracker } from '@/components/customer/OrderStatusTracker'
 import { CancelAdvanceOrderModal } from './CancelAdvanceOrderModal'
 
 interface AdvanceOrderTabProps {
@@ -36,10 +39,15 @@ export function AdvanceOrderTab({
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
 
   const isCancelled = order.status === 'CANCELLED'
+  const isConfirmed =
+    order.status === 'CONFIRMED' ||
+    order.status === 'PREPARING' ||
+    order.status === 'READY' ||
+    order.status === 'COMPLETED'
 
-  // Live 1-second countdown interval
+  // Live 1-second countdown interval (only ticks down while PENDING and not confirmed/cancelled)
   useEffect(() => {
-    if (isCancelled) return
+    if (isCancelled || isConfirmed) return
 
     // Initial sync
     setRemainingSeconds(getRemainingSeconds(order.expiresAt))
@@ -53,9 +61,9 @@ export function AdvanceOrderTab({
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [order.expiresAt, isCancelled])
+  }, [order.expiresAt, isCancelled, isConfirmed])
 
-  const isExpired = remainingSeconds <= 0 && !isCancelled
+  const isExpired = !isConfirmed && !isCancelled && remainingSeconds <= 0
   const countdownFormatted = formatCountdown(remainingSeconds)
 
   // Calculate percentage remaining of 30 minutes (1800 seconds)
@@ -72,6 +80,45 @@ export function AdvanceOrderTab({
     if (onCancelOrder) {
       await onCancelOrder(reason)
     }
+  }
+
+  // ─── Map AdvanceOrder to Order for OrderStatusTracker ───────────────────────
+  const mappedOrder: Order = useMemo(() => {
+    let orderStatus: OrderStatus = 'REQUESTED'
+    if (order.status === 'CONFIRMED') orderStatus = 'VERIFIED'
+    else if (order.status === 'PREPARING') orderStatus = 'PREPARING'
+    else if (order.status === 'READY') orderStatus = 'READY'
+    else if (order.status === 'COMPLETED') orderStatus = 'SERVED'
+    else if (order.status === 'CANCELLED' || order.status === 'EXPIRED') orderStatus = 'CANCELLED'
+    else orderStatus = 'REQUESTED'
+
+    return {
+      orderId: order.advanceOrderId,
+      tableId: order.tableId || 0,
+      orderStatus,
+      orderType: order.diningType === 'take-away' ? 'TAKEOUT' : 'DINE-IN',
+      totalBill: order.totalAmount,
+      guestCount: order.guestCount,
+      createdAt: order.createdAt,
+      items: order.items.map((it) => ({
+        orderItemId: it.advanceItemId,
+        orderId: order.advanceOrderId,
+        itemId: String(it.itemId),
+        name: it.itemName,
+        price: it.unitPrice,
+        quantity: it.quantity,
+        status: orderStatus === 'CANCELLED' ? 'CANCELLED' : 'PENDING',
+        notes: it.notes,
+      })),
+    }
+  }, [order])
+
+  const handleTrackerCancel = async (): Promise<boolean> => {
+    if (onCancelOrder) {
+      await onCancelOrder('Cancelled by customer via order tracker')
+      return true
+    }
+    return false
   }
 
   return (
@@ -109,6 +156,24 @@ export function AdvanceOrderTab({
             </button>
           </div>
         </div>
+      ) : isConfirmed ? (
+        /* ── 2. CONFIRMED REGULAR ORDER STATE ── */
+        <div className="bg-emerald-50/90 border-2 border-emerald-200 rounded-3xl p-5 sm:p-6 text-center shadow-xs space-y-3 animate-in zoom-in-95 duration-150">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-2xs">
+            <CheckCircle2 className="w-6 h-6" />
+          </div>
+          <div>
+            <span className="px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-800 text-[10px] font-black uppercase tracking-wider">
+              Seated & Confirmed Regular Order
+            </span>
+            <h2 className="text-xl font-black text-emerald-950 mt-1.5 tracking-tight">
+              Table Seated & Order Kept
+            </h2>
+            <p className="text-xs text-emerald-800/90 mt-1 max-w-sm mx-auto leading-relaxed">
+              Your table is occupied and your advance order has been kept as a regular dining order. It will not expire and is being prepared by our kitchen.
+            </p>
+          </div>
+        </div>
       ) : isExpired ? (
         /* ── 2. EXPIRED STATE ── */
         <div className="bg-rose-50 border-2 border-rose-200 rounded-3xl p-6 text-center shadow-xs space-y-3 animate-in zoom-in-95 duration-150">
@@ -138,7 +203,7 @@ export function AdvanceOrderTab({
           </div>
         </div>
       ) : (
-        /* ── 3. ACTIVE TICKING STATE ── */
+        /* ── 3. ACTIVE TICKING CONFIRMATION WINDOW ── */
         <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-xs space-y-4">
           {/* Header row */}
           <div className="flex items-center justify-between">
@@ -172,7 +237,7 @@ export function AdvanceOrderTab({
               />
             </div>
             <p className="text-[10px] text-slate-400 mt-1.5 font-medium">
-              Timer is locked to server timestamp and persists through page reloads.
+              Present your order reference at the cashier counter to confirm preparation and payment.
             </p>
           </div>
 
@@ -192,7 +257,27 @@ export function AdvanceOrderTab({
         </div>
       )}
 
-      {/* Order Reference Card */}
+      {/* ── 4. NEW ORDER VIEWER: PER-STATUS PROCESS CARDS ── */}
+      {!isExpired && !isCancelled && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-xs font-black uppercase tracking-wider text-[#14274E]">
+              Order Progress
+            </h3>
+            <span className="text-[11px] font-bold text-slate-400">
+              Live status tracking
+            </span>
+          </div>
+
+          {/* The 4-card status tracker with Requested, Cooking, Ready, and Served */}
+          <OrderStatusTracker
+            orders={[mappedOrder]}
+            onCancelOrder={onCancelOrder ? handleTrackerCancel : undefined}
+          />
+        </div>
+      )}
+
+      {/* ── 5. ORDER IDENTIFICATION & DETAILS ── */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3">
         <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
           Order Identification
@@ -249,24 +334,31 @@ export function AdvanceOrderTab({
               <MapPin className="w-3 h-3 text-slate-400" />
               Seating Table
             </span>
-            <p className="text-xs font-black text-slate-800 mt-0.5">
-              {order.diningType === 'take-away'
-                ? 'N/A (Takeout)'
-                : order.tableNum
-                  ? `Table ${order.tableNum}`
-                  : 'Counter / Open'}
-            </p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <p className="text-xs font-black text-slate-800 truncate">
+                {order.diningType === 'take-away'
+                  ? 'N/A (Takeout)'
+                  : order.tableNum
+                    ? `Table ${order.tableNum}`
+                    : 'Counter / Open'}
+              </p>
+              {order.diningType !== 'take-away' && order.tableNum && (
+                <span className="text-[9px] font-extrabold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">
+                  Reserved
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Itemized Order Receipt */}
+      {/* ── 6. ITEMIZED ORDER SUMMARY ── */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3">
         <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
           <div className="flex items-center gap-1.5 text-slate-700">
             <Receipt className="w-4 h-4 text-[#14274E]" />
             <h3 className="text-xs font-black uppercase tracking-wider text-[#14274E]">
-              Order Summary
+              Itemized Receipt
             </h3>
           </div>
           <span className="text-[11px] font-bold text-slate-400">
@@ -318,7 +410,7 @@ export function AdvanceOrderTab({
         </div>
       </div>
 
-      {/* Action Buttons: Cancel Order & Start New Order */}
+      {/* ── 7. ACTION BUTTONS: CANCEL & START NEW ── */}
       {!isExpired && !isCancelled && (
         <div className="pt-2 space-y-2">
           {/* Cancel Order Action */}

@@ -47,7 +47,14 @@ import {
   Layers,
   Flame,
   Tag,
+  Receipt,
 } from 'lucide-react'
+import {
+  getActiveAdvanceOrderByTable,
+  confirmAdvanceOrderToRegular,
+  discardAdvanceOrderForTable,
+} from '@/services/advanceOrderService'
+import type { AdvanceOrder } from '@/types/advanceOrder'
 import { LabelManagementModal } from '@/pages/TableManager/components/LabelManagementModal'
 
 interface MergeGroupVisualBox {
@@ -89,6 +96,8 @@ export default function ReceptionistInterface() {
   const [qrTableNum, setQrTableNum] = useState<number | null>(null)
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 })
   const [labelsModalOpen, setLabelsModalOpen] = useState(false)
+  const [advanceOrderForSelectedTable, setAdvanceOrderForSelectedTable] = useState<AdvanceOrder | null>(null)
+  const [keepAdvanceOrder, setKeepAdvanceOrder] = useState<boolean>(true)
 
   // ── Drag & Drop State ──
   interface DragState {
@@ -381,6 +390,31 @@ export default function ReceptionistInterface() {
     return resolveTableGroupByList(selectedTable.TABLE_ID, tables)
   }, [selectedTable, tables])
 
+  // Synchronize active advance order for currently inspected table
+  useEffect(() => {
+    if (!selectedTable) {
+      setAdvanceOrderForSelectedTable(null)
+      return
+    }
+
+    let isMounted = true
+    getActiveAdvanceOrderByTable(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, selectedTable.TABLE_NUM)
+      .then((order) => {
+        if (isMounted) {
+          setAdvanceOrderForSelectedTable(order)
+          setKeepAdvanceOrder(true)
+        }
+      })
+      .catch((err) => {
+        console.warn('[ReceptionistInterface] Failed to check advance order for table:', err)
+      })
+
+    return () => {
+      isMounted = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTable?.TABLE_ID, selectedTable?.TABLE_NUM, selectedTable?.STATUS])
+
   // ── Status Counts & Venue Pax ──
   const { statusCounts, totalSeatedPax, totalVenueCapacity } = useMemo(() => {
     const counts = { AVAILABLE: 0, OCCUPIED: 0, RESERVED: 0, HAS_REQUEST: 0, UNAVAILABLE: 0 }
@@ -607,12 +641,89 @@ export default function ReceptionistInterface() {
 
     try {
       await setTableStatus(tableId, newStatus)
+
+      // Handle Advance Order transition if present
+      if (advanceOrderForSelectedTable && advanceOrderForSelectedTable.status === 'PENDING') {
+        if (newStatus === 'OCCUPIED') {
+          if (keepAdvanceOrder) {
+            // Keep advance order as regular order & disarm expiration
+            await confirmAdvanceOrderToRegular(tableId, advanceOrderForSelectedTable.orderNumber)
+            // If table has no seated pax entered yet, seat the advance order guest count
+            if (
+              advanceOrderForSelectedTable.guestCount &&
+              (!selectedTable?.CURRENT_GUEST_COUNT || selectedTable.CURRENT_GUEST_COUNT === 0)
+            ) {
+              await updateSeatedPax(tableId, advanceOrderForSelectedTable.guestCount)
+            }
+            setAdvanceOrderForSelectedTable((prev) => (prev ? { ...prev, status: 'CONFIRMED' } : null))
+            showToast(
+              `Table ${selectedTable?.TABLE_NUM ?? tableId} occupied. Advance order kept as regular order.`,
+              'success',
+            )
+          } else {
+            // Discard advance order
+            await discardAdvanceOrderForTable(tableId, 'Discarded by receptionist upon seating')
+            setAdvanceOrderForSelectedTable(null)
+            showToast(`Table ${selectedTable?.TABLE_NUM ?? tableId} occupied. Advance order was discarded.`, 'info')
+          }
+        } else if (newStatus === 'AVAILABLE') {
+          await discardAdvanceOrderForTable(tableId, 'Table cleared to Available by receptionist')
+          setAdvanceOrderForSelectedTable(null)
+        }
+      }
+
       void logTableAction('TABLE_STATUS_CHANGED', `Table ${selectedTable?.TABLE_NUM ?? tableId} status updated to ${newStatus}.`, {
         targetEntity: 'TABLE',
         targetId: String(tableId),
         newState: { status: newStatus },
       })
-      showToast(`Table status set to ${newStatus.replace('_', ' ')}`, 'success')
+      if (!advanceOrderForSelectedTable || newStatus !== 'OCCUPIED') {
+        showToast(`Table status set to ${newStatus.replace('_', ' ')}`, 'success')
+      }
+    } catch (err) {
+      showToast((err as Error).message, 'error')
+      void loadData(true)
+    }
+  }
+
+  async function handleSeatWithAdvanceOrder(keepOrder: boolean) {
+    if (!selectedTable || !advanceOrderForSelectedTable) return
+    const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
+    const pax = advanceOrderForSelectedTable.guestCount || selectedCurrentPax || 1
+
+    lastMutationTimeRef.current = Date.now()
+
+    // Optimistic status update
+    setLayoutTables((prev) =>
+      prev.map((t) =>
+        t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable.TABLE_NUM
+          ? { ...t, STATUS: 'OCCUPIED', CURRENT_GUEST_COUNT: pax }
+          : t,
+      ),
+    )
+
+    try {
+      await updateSeatedPax(tableId, pax)
+      await setTableStatus(tableId, 'OCCUPIED')
+
+      if (keepOrder) {
+        await confirmAdvanceOrderToRegular(tableId, advanceOrderForSelectedTable.orderNumber)
+        setAdvanceOrderForSelectedTable((prev) => (prev ? { ...prev, status: 'CONFIRMED' } : null))
+        showToast(
+          `Table ${selectedTable.TABLE_NUM} seated with ${pax} guests. Advance order kept as regular order.`,
+          'success',
+        )
+      } else {
+        await discardAdvanceOrderForTable(tableId, 'Discarded by receptionist upon seating')
+        setAdvanceOrderForSelectedTable(null)
+        showToast(`Table ${selectedTable.TABLE_NUM} seated with ${pax} guests. Advance order discarded.`, 'info')
+      }
+
+      void logTableAction('TABLE_STATUS_CHANGED', `Table ${selectedTable.TABLE_NUM} seated via Advance Order.`, {
+        targetEntity: 'TABLE',
+        targetId: String(tableId),
+        newState: { status: 'OCCUPIED', seatedPax: pax },
+      })
     } catch (err) {
       showToast((err as Error).message, 'error')
       void loadData(true)
@@ -859,6 +970,10 @@ export default function ReceptionistInterface() {
     try {
       await updateSeatedPax(tableId, 0)
       await setTableStatus(tableId, 'AVAILABLE')
+      if (advanceOrderForSelectedTable) {
+        await discardAdvanceOrderForTable(tableId, 'Table cleared by receptionist')
+        setAdvanceOrderForSelectedTable(null)
+      }
       void logTableAction('TABLE_STATUS_CHANGED', `Table ${selectedTable?.TABLE_NUM ?? tableId} cleared and marked Available.`, {
         targetEntity: 'TABLE',
         targetId: String(tableId),
@@ -1356,6 +1471,117 @@ export default function ReceptionistInterface() {
                     />
                   </div>
                 </div>
+
+                {/* ── CARD: Active Advance Order ── */}
+                {advanceOrderForSelectedTable && (
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-500/15 via-orange-500/10 to-slate-50 border-2 border-amber-300 shadow-sm animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5 text-xs font-black text-amber-950">
+                        <Receipt className="w-4 h-4 text-amber-600" />
+                        <span>Advance Order: {advanceOrderForSelectedTable.orderNumber}</span>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                          advanceOrderForSelectedTable.status === 'CONFIRMED'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
+                        }`}
+                      >
+                        {advanceOrderForSelectedTable.status === 'CONFIRMED'
+                          ? 'Confirmed Regular'
+                          : 'Pending Seating'}
+                      </span>
+                    </div>
+
+                    {/* Customer & Guest details */}
+                    <div className="bg-white/90 rounded-xl p-2.5 border border-amber-200/80 mb-2.5 space-y-1.5 text-xs shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 font-medium">Customer:</span>
+                        <span className="font-black text-[#14274E]">{advanceOrderForSelectedTable.customerName}</span>
+                      </div>
+                      {advanceOrderForSelectedTable.guestCount && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-500 font-medium">Party Size:</span>
+                          <span className="font-bold text-[#14274E]">{advanceOrderForSelectedTable.guestCount} Guests</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 font-medium">Dishes Ordered:</span>
+                        <span className="font-black text-[#14274E]">
+                          {advanceOrderForSelectedTable.items.length} items • ₱{advanceOrderForSelectedTable.totalAmount.toFixed(2)}
+                        </span>
+                      </div>
+
+                      {/* Item list snippet */}
+                      <div className="pt-1.5 border-t border-slate-100 divide-y divide-slate-100/80 max-h-24 overflow-y-auto">
+                        {advanceOrderForSelectedTable.items.map((it) => (
+                          <div key={it.advanceItemId} className="py-1 flex items-center justify-between text-[11px]">
+                            <span className="text-slate-700 truncate font-semibold">
+                              {it.quantity}x {it.itemName}
+                            </span>
+                            <span className="text-slate-500 font-mono ml-2 shrink-0">
+                              ₱{it.totalPrice.toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Mark to keep orders checkbox */}
+                    {advanceOrderForSelectedTable.status === 'PENDING' && (
+                      <div className="mb-2.5">
+                        <label className="flex items-start gap-2 p-2 rounded-xl bg-white border border-amber-200/90 cursor-pointer hover:bg-amber-50/50 transition-colors shadow-2xs">
+                          <input
+                            type="checkbox"
+                            checked={keepAdvanceOrder}
+                            onChange={(e) => setKeepAdvanceOrder(e.target.checked)}
+                            className="w-4 h-4 mt-0.5 rounded text-[#14274E] accent-[#14274E] cursor-pointer"
+                          />
+                          <div className="text-[11px] leading-tight">
+                            <span className="font-extrabold text-[#14274E] block">
+                              Mark table to keep orders
+                            </span>
+                            <span className="text-slate-500 text-[10px] block mt-0.5">
+                              Keep dishes as a regular order when Occupied (disarms 30m expiry).
+                            </span>
+                          </div>
+                        </label>
+                      </div>
+                    )}
+
+                    {/* Seating action buttons */}
+                    {advanceOrderForSelectedTable.status === 'PENDING' ? (
+                      <div className="flex flex-col gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleSeatWithAdvanceOrder(keepAdvanceOrder)}
+                          className="w-full py-2 px-3 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] active:scale-98 text-[#E9C46A] text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition-all"
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          <span>Seat & {keepAdvanceOrder ? 'Keep Regular Order' : 'Discard Order'} (Occupied)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSeatWithAdvanceOrder(false)}
+                          className="w-full py-1.5 px-2 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <Ban className="w-3 h-3" />
+                          <span>Discard Advance Order</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
+                        <span className="text-xs font-extrabold text-emerald-800 flex items-center justify-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Kept as Regular Order
+                        </span>
+                        <p className="text-[10px] text-emerald-700/80 mt-0.5">
+                          Table is occupied and advance order is permanently active.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* ── CARD 2: Live Table Status (Tactile Status Buttons) ── */}
                 <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 shadow-2xs">

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import PageLoader from '@/components/common/PageLoader'
 import { SearchBar } from '@/components/customer/SearchBar'
@@ -7,6 +7,7 @@ import { CategorySelector } from '@/components/customer/CategorySelector'
 import { MenuGrid } from '@/components/customer/MenuGrid'
 import { MenuItemDetail } from '@/components/customer/MenuItemDetail'
 import { CartSummary } from '@/components/customer/CartSummary'
+import { OrderStatusTracker } from '@/components/customer/OrderStatusTracker'
 import { AdvanceOrderHeader } from './components/AdvanceOrderHeader'
 import { CustomerNameGate } from './components/CustomerNameGate'
 import { AdvanceOrderTab } from './components/AdvanceOrderTab'
@@ -15,15 +16,16 @@ import { AdvanceOrderBottomNav, type AdvanceOrderTabType } from './components/Ad
 
 import { useMenu } from '@/hooks/useMenu'
 import { useBusinessDay } from '@/hooks/useBusinessDay'
+import { useSharedCart } from '@/hooks/useSharedCart'
+import { supabase } from '@/lib/supabase'
 import type { MenuItem } from '@/types/menu'
-import type { CartItem, DiningType } from '@/types/cart'
+import type { DiningType } from '@/types/cart'
 import type { AdvanceOrder } from '@/types/advanceOrder'
 import {
   getPreOrderSession,
   saveCustomerName,
-  savePreOrderCart,
   savePreOrderTable,
-  clearPreOrderCart,
+  releaseTableReservation,
   createAdvanceOrder,
   getActiveAdvanceOrder,
   cancelAdvanceOrder,
@@ -61,13 +63,31 @@ export default function AdvanceOrderPage() {
   // Pre-Order Session
   const [customerName, setCustomerName] = useState<string>('')
   const [isNameGateOpen, setIsNameGateOpen] = useState(false)
-  const [diningType, setDiningType] = useState<DiningType>('dine-in')
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
   const [selectedTableNum, setSelectedTableNum] = useState<number | null>(null)
   const [guestCount, setGuestCount] = useState<number>(2)
   const [isTableModalOpen, setIsTableModalOpen] = useState(false)
 
-  const [cartItems, setCartItems] = useState<CartItem[]>([])
+  // Realtime Shared Cart
+  const {
+    items: cartItems,
+    diningType,
+    setDiningType,
+    addItem,
+    setItemQuantity,
+    removeItem,
+    increaseQty,
+    decreaseQty,
+    updateNotes,
+    clearCart,
+    total,
+    itemCount,
+    getQuantity,
+    isLockedByOther,
+    acquireLock,
+    releaseLock,
+  } = useSharedCart(selectedTableId)
+
   const [isCartExpanded, setIsCartExpanded] = useState(false)
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false)
   const [orderError, setOrderError] = useState<string | null>(null)
@@ -112,7 +132,6 @@ export default function AdvanceOrderPage() {
         setSelectedTableId(preOrder.tableId ?? null)
         setSelectedTableNum(preOrder.tableNum ?? null)
         if (preOrder.guestCount) setGuestCount(preOrder.guestCount)
-        setCartItems(preOrder.cart)
 
         // If no customer name is set, open the setup gate
         if (!preOrder.customerName) {
@@ -128,7 +147,7 @@ export default function AdvanceOrderPage() {
     return () => {
       isMounted = false
     }
-  }, [urlToken])
+  }, [urlToken, setDiningType])
 
   // Synchronize live countdown string for header & nav bar
   useEffect(() => {
@@ -147,12 +166,54 @@ export default function AdvanceOrderPage() {
     return () => clearInterval(interval)
   }, [activeOrder])
 
-  // Save cart to local storage whenever cartItems or diningType changes
+  // Realtime subscription for active advance order status changes
   useEffect(() => {
-    if (!activeOrder) {
-      savePreOrderCart(cartItems, diningType)
+    if (!activeOrder?.sessionToken) return
+
+    const token = activeOrder.sessionToken
+    const channel = supabase
+      .channel(`advance-order-live-${token}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'orders',
+          table: 'Advance_Orders',
+          filter: `SESSION_TOKEN=eq.${token}`,
+        },
+        async () => {
+          const fresh = await getActiveAdvanceOrder(token)
+          if (fresh) setActiveOrder(fresh)
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'Advance_Orders',
+          filter: `SESSION_TOKEN=eq.${token}`,
+        },
+        async () => {
+          const fresh = await getActiveAdvanceOrder(token)
+          if (fresh) setActiveOrder(fresh)
+        },
+      )
+      .subscribe()
+
+    const handleVisibility = async () => {
+      if (document.visibilityState === 'visible') {
+        const fresh = await getActiveAdvanceOrder(token)
+        if (fresh) setActiveOrder(fresh)
+      }
     }
-  }, [cartItems, diningType, activeOrder])
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility)
+      supabase.removeChannel(channel)
+    }
+  }, [activeOrder?.sessionToken])
 
   // Auto-collapse cart drawer if empty
   useEffect(() => {
@@ -194,68 +255,6 @@ export default function AdvanceOrderPage() {
     })
   }, [items, searchQuery, selectedCategory, dietaryFilter])
 
-  // ─── Cart Calculations ──────────────────────────────────────────────────────
-  const itemCount = useMemo(
-    () => cartItems.reduce((sum, c) => sum + c.quantity, 0),
-    [cartItems],
-  )
-
-  const total = useMemo(
-    () => cartItems.reduce((sum, c) => sum + (c.item.price || 0) * c.quantity, 0),
-    [cartItems],
-  )
-
-  const getQuantity = useCallback(
-    (itemId: string) => cartItems.find((c) => c.item.id === itemId)?.quantity || 0,
-    [cartItems],
-  )
-
-  // ─── Cart Mutations ─────────────────────────────────────────────────────────
-  const addItem = (item: MenuItem, notes?: string) => {
-    setCartItems((prev) => {
-      const idx = prev.findIndex((c) => c.item.id === item.id)
-      if (idx >= 0) {
-        const copy = [...prev]
-        copy[idx] = {
-          ...copy[idx],
-          quantity: copy[idx].quantity + 1,
-          notes: notes !== undefined ? notes : copy[idx].notes,
-        }
-        return copy
-      }
-      return [...prev, { item, quantity: 1, notes }]
-    })
-  }
-
-  const increaseQty = (itemId: string) => {
-    setCartItems((prev) =>
-      prev.map((c) => (c.item.id === itemId ? { ...c, quantity: c.quantity + 1 } : c)),
-    )
-  }
-
-  const decreaseQty = (itemId: string) => {
-    setCartItems((prev) =>
-      prev
-        .map((c) => (c.item.id === itemId ? { ...c, quantity: c.quantity - 1 } : c))
-        .filter((c) => c.quantity > 0),
-    )
-  }
-
-  const removeItem = (itemId: string) => {
-    setCartItems((prev) => prev.filter((c) => c.item.id !== itemId))
-  }
-
-  const updateNotes = (itemId: string, notes: string) => {
-    setCartItems((prev) =>
-      prev.map((c) => (c.item.id === itemId ? { ...c, notes } : c)),
-    )
-  }
-
-  const clearCart = () => {
-    setCartItems([])
-    clearPreOrderCart()
-  }
-
   // ─── Actions & Order Submission ─────────────────────────────────────────────
   const handleSaveSetup = (
     name: string,
@@ -271,7 +270,7 @@ export default function AdvanceOrderPage() {
     setSelectedTableId(tableId)
     setSelectedTableNum(tableNum)
     if (guests) setGuestCount(guests)
-    savePreOrderTable(tableId, tableNum, prevId, saved, guests)
+    void savePreOrderTable(tableId, tableNum, prevId, saved, guests)
     setIsNameGateOpen(false)
   }
 
@@ -280,7 +279,7 @@ export default function AdvanceOrderPage() {
     setSelectedTableId(tableId)
     setSelectedTableNum(tableNum)
     if (guests) setGuestCount(guests)
-    savePreOrderTable(tableId, tableNum, prevId, customerName, guests)
+    void savePreOrderTable(tableId, tableNum, prevId, customerName, guests)
   }
 
   const handleResetSession = async () => {
@@ -292,7 +291,7 @@ export default function AdvanceOrderPage() {
         setDiningType('dine-in')
         setSelectedTableId(null)
         setSelectedTableNum(null)
-        setCartItems([])
+        clearCart()
         setActiveOrder(null)
         setActiveTab('menu')
         navigate('/advance-order', { replace: true })
@@ -309,6 +308,12 @@ export default function AdvanceOrderPage() {
     setDiningType(type)
     if (type === 'dine-in' && !selectedTableNum) {
       setIsTableModalOpen(true)
+    } else if (type === 'take-away' && selectedTableId) {
+      // Release held table reservation if switching to takeout
+      void releaseTableReservation(selectedTableId)
+      setSelectedTableId(null)
+      setSelectedTableNum(null)
+      void savePreOrderTable(null, null, selectedTableId, customerName)
     }
   }
 
@@ -335,6 +340,12 @@ export default function AdvanceOrderPage() {
     // 3. Validate cart
     if (cartItems.length === 0) return
 
+    // 4. Acquire ordering lock to prevent simultaneous submissions
+    if (!acquireLock()) {
+      setOrderError('Another device is currently submitting an order for this table. Please wait a moment.')
+      return
+    }
+
     setIsSubmittingOrder(true)
     setOrderError(null)
 
@@ -349,7 +360,7 @@ export default function AdvanceOrderPage() {
       })
 
       setActiveOrder(created)
-      setCartItems([])
+      clearCart()
       setIsCartExpanded(false)
       setActiveTab('order')
     } catch (err: unknown) {
@@ -357,6 +368,7 @@ export default function AdvanceOrderPage() {
       const msg = err instanceof Error ? err.message : 'Failed to submit advance order.'
       setOrderError(msg)
     } finally {
+      releaseLock()
       setIsSubmittingOrder(false)
     }
   }
@@ -365,6 +377,10 @@ export default function AdvanceOrderPage() {
     if (!activeOrder) return
     try {
       const cancelled = await cancelAdvanceOrder(activeOrder.sessionToken, reason)
+      // Release reserved table if applicable
+      if (activeOrder.tableId) {
+        void releaseTableReservation(activeOrder.tableId)
+      }
       if (cancelled) {
         setActiveOrder(cancelled)
       } else {
@@ -386,9 +402,12 @@ export default function AdvanceOrderPage() {
   }
 
   const handleStartNewOrder = () => {
+    if (activeOrder?.tableId) {
+      void releaseTableReservation(activeOrder.tableId)
+    }
     clearActiveAdvanceOrder()
     setActiveOrder(null)
-    setCartItems([])
+    clearCart()
     setActiveTab('menu')
     // Re-verify if name should be re-entered or kept
     const pre = getPreOrderSession()
@@ -417,7 +436,7 @@ export default function AdvanceOrderPage() {
         onCancel={customerName ? () => setIsNameGateOpen(false) : undefined}
       />
 
-      {/* Available Table Selector Modal */}
+      {/* Available Table / Pax Selector Modal */}
       <AdvanceOrderTableModal
         isOpen={isTableModalOpen}
         selectedTableId={selectedTableId}
@@ -448,6 +467,7 @@ export default function AdvanceOrderPage() {
               customerName={customerName}
               diningType={diningType}
               tableNum={selectedTableNum}
+              guestCount={guestCount}
               onEditName={() => setIsNameGateOpen(true)}
               cartItemCount={itemCount}
               onOpenCart={() => setIsCartExpanded(true)}
@@ -488,6 +508,7 @@ export default function AdvanceOrderPage() {
               customerName={customerName || activeOrder?.customerName}
               diningType={activeOrder ? activeOrder.diningType : diningType}
               tableNum={activeOrder ? activeOrder.tableNum : selectedTableNum}
+              guestCount={activeOrder ? activeOrder.guestCount : guestCount}
               onEditName={() => setIsNameGateOpen(true)}
               cartItemCount={itemCount}
               onOpenCart={() => setIsCartExpanded(true)}
@@ -504,21 +525,36 @@ export default function AdvanceOrderPage() {
               onCancelOrder={handleCancelOrder}
             />
           ) : (
-            <div className="flex flex-col items-center justify-center py-24 px-6 text-center animate-fade-in">
-              <div className="w-16 h-16 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
-                <MenuGrid items={[]} getQuantity={() => 0} onItemTap={() => {}} onItemAdd={() => {}} onItemIncrease={() => {}} onItemDecrease={() => {}} />
+            <div className="w-full max-w-lg mx-auto px-4 pt-2 space-y-4 animate-fade-in">
+              {/* Order Status Process Cards Empty State */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-[#14274E]">
+                    Order Status Tracker
+                  </h3>
+                  <span className="text-[11px] font-bold text-slate-400">
+                    No active orders
+                  </span>
+                </div>
+                <OrderStatusTracker orders={[]} />
               </div>
-              <h2 className="text-lg font-black text-[#14274E]">No Active Advance Order</h2>
-              <p className="text-xs text-slate-500 mt-1 max-w-xs leading-relaxed">
-                You haven&apos;t submitted an advance order yet. Browse our menu and place your order to start the 30-minute confirmation countdown.
-              </p>
-              <button
-                type="button"
-                onClick={() => setActiveTab('menu')}
-                className="mt-4 px-5 py-2.5 bg-[#14274E] text-white font-bold text-xs rounded-xl shadow-xs hover:bg-[#1f3b73] transition-colors cursor-pointer"
-              >
-                Browse Menu
-              </button>
+
+              {/* Call-to-action banner */}
+              <div className="bg-white rounded-3xl p-6 border border-slate-200/80 text-center shadow-xs space-y-2">
+                <h4 className="text-base font-black text-[#14274E]">Ready to place an Advance Order?</h4>
+                <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
+                  Browse our menu and submit your selections to secure your table and start your 30-minute confirmation countdown.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('menu')}
+                    className="px-6 py-2.5 bg-[#14274E] text-white font-extrabold text-xs rounded-xl shadow-xs hover:bg-[#1f3b73] active:scale-95 transition-all cursor-pointer"
+                  >
+                    Browse Menu
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -535,8 +571,7 @@ export default function AdvanceOrderPage() {
             if (qty === 0) {
               removeItem(activeItem.id)
             } else {
-              if (getQuantity(activeItem.id) === 0) addItem(activeItem, notes)
-              else updateNotes(activeItem.id, notes)
+              setItemQuantity(activeItem, qty, notes)
             }
           }}
         />
@@ -558,6 +593,7 @@ export default function AdvanceOrderPage() {
         onRemoveItem={removeItem}
         onUpdateNotes={updateNotes}
         isSubmitting={isSubmittingOrder}
+        isLockedByOther={isLockedByOther}
         isExpanded={isCartExpanded}
         onToggleExpand={() => setIsCartExpanded((prev) => !prev)}
         onClose={() => setIsCartExpanded(false)}

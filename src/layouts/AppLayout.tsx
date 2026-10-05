@@ -24,6 +24,7 @@ export default function AppLayout() {
     if (p.startsWith('events')) return 'Events'
     if (p.startsWith('accounts')) return 'Staff Manager'
     if (p.startsWith('order-logs')) return 'Order Logs'
+    if (p.startsWith('admin')) return 'Admin Panel'
     return 'Monolith POS'
   })()
 

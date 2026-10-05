@@ -311,3 +311,119 @@ export function useTableGroup(tableId: number | null) {
     reload: loadGroup,
   }
 }
+
+export interface AutoAssignTableResult {
+  table: TableData
+  groupInfo: TableGroupInfo
+  capacity: number
+  isExactOrBetter: boolean
+  isMerged: boolean
+}
+
+/**
+ * Automatically finds the best available table or merged group for the requested party size (pax).
+ * Prioritizes available tables/groups with capacity >= paxSize, choosing the closest
+ * capacity match (smallest fitting capacity) to optimize restaurant seating efficiency,
+ * breaking ties by lowest table number.
+ * If no single table or group can fit the full pax size, falls back to the largest
+ * available table/group.
+ */
+export function findBestTableForPax(
+  allTables: TableData[],
+  paxSize: number,
+  currentTableId?: number | null,
+  options?: { excludeMerged?: boolean },
+): AutoAssignTableResult | null {
+  if (allTables.length === 0 || paxSize <= 0) return null
+
+  const processedAnchorIds = new Set<number>()
+  const candidates: Array<{
+    anchorTable: TableData
+    groupInfo: TableGroupInfo
+    capacity: number
+    isMerged: boolean
+  }> = []
+
+  for (const table of allTables) {
+    const groupInfo = resolveTableGroupByList(table.TABLE_ID, allTables)
+    if (processedAnchorIds.has(groupInfo.anchorTableId)) continue
+    processedAnchorIds.add(groupInfo.anchorTableId)
+
+    // Optionally exclude any merged group
+    if (options?.excludeMerged && groupInfo.isMerged) continue
+
+    // Check availability: group is AVAILABLE, or this group contains currentTableId
+    const isCurrentlyHeld =
+      currentTableId != null && groupInfo.memberTableIds.includes(currentTableId)
+    const isAvailable = groupInfo.status === 'AVAILABLE' || isCurrentlyHeld
+
+    if (!isAvailable) continue
+
+    const anchor = allTables.find((t) => t.TABLE_ID === groupInfo.anchorTableId) || table
+    candidates.push({
+      anchorTable: anchor,
+      groupInfo,
+      capacity: groupInfo.capacity,
+      isMerged: groupInfo.isMerged,
+    })
+  }
+
+  if (candidates.length === 0) return null
+
+  // Candidates with capacity >= paxSize
+  const fitting = candidates.filter((c) => c.capacity >= paxSize)
+
+  if (fitting.length === 0) {
+    return null
+  }
+
+  fitting.sort((a, b) => {
+    const capDiff = a.capacity - b.capacity
+    if (capDiff !== 0) return capDiff
+    return (
+      (a.anchorTable.TABLE_NUM || a.anchorTable.TABLE_ID) -
+      (b.anchorTable.TABLE_NUM || b.anchorTable.TABLE_ID)
+    )
+  })
+
+  return {
+    table: fitting[0].anchorTable,
+    groupInfo: fitting[0].groupInfo,
+    capacity: fitting[0].capacity,
+    isExactOrBetter: true,
+    isMerged: fitting[0].isMerged,
+  }
+}
+
+/**
+ * Calculates the maximum seating capacity among all currently available tables/groups.
+ */
+export function getMaxAvailableTableCapacity(
+  allTables: TableData[],
+  currentTableId?: number | null,
+  options?: { excludeMerged?: boolean },
+): number {
+  if (allTables.length === 0) return 0
+  const processedAnchorIds = new Set<number>()
+  let maxCap = 0
+
+  for (const table of allTables) {
+    const groupInfo = resolveTableGroupByList(table.TABLE_ID, allTables)
+    if (processedAnchorIds.has(groupInfo.anchorTableId)) continue
+    processedAnchorIds.add(groupInfo.anchorTableId)
+
+    // Optionally exclude any merged group
+    if (options?.excludeMerged && groupInfo.isMerged) continue
+
+    const isCurrentlyHeld =
+      currentTableId != null && groupInfo.memberTableIds.includes(currentTableId)
+    const isAvailable = groupInfo.status === 'AVAILABLE' || isCurrentlyHeld
+
+    if (isAvailable && groupInfo.capacity > maxCap) {
+      maxCap = groupInfo.capacity
+    }
+  }
+
+  return maxCap
+}
+

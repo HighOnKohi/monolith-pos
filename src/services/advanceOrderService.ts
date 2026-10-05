@@ -6,6 +6,8 @@ import type {
   AdvanceOrderStatus,
 } from '@/types/advanceOrder'
 import type { CartItem, DiningType } from '@/types/cart'
+import { createOrder, cancelOrder } from '@/services/orderService'
+import { fetchAllTables, fetchOrderSummariesForIds, type TableData } from '@/services/tableService'
 
 // ─── LocalStorage Keys ────────────────────────────────────────────────────────
 const STORAGE_KEY_PREORDER_SESSION_ID = 'monolith_advance_order_session_id'
@@ -455,7 +457,25 @@ export async function createAdvanceOrder(
       payload.tableId,
       cleanName,
       `Advance Order: ${orderNumber}`,
+      payload.guestCount,
     )
+
+    // Synchronize order with Customer Interface via Restaurant_Orders
+    try {
+      await createOrder(
+        payload.tableId,
+        payload.cartItems,
+        payload.diningType,
+        totalAmount,
+        'Customer',
+        `[Advance Order: ${orderNumber}] ${formattedNotes}`.trim(),
+        payload.guestCount,
+        undefined,
+        { preserveTableStatus: true },
+      )
+    } catch (syncErr) {
+      console.warn('[advanceOrderService] Failed to sync advance order into Restaurant_Orders:', syncErr)
+    }
   }
 
   return createdOrder
@@ -541,6 +561,34 @@ export async function getActiveAdvanceOrder(
 
 // ─── Cancel Advance Order ─────────────────────────────────────────────────────
 
+async function cancelAssociatedRestaurantOrder(
+  orderNumber: string,
+  tableId?: number | null,
+  reason?: string,
+): Promise<void> {
+  try {
+    let query = supabase
+      .from('Restaurant_Orders')
+      .select('ORDER_ID, SERVER_NOTE')
+      .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED'])
+
+    if (tableId) {
+      query = query.eq('TABLE_ID', tableId)
+    }
+
+    const { data: matched } = await query
+    if (matched && matched.length > 0) {
+      for (const ord of matched) {
+        if (ord.SERVER_NOTE && ord.SERVER_NOTE.includes(orderNumber)) {
+          await cancelOrder(ord.ORDER_ID, reason || 'Advance order cancelled')
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[advanceOrderService] Could not cancel associated Restaurant_Orders:', err)
+  }
+}
+
 export async function cancelAdvanceOrder(
   sessionToken: string,
   reason?: string,
@@ -551,7 +599,7 @@ export async function cancelAdvanceOrder(
   try {
     const { data: existing } = await supabase
       .from('Advance_Orders')
-      .select('NOTES')
+      .select('ORDER_NUMBER, TABLE_ID, NOTES')
       .eq('SESSION_TOKEN', sessionToken)
       .maybeSingle()
 
@@ -578,6 +626,9 @@ export async function cancelAdvanceOrder(
         if (updatedNotes) active.notes = updatedNotes
         saveFallbackOrder(active)
 
+        // Cancel associated Restaurant_Orders
+        await cancelAssociatedRestaurantOrder(active.orderNumber, active.tableId, reason)
+
         // Release reserved table
         if (active.tableId) {
           await releaseTableReservation(active.tableId)
@@ -602,6 +653,9 @@ export async function cancelAdvanceOrder(
     }
     saveFallbackOrder(order)
 
+    // Cancel associated Restaurant_Orders
+    await cancelAssociatedRestaurantOrder(order.orderNumber, order.tableId, reason)
+
     // Release reserved table
     if (order.tableId) {
       await releaseTableReservation(order.tableId)
@@ -611,6 +665,265 @@ export async function cancelAdvanceOrder(
   }
 
   return null
+}
+
+/**
+ * Confirms an advance order and converts it into a permanent regular order.
+ * Called when the receptionist seats the guests and changes the table status to OCCUPIED.
+ * Disarms the 30-minute expiration countdown and ensures the order is never auto-cleared.
+ */
+export async function confirmAdvanceOrderToRegular(
+  tableId: number,
+  orderNumber?: string,
+): Promise<void> {
+  const now = new Date().toISOString()
+
+  // 1. Update Advance_Orders to CONFIRMED
+  try {
+    let query = supabase
+      .from('Advance_Orders')
+      .update({
+        STATUS: 'CONFIRMED',
+        CONFIRMED_AT: now,
+      })
+      .eq('STATUS', 'PENDING')
+
+    if (orderNumber) {
+      query = query.eq('ORDER_NUMBER', orderNumber)
+    }
+
+    const { error } = await query
+    if (error) {
+      console.warn('[advanceOrderService] Could not update Advance_Orders to CONFIRMED:', error)
+    }
+  } catch (err) {
+    console.warn('[advanceOrderService] Exception confirming Advance_Orders:', err)
+  }
+
+  // 2. In Restaurant_Orders, update SERVER_NOTE to mark as confirmed regular order
+  try {
+    const { data: orders } = await supabase
+      .from('Restaurant_Orders')
+      .select('ORDER_ID, SERVER_NOTE')
+      .eq('TABLE_ID', tableId)
+      .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING'])
+
+    if (orders && orders.length > 0) {
+      for (const ord of orders) {
+        if (
+          ord.SERVER_NOTE &&
+          (ord.SERVER_NOTE.includes('[Advance Order') ||
+            (orderNumber && ord.SERVER_NOTE.includes(orderNumber)))
+        ) {
+          const updatedNote = ord.SERVER_NOTE.replace(
+            /\[Advance Order:[^\]]+\]/g,
+            `[Regular Order: ${orderNumber || 'Seated'}] (Confirmed by Reception)`,
+          )
+          await supabase
+            .from('Restaurant_Orders')
+            .update({ SERVER_NOTE: updatedNote })
+            .eq('ORDER_ID', ord.ORDER_ID)
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[advanceOrderService] Exception updating Restaurant_Orders server note:', err)
+  }
+
+  // 3. Update local storage fallback orders
+  try {
+    const fallbacks = getFallbackOrders()
+    let changed = false
+    fallbacks.forEach((o) => {
+      if (
+        (o.tableId === tableId || (orderNumber && o.orderNumber === orderNumber)) &&
+        o.status === 'PENDING'
+      ) {
+        o.status = 'CONFIRMED'
+        o.confirmedAt = now
+        changed = true
+      }
+    })
+    if (changed) {
+      localStorage.setItem(STORAGE_KEY_DB_FALLBACK, JSON.stringify(fallbacks))
+    }
+  } catch {
+    // Ignore storage quota
+  }
+}
+
+/**
+ * Fetches the active advance order (PENDING or CONFIRMED) associated with a table.
+ * Used by the receptionist interface to inspect advance orders for reserved tables.
+ */
+export async function getActiveAdvanceOrderByTable(
+  tableId: number,
+  tableNum?: number,
+): Promise<AdvanceOrder | null> {
+  const effectiveNum = tableNum ?? tableId
+
+  // 1. Try querying Supabase
+  try {
+    const { data, error } = await supabase
+      .from('Advance_Orders')
+      .select('*, Advance_Order_Items(*)')
+      .in('STATUS', ['PENDING', 'CONFIRMED'])
+      .order('ADVANCE_ORDER_ID', { ascending: false })
+
+    if (!error && data && data.length > 0) {
+      for (const row of data) {
+        let rowTableNum: number | null = null
+        if (row.TABLE_NUM != null) {
+          rowTableNum = Number(row.TABLE_NUM)
+        } else if (row.NOTES) {
+          const match = String(row.NOTES).match(/\[Table #(\d+)\]/)
+          if (match) rowTableNum = Number(match[1])
+        }
+
+        const rowTableId: number | null =
+          row.TABLE_ID != null ? Number(row.TABLE_ID) : rowTableNum
+
+        if (
+          rowTableId === tableId ||
+          rowTableNum === effectiveNum ||
+          (row.NOTES && row.NOTES.includes(`Table #${effectiveNum}`))
+        ) {
+          const items = (row.Advance_Order_Items || []).map((r: Record<string, unknown>) => ({
+            advanceItemId: Number(r.ADVANCE_ITEM_ID),
+            advanceOrderId: Number(r.ADVANCE_ORDER_ID),
+            itemId: Number(r.ITEM_ID || r.MENU_ID),
+            menuId: Number(r.ITEM_ID || r.MENU_ID),
+            itemName: String(r.ITEM_NAME || ''),
+            quantity: Number(r.QUANTITY || 1),
+            unitPrice: Number(r.UNIT_PRICE || 0),
+            totalPrice: Number(r.TOTAL_PRICE || 0),
+            notes: r.NOTES ? String(r.NOTES) : undefined,
+            createdAt: String(r.CREATED_AT || ''),
+          }))
+
+          return {
+            advanceOrderId: Number(row.ADVANCE_ORDER_ID),
+            orderNumber: String(row.ORDER_NUMBER),
+            sessionToken: String(row.SESSION_TOKEN),
+            customerName: String(row.CUSTOMER_NAME),
+            diningType: (row.DINING_TYPE as DiningType) || 'dine-in',
+            tableId: rowTableId,
+            tableNum: rowTableNum,
+            status: (row.STATUS as AdvanceOrderStatus) || 'PENDING',
+            subtotal: Number(row.SUBTOTAL) || 0,
+            totalAmount: Number(row.TOTAL_AMOUNT) || 0,
+            notes: row.NOTES ? String(row.NOTES) : undefined,
+            createdAt: String(row.CREATED_AT),
+            expiresAt: String(row.EXPIRES_AT),
+            confirmedAt: row.CONFIRMED_AT ? String(row.CONFIRMED_AT) : null,
+            completedAt: row.COMPLETED_AT ? String(row.COMPLETED_AT) : null,
+            cancelledAt: row.CANCELLED_AT ? String(row.CANCELLED_AT) : null,
+            items,
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[advanceOrderService] Error fetching table advance order from Supabase:', err)
+  }
+
+  // 2. Check local fallback
+  const fallbacks = getFallbackOrders()
+  const found = fallbacks.find(
+    (o) =>
+      (o.tableId === tableId || o.tableNum === effectiveNum) &&
+      (o.status === 'PENDING' || o.status === 'CONFIRMED'),
+  )
+  return found || null
+}
+
+/**
+ * Discards/cancels an advance order for a table if the receptionist decides not to keep it.
+ */
+export async function discardAdvanceOrderForTable(
+  tableId: number,
+  reason: string = 'Discarded by receptionist',
+): Promise<void> {
+  const active = await getActiveAdvanceOrderByTable(tableId)
+  if (active) {
+    await cancelAdvanceOrder(active.sessionToken, reason)
+  }
+}
+
+/**
+ * Fetches all tables that are strictly eligible for advance order placement.
+ * Disqualifies:
+ * 1. Merged tables (IS_MERGE_MEMBER, IS_MERGE_CAPTAIN, or MERGE_GROUP_ID != null)
+ * 2. Occupied tables (STATUS === 'OCCUPIED' or any non-AVAILABLE status unless held by current session)
+ * 3. Tables with active orders in Restaurant_Orders (activeOrderCount > 0)
+ * 4. Tables with an active pending Advance_Order (unless matching the current session's tableId)
+ */
+export async function fetchEligibleAdvanceOrderTables(
+  currentTableId?: number | null,
+): Promise<TableData[]> {
+  const [allTables, activeAdvanceOrders] = await Promise.all([
+    fetchAllTables(),
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('Advance_Orders')
+          .select('TABLE_ID, TABLE_NUM, STATUS, NOTES')
+          .eq('STATUS', 'PENDING')
+        return data || []
+      } catch {
+        return []
+      }
+    })(),
+  ])
+
+  if (!allTables || allTables.length === 0) return []
+
+  const tableIds = allTables.map((t) => t.TABLE_ID)
+  const orderSummaries = await fetchOrderSummariesForIds(tableIds)
+
+  // Set of table IDs that have pending advance orders from other sessions
+  const tablesWithPendingAdvance = new Set<number>()
+  for (const ao of activeAdvanceOrders) {
+    let tId = ao.TABLE_ID ? Number(ao.TABLE_ID) : null
+    if (!tId && ao.NOTES) {
+      const match = String(ao.NOTES).match(/\[Table #(\d+)\]/)
+      if (match) tId = Number(match[1])
+    }
+    if (tId && tId !== currentTableId) {
+      tablesWithPendingAdvance.add(tId)
+    }
+  }
+
+  // Also check local storage fallbacks for pending advance orders
+  const fallbacks = getFallbackOrders()
+  for (const fb of fallbacks) {
+    if (fb.status === 'PENDING' && fb.tableId && fb.tableId !== currentTableId) {
+      tablesWithPendingAdvance.add(fb.tableId)
+    }
+  }
+
+  return allTables.filter((t) => {
+    // 1. Exclude merged tables (cannot be merge captain, merge member, or have MERGE_GROUP_ID)
+    const isMerged =
+      t.MERGE_GROUP_ID != null ||
+      Boolean(t.IS_MERGE_MEMBER) ||
+      Boolean(t.IS_MERGE_CAPTAIN)
+    if (isMerged) return false
+
+    // 2. Exclude occupied or non-available tables (unless held by current session)
+    const isCurrentlyHeld = currentTableId != null && t.TABLE_ID === currentTableId
+    const isAvailableStatus = t.STATUS === 'AVAILABLE' || isCurrentlyHeld
+    if (!isAvailableStatus) return false
+
+    // 3. Exclude tables that have active orders in Restaurant_Orders
+    const summary = orderSummaries.get(t.TABLE_ID)
+    if (summary && summary.activeOrderCount > 0) return false
+
+    // 4. Exclude tables with active advance orders held by someone else
+    if (tablesWithPendingAdvance.has(t.TABLE_ID)) return false
+
+    return true
+  })
 }
 
 // ─── Countdown & Time Utilities ───────────────────────────────────────────────

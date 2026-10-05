@@ -9,9 +9,10 @@ interface ActiveOrdersProps {
   pastOrders?: Order[]
   onRequestBill: () => void
   onBrowseMenu?: () => void
+  onCancelOrder?: (orderId: number) => Promise<boolean>
 }
 
-export function ActiveOrders({ orders, pastOrders, onRequestBill, onBrowseMenu }: ActiveOrdersProps) {
+export function ActiveOrders({ orders, pastOrders, onRequestBill, onBrowseMenu, onCancelOrder }: ActiveOrdersProps) {
   const [showBatches, setShowBatches] = useState(false)
 
   // Countdown timer for settled past orders (30 seconds auto-clear)
@@ -225,8 +226,8 @@ export function ActiveOrders({ orders, pastOrders, onRequestBill, onBrowseMenu }
         )}
       </div>
 
-      {/* Progress Tracker for the table's overall active status */}
-      <OrderStatusTracker status={compressed.overallStatus} />
+      {/* Per-Status Order Tracking Cards */}
+      <OrderStatusTracker orders={orders} onCancelOrder={onCancelOrder} />
 
       {/* Notice for flagged items if any */}
       {compressed.hasFlaggedItems && (

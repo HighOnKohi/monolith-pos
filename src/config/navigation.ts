@@ -10,6 +10,7 @@ import {
   Users,
   ClipboardList,
   ConciergeBell,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -102,6 +103,12 @@ export const navigation: NavSection[] = [
   {
     section: 'Admin',
     items: [
+      {
+        title: 'Admin Panel',
+        description: 'Business day control, daily summaries & operational management.',
+        path: '/admin',
+        icon: ShieldCheck,
+      },
       {
         title: 'Staff Manager',
         description: 'Staff credentials and access permissions.',

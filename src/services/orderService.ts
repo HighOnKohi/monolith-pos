@@ -62,6 +62,9 @@ export async function createOrder(
     staffId?: number | null
     businessDayId?: number | null
   },
+  options?: {
+    preserveTableStatus?: boolean
+  },
 ): Promise<Order> {
   // Determine party size / guest count
   let partySize = guestCount
@@ -213,24 +216,26 @@ export async function createOrder(
   // Increment Service_Staff metric if service shift is active
   void import('@/services/serviceShiftService').then((m) => m.recordServiceOrderPunched())
 
-  // 3. Mark table as OCCUPIED if it was not already occupied/has_request
-  try {
-    const { data: tableData } = await supabase
-      .schema('tables')
-      .from('Restaurant_Tables')
-      .select('STATUS')
-      .eq('TABLE_ID', tableId)
-      .maybeSingle()
-
-    if (tableData && tableData.STATUS !== 'OCCUPIED' && tableData.STATUS !== 'HAS_REQUEST') {
-      await supabase
+  // 3. Mark table as OCCUPIED if it was not already occupied/has_request (unless preserving table status for advance orders)
+  if (!options?.preserveTableStatus) {
+    try {
+      const { data: tableData } = await supabase
         .schema('tables')
         .from('Restaurant_Tables')
-        .update({ STATUS: 'OCCUPIED' })
+        .select('STATUS')
         .eq('TABLE_ID', tableId)
+        .maybeSingle()
+
+      if (tableData && tableData.STATUS !== 'OCCUPIED' && tableData.STATUS !== 'HAS_REQUEST') {
+        await supabase
+          .schema('tables')
+          .from('Restaurant_Tables')
+          .update({ STATUS: 'OCCUPIED' })
+          .eq('TABLE_ID', tableId)
+      }
+    } catch (tErr) {
+      console.warn('[orderService] Failed to update table status to OCCUPIED:', tErr)
     }
-  } catch (tErr) {
-    console.warn('[orderService] Failed to update table status to OCCUPIED:', tErr)
   }
 
   // Log lifecycle event to Order_Events

@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   CheckCircle2,
   AlertCircle,
+  Users,
+  ShieldCheck,
 } from 'lucide-react'
+import { CashierAuditLogsTab } from '@/pages/OrderLogs/components/CashierAuditLogsTab'
 import type {
   StaffCodeItem,
   StaffCodeFormData,
@@ -25,6 +28,9 @@ import { AccountPagination } from './components/AccountPagination'
 import { AccountActionConfirmModal } from './components/AccountActionConfirmModal'
 
 export default function AccountManagerPage() {
+  // ── Sub-Tab State ──
+  const [activeSubTab, setActiveSubTab] = useState<'accounts' | 'audit'>('accounts')
+
   // ── Staff Codes State ──
   const [codes, setCodes] = useState<StaffCodeItem[]>([])
   const [summaryStats, setSummaryStats] = useState<StaffCodeSummaryStats>({
@@ -257,40 +263,74 @@ export default function AccountManagerPage() {
         </div>
       )}
 
-      {/* ── KPI Summary Cards ── */}
-      <AccountManagerSummaryCards stats={summaryStats} loading={loading} />
+      {/* ── Top Sub-Tab Switcher: Staff Accounts vs Operational Audit & History ── */}
+      <div className="no-print flex items-center bg-slate-200/70 p-1 rounded-2xl w-fit gap-1 border border-slate-200">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('accounts')}
+          className={`px-4 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+            activeSubTab === 'accounts'
+              ? 'bg-white text-[#14274E] shadow-xs'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>Staff Accounts &amp; Roles</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('audit')}
+          className={`px-4 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+            activeSubTab === 'audit'
+              ? 'bg-white text-[#14274E] shadow-xs'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 text-[#14274E]" />
+          <span>Operational History &amp; Audit</span>
+        </button>
+      </div>
 
-      {/* ── Filter Bar ── */}
-      <AccountManagerFilterBar
-        filters={filters}
-        onFilterChange={handleFilterChange}
-        onClearFilters={handleClearFilters}
-        onAddCode={handleAddCode}
-      />
+      {activeSubTab === 'accounts' ? (
+        <>
+          {/* ── KPI Summary Cards ── */}
+          <AccountManagerSummaryCards stats={summaryStats} loading={loading} />
 
-      {/* ── Staff Codes Table ── */}
-      <StaffAccountsTable
-        codes={codes}
-        loading={loading}
-        onEditCode={handleEditCode}
-        onToggleStatus={handleToggleStatus}
-        onDeleteCode={handleDeleteCode}
-        onEndShift={handleEndShift}
-      />
+          {/* ── Filter Bar ── */}
+          <AccountManagerFilterBar
+            filters={filters}
+            onFilterChange={handleFilterChange}
+            onClearFilters={handleClearFilters}
+            onAddCode={handleAddCode}
+          />
 
-      {/* ── Pagination ── */}
-      {!loading && totalCount > pageSize && (
-        <AccountPagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          totalCount={totalCount}
-          pageSize={pageSize}
-          onPageChange={setCurrentPage}
-          onPageSizeChange={(newSize) => {
-            setPageSize(newSize)
-            setCurrentPage(1)
-          }}
-        />
+          {/* ── Staff Codes Table ── */}
+          <StaffAccountsTable
+            codes={codes}
+            loading={loading}
+            onEditCode={handleEditCode}
+            onToggleStatus={handleToggleStatus}
+            onDeleteCode={handleDeleteCode}
+            onEndShift={handleEndShift}
+          />
+
+          {/* ── Pagination ── */}
+          {!loading && totalCount > pageSize && (
+            <AccountPagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalCount={totalCount}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={(newSize) => {
+                setPageSize(newSize)
+                setCurrentPage(1)
+              }}
+            />
+          )}
+        </>
+      ) : (
+        <CashierAuditLogsTab />
       )}
 
       {/* ── Add / Edit Staff Code Drawer ── */}
