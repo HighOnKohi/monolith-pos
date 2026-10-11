@@ -23,7 +23,7 @@ export function isEventServiceUsingFallback(): boolean {
 
 // ─── Seed Data for Fallback Mode ──────────────────────────────────────────────
 
-function getInitialSeedEvents(): RestaurantEvent[] {
+export function getInitialSeedEvents(): RestaurantEvent[] {
   return []
 }
 

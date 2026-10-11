@@ -1018,13 +1018,8 @@ export async function settleTableOrders(
   const rawDayId = attribution?.businessDayId ?? (Number(localStorage.getItem('monolith_active_business_day_id')) || null)
   const attrDayId = rawDayId && rawDayId < 1000000000000 ? rawDayId : null
 
-  const rawShiftId = attribution?.shiftId ?? (Number(localStorage.getItem('monolith_service_shift_id')) || Number(localStorage.getItem('monolith_cashier_shift_id')) || null)
-  const attrShiftId = rawShiftId && rawShiftId < 1000000000000 ? rawShiftId : null
-
   const rawStaffId = attribution?.staffId ?? (Number(localStorage.getItem('monolith_service_staff_id')) || Number(localStorage.getItem('monolith_cashier_staff_id')) || null)
   const attrStaffId = rawStaffId && rawStaffId < 1000000000000 ? rawStaffId : null
-
-  const attrCashierName = attribution?.cashierName ?? null
 
   const completedRows = activeOrders.map((o) => {
     const oId = Number(o['ORDER_ID'])
@@ -1038,9 +1033,6 @@ export async function settleTableOrders(
 
     const rawOrderDay = Number(o['BUSINESS_DAY_ID']) || null
     const safeOrderDay = rawOrderDay && rawOrderDay < 1000000000000 ? rawOrderDay : attrDayId
-
-    const rawOrderShift = Number(o['SHIFT_ID']) || null
-    const safeOrderShift = rawOrderShift && rawOrderShift < 1000000000000 ? rawOrderShift : attrShiftId
 
     const rawOrderStaff = Number(o['STAFF_ID']) || null
     const safeOrderStaff = rawOrderStaff && rawOrderStaff < 1000000000000 ? rawOrderStaff : attrStaffId

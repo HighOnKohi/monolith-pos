@@ -11,7 +11,7 @@ import type {
 const LOCAL_STORAGE_KEY = 'monolith_staff_accounts_fallback'
 
 // Default seed accounts (empty - all accounts must come from database)
-const DEFAULT_SEED_ACCOUNTS: StaffAccount[] = []
+export const DEFAULT_SEED_ACCOUNTS: StaffAccount[] = []
 
 // ─── Local Storage Fallback Helpers ───────────────────────────────────────────
 

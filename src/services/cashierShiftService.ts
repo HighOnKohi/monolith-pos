@@ -303,7 +303,7 @@ async function findActiveShiftForStaff(staffId: number): Promise<CashierShift | 
 /**
  * Authoritatively retrieves the active cashier shift.
  */
-export async function getActiveCashierShift(shiftId?: number): Promise<CashierShift | null> {
+export async function getActiveCashierShift(_shiftId?: number): Promise<CashierShift | null> {
   const staffId = Number(localStorage.getItem(LOCAL_STORAGE_STAFF_ID)) || null
   if (!staffId) return null
 
@@ -720,7 +720,7 @@ export async function calculateShiftSummary(shift: CashierShift): Promise<Cashie
 
 // ─── Mapper ───────────────────────────────────────────────────────────────────
 
-function mapDbRowToCashierShift(row: Record<string, unknown>, staff?: StaffCodeItem): CashierShift {
+export function mapDbRowToCashierShift(row: Record<string, unknown>, staff?: StaffCodeItem): CashierShift {
   return {
     shiftId: Number(row['SHIFT_ID']),
     staffId: Number(row['STAFF_ID']),

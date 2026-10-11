@@ -403,11 +403,6 @@ export default function MenuManagerPage() {
     }
   }
 
-  // Currently selected item IDs for the active preset
-  const activePresetItemIds = useMemo(() => {
-    return currentPresetItems.map((i) => i.id)
-  }, [currentPresetItems])
-
   return (
     <div className="flex h-full bg-[#CBD5E1] p-3 sm:p-4 gap-3 sm:gap-4 overflow-hidden select-none">
       {/* Toast Notification */}

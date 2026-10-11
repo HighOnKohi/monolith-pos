@@ -419,7 +419,7 @@ export function PresetItemPickerModal({
         {/* Header: Clean title "Edit Preset" or "Create Preset", without icon or description */}
         <div className="px-6 py-4 bg-[#14274E] text-white flex items-center justify-between shrink-0">
           <h2 className="text-base font-black tracking-tight">
-            {isCreatingNewPreset ? 'Create Preset' : 'Edit Preset'}
+            {title || (isCreatingNewPreset ? 'Create Preset' : 'Edit Preset')}
           </h2>
           <button
             type="button"

@@ -586,7 +586,9 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   const itemsSoldCount = orderItemsData.length + completedTicketItems.length
 
   // Previous period KPIs for % delta
-  const prevCompletedOrders = prevOrders.filter((o) => o['ORDER_STATUS'] === 'COMPLETED')
+  const prevCompletedOrders = (prevOrders as Array<Record<string, unknown>>).filter(
+    (o) => !o['ORDER_STATUS'] || o['ORDER_STATUS'] === 'COMPLETED',
+  )
   const prevRestaurantRevenue = prevCompletedOrders.reduce((sum, o) => sum + (Number(o['TOTAL_BILL']) || 0), 0)
   const prevTicketRevenue = prevCompletedTicketsList.reduce((sum, t) => sum + t.totalBill, 0)
   const prevRevenue = prevRestaurantRevenue + prevTicketRevenue

@@ -586,7 +586,7 @@ export async function calculateServiceShiftMetrics(
 
 // ─── Mapper ───────────────────────────────────────────────────────────────────
 
-function mapDbRowToServiceShift(row: Record<string, unknown>, staff?: StaffCodeItem): ServiceShift {
+export function mapDbRowToServiceShift(row: Record<string, unknown>, staff?: StaffCodeItem): ServiceShift {
   return {
     shiftId: Number(row['SHIFT_ID']),
     staffId: Number(row['STAFF_ID']),
