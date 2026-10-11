@@ -8,6 +8,7 @@ import type {
 import { fetchStaffCodes } from './staffCodeService'
 import { logCashierAction } from './cashierAuditService'
 import { getActiveBusinessDay } from './businessDayService'
+import { ensureRoleStaffRecord, recordShiftHistoryAndReset } from './shiftHistoryService'
 
 const LOCAL_STORAGE_SERVICE_SHIFT_ID = 'monolith_service_shift_id'
 const LOCAL_STORAGE_SERVICE_STAFF_ID = 'monolith_service_staff_id'
@@ -206,24 +207,19 @@ export async function startServiceShift(staffId: number): Promise<ServiceShift> 
     console.warn('[serviceShiftService] Update Staff_Codes shift error:', err)
   }
 
-  // 2. Insert record into Service_Staff
+  // 2. Ensure row in Service_Staff and reset metrics to 0
   try {
-    const serviceStaffPayload = {
-      SERVICE_ID: shiftId,
-      STAFF_ID: staffId,
-      TOTAL_ORDERS_PUNCHED: 0,
-    }
-
-    const { error: ssErr } = await supabase
+    await ensureRoleStaffRecord(staffId, 'SERVICE')
+    await supabase
       .schema('staff')
       .from('Service_Staff')
-      .insert([serviceStaffPayload])
-
-    if (ssErr) {
-      await supabase.from('Service_Staff').insert([serviceStaffPayload])
-    }
+      .update({
+        TOTAL_ORDERS_PUNCHED: 0,
+        TOTAL_PUNCHED_ORDERS_VALUE: 0,
+      })
+      .eq('STAFF_ID', staffId)
   } catch (err) {
-    console.warn('[serviceShiftService] Insert Service_Staff error:', err)
+    console.warn('[serviceShiftService] Reset Service_Staff error:', err)
   }
 
   localStorage.setItem(LOCAL_STORAGE_SERVICE_SHIFT_ID, String(newShift.shiftId))
@@ -254,27 +250,34 @@ export async function startServiceShift(staffId: number): Promise<ServiceShift> 
 
 async function findActiveServiceShiftForStaff(staffId: number): Promise<ServiceShift | null> {
   try {
-    const { data, error } = await supabase
+    const { data: codeData } = await supabase
       .schema('staff')
-      .from('Service_Shifts')
+      .from('Staff_Codes')
       .select('*')
-      .eq('STAFF_ID', staffId)
-      .eq('STATUS', 'ACTIVE')
+      .eq('CODE_ID', staffId)
+      .eq('SHIFT_STATUS', 'ONGOING')
       .maybeSingle()
 
-    if (!error && data) {
-      return mapDbRowToServiceShift(data)
-    }
+    if (codeData) {
+      const { data: ssData } = await supabase
+        .schema('staff')
+        .from('Service_Staff')
+        .select('*')
+        .eq('STAFF_ID', staffId)
+        .limit(1)
+        .maybeSingle()
 
-    const { data: pubData } = await supabase
-      .from('Service_Shifts')
-      .select('*')
-      .eq('STAFF_ID', staffId)
-      .eq('STATUS', 'ACTIVE')
-      .maybeSingle()
-
-    if (pubData) {
-      return mapDbRowToServiceShift(pubData)
+      return {
+        shiftId: Number(codeData.CODE_ID),
+        staffId: Number(codeData.CODE_ID),
+        startedAt: String(codeData.SHIFT_START || new Date().toISOString()),
+        endedAt: null,
+        status: 'ACTIVE',
+        totalOrdersPunched: Number(ssData?.TOTAL_ORDERS_PUNCHED || 0),
+        totalTablesServed: 0,
+        staffName: String(codeData.STAFF_NAME || 'Server'),
+        staffRole: 'SERVICE',
+      }
     }
   } catch {
     // fallback
@@ -288,53 +291,48 @@ async function findActiveServiceShiftForStaff(staffId: number): Promise<ServiceS
  * Authoritatively retrieves active service shift.
  */
 export async function getActiveServiceShift(shiftId?: number): Promise<ServiceShift | null> {
-  const targetId = shiftId ?? (Number(localStorage.getItem(LOCAL_STORAGE_SERVICE_SHIFT_ID)) || null)
-  if (!targetId) return null
-
-  let shift: ServiceShift | null = null
+  const staffId = Number(localStorage.getItem(LOCAL_STORAGE_SERVICE_STAFF_ID)) || null
+  if (!staffId) return null
 
   try {
-    const { data, error } = await supabase
+    const { data: codeData } = await supabase
       .schema('staff')
-      .from('Service_Shifts')
+      .from('Staff_Codes')
       .select('*')
-      .eq('SHIFT_ID', targetId)
+      .eq('CODE_ID', staffId)
+      .eq('SHIFT_STATUS', 'ONGOING')
       .maybeSingle()
 
-    if (!error && data) {
-      shift = mapDbRowToServiceShift(data)
-    } else {
-      const { data: pubData } = await supabase
-        .from('Service_Shifts')
+    if (codeData) {
+      const { data: ssData } = await supabase
+        .schema('staff')
+        .from('Service_Staff')
         .select('*')
-        .eq('SHIFT_ID', targetId)
+        .eq('STAFF_ID', staffId)
+        .limit(1)
         .maybeSingle()
 
-      if (pubData) {
-        shift = mapDbRowToServiceShift(pubData)
+      return {
+        shiftId: Number(codeData.CODE_ID),
+        staffId: Number(codeData.CODE_ID),
+        startedAt: String(codeData.SHIFT_START || new Date().toISOString()),
+        endedAt: null,
+        status: 'ACTIVE',
+        totalOrdersPunched: Number(ssData?.TOTAL_ORDERS_PUNCHED || 0),
+        totalTablesServed: 0,
+        staffName: String(codeData.STAFF_NAME || 'Server'),
+        staffRole: 'SERVICE',
       }
     }
   } catch {
     // ignore
   }
 
-  if (!shift) {
-    const fallbackShifts = getFallbackServiceShifts()
-    shift = fallbackShifts.find((s) => s.shiftId === targetId) ?? null
-  }
+  const targetId = shiftId ?? (Number(localStorage.getItem(LOCAL_STORAGE_SERVICE_SHIFT_ID)) || null)
+  if (!targetId) return null
 
-  if (!shift || shift.status !== 'ACTIVE') {
-    return null
-  }
-
-  if (shift.staffId) {
-    const validation = await validateServiceStaff(shift.staffId)
-    if (validation.valid && validation.staff) {
-      shift.staffName = validation.staff.staffName
-      shift.staffRole = validation.staff.staffRole
-    }
-  }
-
+  const fallbackShifts = getFallbackServiceShifts()
+  const shift = fallbackShifts.find((s) => s.shiftId === targetId && s.status === 'ACTIVE') ?? null
   return shift
 }
 
@@ -375,39 +373,18 @@ export async function endServiceShift(
     staffRole: activeShift?.staffRole,
   }
 
-  // 1. Update in Supabase (Staff_Codes & Service_Staff)
+  // 1. Record Shift_History, reset Service_Staff, and mark Staff_Codes ended in Supabase
   try {
-    const codePayload = {
-      SHIFT_STATUS: 'ENDED',
-      SHIFT_END: now,
-    }
     if (updatedShift.staffId) {
-      const { error: codeErr } = await supabase
-        .schema('staff')
-        .from('Staff_Codes')
-        .update(codePayload)
-        .eq('CODE_ID', updatedShift.staffId)
-
-      if (codeErr) {
-        await supabase.from('Staff_Codes').update(codePayload).eq('CODE_ID', updatedShift.staffId)
-      }
-
-      // Update Service_Staff
-      const ssPayload = {
-        TOTAL_ORDERS_PUNCHED: finalOrders,
-      }
-      const { error: ssErr } = await supabase
-        .schema('staff')
-        .from('Service_Staff')
-        .update(ssPayload)
-        .eq('STAFF_ID', updatedShift.staffId)
-
-      if (ssErr) {
-        await supabase.from('Service_Staff').update(ssPayload).eq('STAFF_ID', updatedShift.staffId)
-      }
+      await recordShiftHistoryAndReset(updatedShift.staffId, {
+        staffName: updatedShift.staffName,
+        staffRole: 'SERVICE',
+        startedAt: updatedShift.startedAt,
+        endedAt: now,
+      })
     }
   } catch (err) {
-    console.warn('[serviceShiftService] Failed to update shift in Supabase:', err)
+    console.warn('[serviceShiftService] Failed to record shift history and reset in Supabase:', err)
   }
 
   // 2. Fallback
@@ -439,54 +416,51 @@ export async function endServiceShift(
 }
 
 /**
- * Increments total orders punched in Service_Staff when a server punches an order.
+ * Increments total orders punched and order value in Service_Staff when a server punches an order.
  */
-export async function recordServiceOrderPunched(amount = 1): Promise<void> {
+export async function recordServiceOrderPunched(amount = 1, orderValue = 0): Promise<void> {
   const staffIdStr = localStorage.getItem(LOCAL_STORAGE_SERVICE_STAFF_ID)
   if (!staffIdStr) return
   const staffId = Number(staffIdStr)
   if (!staffId) return
 
   try {
+    await ensureRoleStaffRecord(staffId, 'SERVICE')
+
     let currentRecord: Record<string, unknown> | null = null
     const { data: schemaData } = await supabase
       .schema('staff')
       .from('Service_Staff')
       .select('*')
       .eq('STAFF_ID', staffId)
-      .order('SERVICE_ID', { ascending: false })
       .limit(1)
       .maybeSingle()
 
-    if (schemaData) currentRecord = schemaData as Record<string, unknown>
-    else {
+    if (schemaData) {
+      currentRecord = schemaData as Record<string, unknown>
+    } else {
       const { data: pubData } = await supabase
         .from('Service_Staff')
         .select('*')
         .eq('STAFF_ID', staffId)
-        .order('SERVICE_ID', { ascending: false })
         .limit(1)
         .maybeSingle()
       if (pubData) currentRecord = pubData as Record<string, unknown>
     }
 
     const currentPunched = Number(currentRecord?.TOTAL_ORDERS_PUNCHED || 0)
+    const currentVal = Number(currentRecord?.TOTAL_PUNCHED_ORDERS_VALUE || 0)
     const newPunched = currentPunched + amount
+    const newVal = currentVal + Number(orderValue || 0)
 
-    if (currentRecord?.SERVICE_ID) {
-      await supabase
-        .schema('staff')
-        .from('Service_Staff')
-        .update({ TOTAL_ORDERS_PUNCHED: newPunched })
-        .eq('SERVICE_ID', currentRecord.SERVICE_ID)
-    } else {
-      const payload = {
-        SERVICE_ID: Date.now(),
-        STAFF_ID: staffId,
+    await supabase
+      .schema('staff')
+      .from('Service_Staff')
+      .update({
         TOTAL_ORDERS_PUNCHED: newPunched,
-      }
-      await supabase.schema('staff').from('Service_Staff').insert([payload])
-    }
+        TOTAL_PUNCHED_ORDERS_VALUE: newVal,
+      })
+      .eq('STAFF_ID', staffId)
   } catch (err) {
     console.warn('[serviceShiftService] recordServiceOrderPunched error:', err)
   }
@@ -527,68 +501,50 @@ export async function calculateServiceShiftMetrics(
     console.warn('[serviceShiftService] Restaurant_Orders metrics lookup error:', err)
   }
 
-  // 2. Query Completed_Orders (orders settled/completed during this shift)
+  // 2. Query system_history.Order_History (orders settled/completed during this shift)
   try {
-    const { data: compOrders, error: compErr } = await supabase
-      .from('Completed_Orders')
-      .select('ORIGINAL_ORDER_ID, TABLE_ID, TIME, STAFF_ID, COMPLETED_AT')
+    const { data: histOrders, error: histErr } = await supabase
+      .schema('system_history')
+      .from('Order_History')
+      .select('ORIGINAL_ORDER_ID, ORDER_ID, TABLE_ID, TIME, COMPLETED_AT, FROM_SERVICE_ID')
       .or(`TIME.gte.${startedAt},COMPLETED_AT.gte.${startedAt}`)
 
-    if (!compErr && compOrders) {
-      for (const c of compOrders) {
-        if (staffId && c.STAFF_ID != null && Number(c.STAFF_ID) !== staffId) {
+    if (!histErr && histOrders) {
+      for (const c of histOrders) {
+        if (staffId && c.FROM_SERVICE_ID != null && Number(c.FROM_SERVICE_ID) !== staffId) {
           continue
         }
-        const oId = Number(c.ORIGINAL_ORDER_ID)
+        const oId = Number(c.ORIGINAL_ORDER_ID || c.ORDER_ID)
         if (oId) {
           orderIds.add(oId)
           if (c.TABLE_ID) tableIds.add(Number(c.TABLE_ID))
         }
       }
-    } else {
-      // Fallback to system_history schema
-      const { data: sysOrders } = await supabase
-        .schema('system_history')
-        .from('Completed_Orders')
-        .select('ORIGINAL_ORDER_ID, TABLE_ID, TIME, STAFF_ID, COMPLETED_AT')
-        .or(`TIME.gte.${startedAt},COMPLETED_AT.gte.${startedAt}`)
-
-      if (sysOrders) {
-        for (const c of sysOrders) {
-          if (staffId && c.STAFF_ID != null && Number(c.STAFF_ID) !== staffId) {
-            continue
-          }
-          const oId = Number(c.ORIGINAL_ORDER_ID)
-          if (oId) {
-            orderIds.add(oId)
-            if (c.TABLE_ID) tableIds.add(Number(c.TABLE_ID))
-          }
-        }
-      }
     }
   } catch (err) {
-    console.warn('[serviceShiftService] Completed_Orders metrics lookup error:', err)
+    console.warn('[serviceShiftService] Order_History metrics lookup error:', err)
   }
 
-  // 3. Query operational Audit_Logs for ORDER_CREATED actions
+  // 3. Query operational system_history.Action_History for ORDER_CREATED actions
   try {
-    const { data: auditRows } = await supabase
-      .schema('staff')
-      .from('Audit_Logs')
+    const { data: schemaRows } = await supabase
+      .schema('system_history')
+      .from('Action_History')
       .select('*')
-      .eq('ACTION', 'ORDER_CREATED')
+      .eq('ACTION_TYPE', 'ORDER_CREATED')
       .gte('CREATED_AT', startedAt)
 
-    if (auditRows) {
-      for (const row of auditRows) {
-        if (staffId && row.STAFF_ID != null && Number(row.STAFF_ID) !== staffId) {
+    if (schemaRows) {
+      for (const row of schemaRows) {
+        const staffCode = row.STAFF_ID != null ? Number(row.STAFF_ID) : null
+        if (staffId && staffCode != null && staffCode !== staffId) {
           continue
         }
-        const meta = typeof row.METADATA === 'string' ? JSON.parse(row.METADATA) : (row.METADATA ?? {})
-        const oId = Number(meta?.order_id ?? row.ENTITY_ID)
-        if (oId) orderIds.add(oId)
-        const tId = Number(meta?.table_id)
-        if (tId) tableIds.add(tId)
+        const desc = String(row.DESCRIPTION || '')
+        const orderMatch = desc.match(/Order #(\d+)/i)
+        if (orderMatch) orderIds.add(Number(orderMatch[1]))
+        const tableMatch = desc.match(/Table (\d+)/i)
+        if (tableMatch) tableIds.add(Number(tableMatch[1]))
       }
     }
   } catch {

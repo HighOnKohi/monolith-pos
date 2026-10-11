@@ -1,11 +1,61 @@
 import { supabase } from '@/lib/supabase'
 import { DEFAULT_FOOD_PLACEHOLDER, type MenuItem, type Category } from '@/types/menu'
+import { isMorningMenuTime } from '@/services/configurationService'
+
+export interface ScheduledPresetItems {
+  wholeDayItemIds?: string[]
+  morningItemIds?: string[]
+  afternoonItemIds?: string[]
+}
 
 export interface MenuPreset {
   PRESET_ID: number
   PRESET_NAME: string
   IS_DEFAULT?: boolean
+  WHOLE_DAY_ITEM_IDS: string[]
+  MORNING_ITEM_IDS: string[]
+  AFTERNOON_ITEM_IDS: string[]
   ITEM_IDS: string[]
+}
+
+/**
+ * Resolves active item IDs for a preset based on the current time and morning cutoff.
+ * If morning: returns Whole Day items + Morning items.
+ * If afternoon: returns Whole Day items + Afternoon items.
+ */
+export function resolveActivePresetItems(
+  preset: {
+    WHOLE_DAY_ITEM_IDS?: string[]
+    MORNING_ITEM_IDS?: string[]
+    AFTERNOON_ITEM_IDS?: string[]
+  },
+  cutoffTime?: string,
+): string[] {
+  const wholeDay = (preset.WHOLE_DAY_ITEM_IDS ?? []).map(String)
+  const morning = (preset.MORNING_ITEM_IDS ?? []).map(String)
+  const afternoon = (preset.AFTERNOON_ITEM_IDS ?? []).map(String)
+
+  const isMorning = isMorningMenuTime(cutoffTime)
+  const scheduled = isMorning ? morning : afternoon
+
+  const combined = new Set([...wholeDay, ...scheduled])
+  return Array.from(combined)
+}
+
+/**
+ * Returns all item IDs across all schedules in a preset.
+ */
+export function getAllPresetItemIds(preset: {
+  WHOLE_DAY_ITEM_IDS?: string[]
+  MORNING_ITEM_IDS?: string[]
+  AFTERNOON_ITEM_IDS?: string[]
+}): string[] {
+  const combined = new Set([
+    ...(preset.WHOLE_DAY_ITEM_IDS ?? []).map(String),
+    ...(preset.MORNING_ITEM_IDS ?? []).map(String),
+    ...(preset.AFTERNOON_ITEM_IDS ?? []).map(String),
+  ])
+  return Array.from(combined)
 }
 
 export function sortMenuPresets(presets: MenuPreset[]): MenuPreset[] {
@@ -29,24 +79,43 @@ export async function fetchMenuPresets(): Promise<MenuPreset[]> {
     const { data, error } = await supabase
       .schema('menu')
       .from('Menu_Presets')
-      .select('PRESET_ID, PRESET_NAME, IS_DEFAULT, ITEM_IDS')
+      .select('PRESET_ID, PRESET_NAME, IS_DEFAULT, WHOLE_DAY_ITEM_IDS, MORNING_ITEM_IDS, AFTERNOON_ITEM_IDS')
       .order('PRESET_ID')
 
     if (!error && data) {
-      let presets: MenuPreset[] = data.map((row) => ({
-        PRESET_ID: Number(row.PRESET_ID),
-        PRESET_NAME: String(row.PRESET_NAME),
-        IS_DEFAULT: Boolean(row.IS_DEFAULT),
-        ITEM_IDS: Array.isArray(row.ITEM_IDS)
-          ? row.ITEM_IDS.map((id: unknown) => String(id))
-          : [],
-      }))
+      let presets: MenuPreset[] = data.map((row) => {
+        const wholeDay = Array.isArray(row.WHOLE_DAY_ITEM_IDS)
+          ? row.WHOLE_DAY_ITEM_IDS.map((id: unknown) => String(id))
+          : []
+        const morning = Array.isArray(row.MORNING_ITEM_IDS)
+          ? row.MORNING_ITEM_IDS.map((id: unknown) => String(id))
+          : []
+        const afternoon = Array.isArray(row.AFTERNOON_ITEM_IDS)
+          ? row.AFTERNOON_ITEM_IDS.map((id: unknown) => String(id))
+          : []
+
+        const activeIds = resolveActivePresetItems({
+          WHOLE_DAY_ITEM_IDS: wholeDay,
+          MORNING_ITEM_IDS: morning,
+          AFTERNOON_ITEM_IDS: afternoon,
+        })
+
+        return {
+          PRESET_ID: Number(row.PRESET_ID),
+          PRESET_NAME: String(row.PRESET_NAME),
+          IS_DEFAULT: Boolean(row.IS_DEFAULT),
+          WHOLE_DAY_ITEM_IDS: wholeDay,
+          MORNING_ITEM_IDS: morning,
+          AFTERNOON_ITEM_IDS: afternoon,
+          ITEM_IDS: activeIds,
+        }
+      })
 
       // Ensure Global preset exists
       const hasGlobal = presets.some((p) => p.PRESET_NAME.trim().toLowerCase() === 'global')
       if (!hasGlobal) {
         try {
-          const globalPreset = await createMenuPreset('Global', [])
+          const globalPreset = await createMenuPreset('Global', { wholeDayItemIds: [] })
           presets.push(globalPreset)
         } catch {
           // Non-fatal if creation fails
@@ -57,7 +126,7 @@ export async function fetchMenuPresets(): Promise<MenuPreset[]> {
       return sortMenuPresets(presets)
     }
   } catch {
-    // Fallback if ITEM_IDS column is being migrated
+    // Fallback if schema is being adjusted
   }
 
   const { data: fallbackData, error: fallbackError } = await supabase
@@ -68,21 +137,14 @@ export async function fetchMenuPresets(): Promise<MenuPreset[]> {
 
   if (fallbackError) throw fallbackError
 
-  const fallbackPresetMap: Record<number, string[]> = {
-    1: ['5', '6', '7', '8'],
-    2: ['10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '33', '34'],
-    5: ['27', '28', '29'],
-    6: [],
-    7: ['32'],
-  }
-
-
-
   return (fallbackData ?? []).map((row) => ({
     PRESET_ID: Number(row.PRESET_ID),
     PRESET_NAME: String(row.PRESET_NAME),
     IS_DEFAULT: Boolean(row.IS_DEFAULT),
-    ITEM_IDS: fallbackPresetMap[Number(row.PRESET_ID)] ?? [],
+    WHOLE_DAY_ITEM_IDS: [],
+    MORNING_ITEM_IDS: [],
+    AFTERNOON_ITEM_IDS: [],
+    ITEM_IDS: [],
   }))
 }
 
@@ -139,57 +201,107 @@ export async function setDefaultMenuPreset(presetId: number): Promise<void> {
   }
 }
 
-export async function createMenuPreset(name: string, initialItemIds: string[] = []): Promise<MenuPreset> {
-  const numericItemIds = initialItemIds.map(Number).filter((n) => !isNaN(n))
+export async function createMenuPreset(
+  name: string,
+  initialItems: ScheduledPresetItems | string[] = {},
+): Promise<MenuPreset> {
+  const wholeDayNumbers = (Array.isArray(initialItems) ? initialItems : (initialItems.wholeDayItemIds ?? []))
+    .map(Number)
+    .filter((n) => !isNaN(n))
+  const morningNumbers = (Array.isArray(initialItems) ? [] : (initialItems.morningItemIds ?? []))
+    .map(Number)
+    .filter((n) => !isNaN(n))
+  const afternoonNumbers = (Array.isArray(initialItems) ? [] : (initialItems.afternoonItemIds ?? []))
+    .map(Number)
+    .filter((n) => !isNaN(n))
+
   const { data, error } = await supabase
     .schema('menu')
     .from('Menu_Presets')
     .insert({
       PRESET_NAME: name,
       IS_DEFAULT: false,
-      ITEM_IDS: numericItemIds,
+      WHOLE_DAY_ITEM_IDS: wholeDayNumbers,
+      MORNING_ITEM_IDS: morningNumbers,
+      AFTERNOON_ITEM_IDS: afternoonNumbers,
     })
-    .select('PRESET_ID, PRESET_NAME, IS_DEFAULT, ITEM_IDS')
+    .select('PRESET_ID, PRESET_NAME, IS_DEFAULT, WHOLE_DAY_ITEM_IDS, MORNING_ITEM_IDS, AFTERNOON_ITEM_IDS')
     .single()
+
   if (error) throw error
+
+  const wholeDay = Array.isArray(data.WHOLE_DAY_ITEM_IDS) ? data.WHOLE_DAY_ITEM_IDS.map(String) : []
+  const morning = Array.isArray(data.MORNING_ITEM_IDS) ? data.MORNING_ITEM_IDS.map(String) : []
+  const afternoon = Array.isArray(data.AFTERNOON_ITEM_IDS) ? data.AFTERNOON_ITEM_IDS.map(String) : []
+
   return {
     PRESET_ID: Number(data.PRESET_ID),
     PRESET_NAME: String(data.PRESET_NAME),
     IS_DEFAULT: Boolean(data.IS_DEFAULT),
-    ITEM_IDS: Array.isArray(data.ITEM_IDS) ? data.ITEM_IDS.map(String) : [],
+    WHOLE_DAY_ITEM_IDS: wholeDay,
+    MORNING_ITEM_IDS: morning,
+    AFTERNOON_ITEM_IDS: afternoon,
+    ITEM_IDS: resolveActivePresetItems({
+      WHOLE_DAY_ITEM_IDS: wholeDay,
+      MORNING_ITEM_IDS: morning,
+      AFTERNOON_ITEM_IDS: afternoon,
+    }),
   }
 }
 
-export async function fetchPresetItemIds(presetId: number): Promise<string[]> {
+export async function fetchPresetItemIds(presetId: number): Promise<ScheduledPresetItems> {
   try {
     const { data, error } = await supabase
       .schema('menu')
       .from('Menu_Presets')
-      .select('ITEM_IDS')
+      .select('WHOLE_DAY_ITEM_IDS, MORNING_ITEM_IDS, AFTERNOON_ITEM_IDS')
       .eq('PRESET_ID', presetId)
       .single()
 
     if (error) throw error
-    return Array.isArray(data?.ITEM_IDS) ? data.ITEM_IDS.map(String) : []
+    return {
+      wholeDayItemIds: Array.isArray(data?.WHOLE_DAY_ITEM_IDS) ? data.WHOLE_DAY_ITEM_IDS.map(String) : [],
+      morningItemIds: Array.isArray(data?.MORNING_ITEM_IDS) ? data.MORNING_ITEM_IDS.map(String) : [],
+      afternoonItemIds: Array.isArray(data?.AFTERNOON_ITEM_IDS) ? data.AFTERNOON_ITEM_IDS.map(String) : [],
+    }
   } catch (err) {
-    console.warn('[menuService] Error fetching preset ITEM_IDS:', err)
-    return []
+    console.warn('[menuService] Error fetching preset scheduled item IDs:', err)
+    return {
+      wholeDayItemIds: [],
+      morningItemIds: [],
+      afternoonItemIds: [],
+    }
   }
 }
 
-export async function savePresetItems(presetId: number, itemIds: string[]): Promise<void> {
-  const numericItemIds = itemIds.map(Number).filter((n) => !isNaN(n))
+export async function savePresetItems(
+  presetId: number,
+  items: ScheduledPresetItems | string[],
+): Promise<void> {
+  let payload: Record<string, unknown> = {}
+  if (Array.isArray(items)) {
+    payload = {
+      WHOLE_DAY_ITEM_IDS: items.map(Number).filter((n) => !isNaN(n)),
+    }
+  } else {
+    payload = {
+      WHOLE_DAY_ITEM_IDS: (items.wholeDayItemIds ?? []).map(Number).filter((n) => !isNaN(n)),
+      MORNING_ITEM_IDS: (items.morningItemIds ?? []).map(Number).filter((n) => !isNaN(n)),
+      AFTERNOON_ITEM_IDS: (items.afternoonItemIds ?? []).map(Number).filter((n) => !isNaN(n)),
+    }
+  }
+
   const { error } = await supabase
     .schema('menu')
     .from('Menu_Presets')
-    .update({ ITEM_IDS: numericItemIds })
+    .update(payload)
     .eq('PRESET_ID', presetId)
 
   if (error) throw error
 
   // Broadcast preset items change event
   if (typeof window !== 'undefined') {
-    const detail = { type: 'menu_preset_items_changed', presetId, itemIds }
+    const detail = { type: 'menu_preset_items_changed', presetId, items }
     window.dispatchEvent(new CustomEvent('monolith-order-update', { detail }))
     window.dispatchEvent(new CustomEvent('menu-preset-items-changed', { detail }))
     try {
@@ -380,23 +492,7 @@ export async function fetchMenuItems(): Promise<MenuItem[]> {
     })
   } catch (err) {
     console.warn('[menuService] Could not calculate best sellers from Order_Items:', err)
-    // Fallback: mark first item of each category
-    const seenCategories = new Set<string>()
-    return rawItems.map((item) => {
-      const isBest = item.isBestSeller || !seenCategories.has(item.categoryId)
-      if (isBest) seenCategories.add(item.categoryId)
-      let badge = item.badge
-      if (item.discountPercent && item.discountPercent > 0) {
-        badge = { label: `${item.discountPercent}% OFF`, type: 'discount' }
-      } else if (isBest) {
-        badge = { label: 'Best Seller', type: 'best-seller' }
-      }
-      return {
-        ...item,
-        isBestSeller: isBest,
-        badge,
-      }
-    })
+    return rawItems
   }
 }
 
@@ -770,12 +866,26 @@ export async function deleteMenuItem(id: string): Promise<void> {
 
   // 2. Remove this item ID from any presets that currently include it
   try {
-    const { data: presets } = await supabase.schema('menu').from('Menu_Presets').select('PRESET_ID, ITEM_IDS')
+    const { data: presets } = await supabase
+      .schema('menu')
+      .from('Menu_Presets')
+      .select('PRESET_ID, WHOLE_DAY_ITEM_IDS, MORNING_ITEM_IDS, AFTERNOON_ITEM_IDS')
     if (presets && presets.length > 0) {
-      for (const p of presets) {
-        if (Array.isArray(p.ITEM_IDS) && p.ITEM_IDS.includes(numId)) {
-          const updatedIds = p.ITEM_IDS.filter((itemId: number) => itemId !== numId)
-          await supabase.schema('menu').from('Menu_Presets').update({ ITEM_IDS: updatedIds }).eq('PRESET_ID', p.PRESET_ID)
+      for (const p of presets as Record<string, unknown>[]) {
+        const whole = Array.isArray(p.WHOLE_DAY_ITEM_IDS) ? (p.WHOLE_DAY_ITEM_IDS as (number | string)[]).map(Number) : []
+        const morning = Array.isArray(p.MORNING_ITEM_IDS) ? (p.MORNING_ITEM_IDS as (number | string)[]).map(Number) : []
+        const afternoon = Array.isArray(p.AFTERNOON_ITEM_IDS) ? (p.AFTERNOON_ITEM_IDS as (number | string)[]).map(Number) : []
+
+        const hasInWhole = whole.includes(numId)
+        const hasInMorning = morning.includes(numId)
+        const hasInAfternoon = afternoon.includes(numId)
+
+        if (hasInWhole || hasInMorning || hasInAfternoon) {
+          await supabase.schema('menu').from('Menu_Presets').update({
+            WHOLE_DAY_ITEM_IDS: whole.filter((id) => id !== numId),
+            MORNING_ITEM_IDS: morning.filter((id) => id !== numId),
+            AFTERNOON_ITEM_IDS: afternoon.filter((id) => id !== numId),
+          }).eq('PRESET_ID', p.PRESET_ID)
         }
       }
     }

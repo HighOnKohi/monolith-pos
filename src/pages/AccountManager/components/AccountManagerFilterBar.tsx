@@ -98,6 +98,8 @@ export const AccountManagerFilterBar: React.FC<AccountManagerFilterBarProps> = (
             <option value="DISPATCHER">{ROLE_DEFINITIONS.DISPATCHER.label}</option>
             <option value="SERVICE">{ROLE_DEFINITIONS.SERVICE.label}</option>
             <option value="CASHIER">{ROLE_DEFINITIONS.CASHIER.label}</option>
+            <option value="ORGANIZER">{ROLE_DEFINITIONS.ORGANIZER.label}</option>
+            <option value="RECEPTIONIST">{ROLE_DEFINITIONS.RECEPTIONIST.label}</option>
           </select>
 
           {/* Account Status Filter */}

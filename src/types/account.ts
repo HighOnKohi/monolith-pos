@@ -4,6 +4,8 @@ export type StaffRole =
   | 'DISPATCHER'
   | 'SERVICE'
   | 'CASHIER'
+  | 'ORGANIZER'
+  | 'RECEPTIONIST'
   | 'ADMIN'
   | 'MANAGER'
   | 'KITCHEN'
@@ -64,6 +66,8 @@ export interface StaffCodeSummaryStats {
   dispatcherCount: number
   serviceCount: number
   cashierCount: number
+  organizerCount: number
+  receptionistCount: number
   ongoingShiftsCount: number
 }
 
@@ -153,6 +157,24 @@ export const ROLE_DEFINITIONS: Record<StaffRole, RoleMeta> = {
     badgeText: 'text-emerald-700',
     badgeBorder: 'border-emerald-200/80',
     defaultPermissions: ['access_cashier', 'manage_tables', 'view_order_logs'],
+  },
+  ORGANIZER: {
+    role: 'ORGANIZER',
+    label: 'Organizer',
+    description: 'Restaurant layout, menu presets, catalog library, and event scheduling management.',
+    badgeBg: 'bg-violet-50',
+    badgeText: 'text-violet-700',
+    badgeBorder: 'border-violet-200/80',
+    defaultPermissions: ['manage_tables', 'manage_menu', 'manage_events'],
+  },
+  RECEPTIONIST: {
+    role: 'RECEPTIONIST',
+    label: 'Receptionist',
+    description: 'Front desk reception, table seating assignments, QR code management, and guest arrivals.',
+    badgeBg: 'bg-teal-50',
+    badgeText: 'text-teal-700',
+    badgeBorder: 'border-teal-200/80',
+    defaultPermissions: ['manage_tables'],
   },
   ADMIN: {
     role: 'ADMIN',

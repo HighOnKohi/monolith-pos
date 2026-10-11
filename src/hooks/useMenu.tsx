@@ -9,7 +9,9 @@ import {
   createMenuPreset,
   setDefaultMenuPreset,
   type MenuPreset,
+  type ScheduledPresetItems,
 } from '@/services/menuService'
+import { MORNING_MENU_CUTOFF_CHANGED } from '@/services/configurationService'
 import { MENU_ITEM_STATUS_UPDATED, applyMenuUpdate } from '@/hooks/useRealtimeMenu'
 
 export const MENU_PRESET_CHANGED = 'menu-preset-changed'
@@ -28,7 +30,7 @@ interface UseMenuResult {
   presets: MenuPreset[]
   activePresetId: number
   setActivePresetId: (id: number) => Promise<void> | void
-  createPreset: (name: string, initialItemIds?: string[]) => Promise<MenuPreset>
+  createPreset: (name: string, initialItems?: string[] | ScheduledPresetItems) => Promise<MenuPreset>
 }
 
 const MenuContext = createContext<UseMenuResult | null>(null)
@@ -116,8 +118,8 @@ function useMenuState(enabled: boolean): UseMenuResult {
     void load(false, id)
   }, [load])
 
-  const createPreset = useCallback(async (name: string, initialItemIds?: string[]) => {
-    const preset = await createMenuPreset(name, initialItemIds)
+  const createPreset = useCallback(async (name: string, initialItems?: string[] | ScheduledPresetItems) => {
+    const preset = await createMenuPreset(name, initialItems)
     setPresets((current) => [...current, preset])
     return preset
   }, [])
@@ -229,18 +231,30 @@ function useMenuState(enabled: boolean): UseMenuResult {
       loadIfActive(false)
     }
 
+    const handleCutoffChanged = () => {
+      loadIfActive(false)
+    }
+
+    // Periodically re-check (e.g. every 30 seconds) to ensure schedule switches smoothly at cutoff time
+    const scheduleInterval = setInterval(() => {
+      loadIfActive(false)
+    }, 30000)
+
     window.addEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuItemStatusUpdate)
     window.addEventListener(MENU_PRESET_CHANGED, handlePresetChange)
     window.addEventListener('menu-preset-items-changed', handlePresetItemsChanged)
+    window.addEventListener(MORNING_MENU_CUTOFF_CHANGED, handleCutoffChanged)
     window.addEventListener('monolith-order-update', handleBroadcastOrderUpdate)
     window.addEventListener('storage', handlePresetChange)
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
       cancelled = true
+      clearInterval(scheduleInterval)
       window.removeEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuItemStatusUpdate)
       window.removeEventListener(MENU_PRESET_CHANGED, handlePresetChange)
       window.removeEventListener('menu-preset-items-changed', handlePresetItemsChanged)
+      window.removeEventListener(MORNING_MENU_CUTOFF_CHANGED, handleCutoffChanged)
       window.removeEventListener('monolith-order-update', handleBroadcastOrderUpdate)
       window.removeEventListener('storage', handlePresetChange)
       document.removeEventListener('visibilitychange', handleVisibilityChange)

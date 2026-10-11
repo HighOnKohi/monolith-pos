@@ -1,4 +1,9 @@
 import { supabase } from '@/lib/supabase'
+import {
+  ensureRoleStaffRecord,
+  deleteRoleStaffRecord,
+  recordShiftHistoryAndReset,
+} from './shiftHistoryService'
 import type {
   StaffCodeItem,
   StaffCodeFormData,
@@ -74,10 +79,12 @@ function mapDbRowToStaffCode(row: Record<string, unknown>): StaffCodeItem {
   const codeId = Number(row['CODE_ID'])
   const staffName = String(row['STAFF_NAME'] || 'Unnamed Staff')
   
-  // Normalize role to DISPATCHER | SERVICE | CASHIER
+  // Normalize role to DISPATCHER | SERVICE | CASHIER | ORGANIZER | RECEPTIONIST
   let rawRole = String(row['STAFF_ROLE'] || 'DISPATCHER').toUpperCase()
   let staffRole: StaffRole = 'DISPATCHER'
-  if (rawRole === 'CASHIER') staffRole = 'CASHIER'
+  if (rawRole === 'ORGANIZER') staffRole = 'ORGANIZER'
+  else if (rawRole === 'RECEPTIONIST' || rawRole === 'RECEPTION') staffRole = 'RECEPTIONIST'
+  else if (rawRole === 'CASHIER') staffRole = 'CASHIER'
   else if (rawRole === 'SERVICE' || rawRole === 'STAFF' || rawRole === 'SERVER') staffRole = 'SERVICE'
   else if (rawRole === 'DISPATCHER' || rawRole === 'KITCHEN' || rawRole === 'ADMIN' || rawRole === 'MANAGER') staffRole = 'DISPATCHER'
 
@@ -257,6 +264,7 @@ export async function createStaffCode(data: StaffCodeFormData): Promise<StaffCod
 
     const codeItem = mapDbRowToStaffCode(inserted || payload)
     updateFallbackCache(codeItem)
+    await ensureRoleStaffRecord(codeItem.codeId, codeItem.staffRole)
     return codeItem
   } catch (err: unknown) {
     console.warn('[staffCodeService] Insert failed in Supabase, applying to fallback cache:', err)
@@ -340,6 +348,7 @@ export async function updateStaffCode(
 
     const codeItem = mapDbRowToStaffCode(updated || { CODE_ID: originalCodeId, ...updatePayload })
     updateFallbackCache(codeItem)
+    await ensureRoleStaffRecord(codeItem.codeId, codeItem.staffRole)
     return codeItem
   } catch (err) {
     console.warn('[staffCodeService] Update failed in Supabase, updating fallback cache:', err)
@@ -429,6 +438,12 @@ export async function toggleStaffCodeStatus(
  */
 export async function endStaffShiftManually(codeId: number): Promise<StaffCodeItem> {
   const now = new Date().toISOString()
+  try {
+    await recordShiftHistoryAndReset(codeId, { endedAt: now })
+  } catch (shErr) {
+    console.warn('[staffCodeService] recordShiftHistoryAndReset error:', shErr)
+  }
+
   const payload = {
     SHIFT_STATUS: 'ENDED',
     SHIFT_END: now,
@@ -505,6 +520,7 @@ export async function endStaffShiftManually(codeId: number): Promise<StaffCodeIt
  */
 export async function deleteStaffCode(codeId: number): Promise<void> {
   try {
+    await deleteRoleStaffRecord(codeId)
     const { error: schemaErr } = await supabase.schema('staff').from('Staff_Codes').delete().eq('CODE_ID', codeId)
     if (schemaErr) {
       const { error: pubErr } = await supabase.from('Staff_Codes').delete().eq('CODE_ID', codeId)
@@ -608,6 +624,8 @@ function calculateSummaryStats(codes: StaffCodeItem[]): StaffCodeSummaryStats {
     dispatcherCount: 0,
     serviceCount: 0,
     cashierCount: 0,
+    organizerCount: 0,
+    receptionistCount: 0,
     ongoingShiftsCount: 0,
   }
 
@@ -632,6 +650,12 @@ function calculateSummaryStats(codes: StaffCodeItem[]): StaffCodeSummaryStats {
       case 'CASHIER':
         stats.cashierCount++
         break
+      case 'ORGANIZER':
+        stats.organizerCount++
+        break
+      case 'RECEPTIONIST':
+        stats.receptionistCount++
+        break
     }
   }
 
@@ -648,3 +672,130 @@ function updateFallbackCache(item: StaffCodeItem): void {
   }
   saveFallbackCodes(all)
 }
+
+/**
+ * Validates whether a numeric staff code belongs to an active ORGANIZER.
+ */
+export async function validateOrganizerStaff(staffId: number): Promise<{
+  valid: boolean
+  staff?: StaffCodeItem
+  error?: string
+}> {
+  try {
+    let rawRow: Record<string, unknown> | null = null
+    const { data: schemaRow, error: schemaErr } = await supabase
+      .schema('staff')
+      .from('Staff_Codes')
+      .select('*')
+      .eq('CODE_ID', staffId)
+      .maybeSingle()
+
+    if (!schemaErr && schemaRow) {
+      rawRow = schemaRow as Record<string, unknown>
+    } else {
+      const { data: pubRow } = await supabase
+        .from('Staff_Codes')
+        .select('*')
+        .eq('CODE_ID', staffId)
+        .maybeSingle()
+      if (pubRow) rawRow = pubRow as Record<string, unknown>
+    }
+
+    if (!rawRow) {
+      return {
+        valid: false,
+        error: `Staff Code #${staffId} was not found. Please verify your Organizer code.`,
+      }
+    }
+
+    const staff = mapDbRowToStaffCode(rawRow)
+
+    if (staff.codeStatus === 'INACTIVE' || staff.status === 'INACTIVE') {
+      return {
+        valid: false,
+        error: `Staff #${staff.codeId} (${staff.staffName}) is currently inactive. Contact an administrator.`,
+      }
+    }
+
+    if (staff.staffRole !== 'ORGANIZER') {
+      return {
+        valid: false,
+        error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only ORGANIZER staff can access Management interfaces.`,
+      }
+    }
+
+    return {
+      valid: true,
+      staff,
+    }
+  } catch (err) {
+    return {
+      valid: false,
+      error: err instanceof Error ? err.message : 'Failed to verify Organizer staff code.',
+    }
+  }
+}
+
+/**
+ * Validates whether a numeric staff code belongs to an active RECEPTIONIST.
+ */
+export async function validateReceptionistStaff(staffId: number): Promise<{
+  valid: boolean
+  staff?: StaffCodeItem
+  error?: string
+}> {
+  try {
+    let rawRow: Record<string, unknown> | null = null
+    const { data: schemaRow, error: schemaErr } = await supabase
+      .schema('staff')
+      .from('Staff_Codes')
+      .select('*')
+      .eq('CODE_ID', staffId)
+      .maybeSingle()
+
+    if (!schemaErr && schemaRow) {
+      rawRow = schemaRow as Record<string, unknown>
+    } else {
+      const { data: pubRow } = await supabase
+        .from('Staff_Codes')
+        .select('*')
+        .eq('CODE_ID', staffId)
+        .maybeSingle()
+      if (pubRow) rawRow = pubRow as Record<string, unknown>
+    }
+
+    if (!rawRow) {
+      return {
+        valid: false,
+        error: `Staff Code #${staffId} was not found. Please verify your Receptionist code.`,
+      }
+    }
+
+    const staff = mapDbRowToStaffCode(rawRow)
+
+    if (staff.codeStatus === 'INACTIVE' || staff.status === 'INACTIVE') {
+      return {
+        valid: false,
+        error: `Staff #${staff.codeId} (${staff.staffName}) is currently inactive. Contact an administrator.`,
+      }
+    }
+
+    if (staff.staffRole !== 'RECEPTIONIST') {
+      return {
+        valid: false,
+        error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only RECEPTIONIST staff can access the Receptionist interface.`,
+      }
+    }
+
+    return {
+      valid: true,
+      staff,
+    }
+  } catch (err) {
+    return {
+      valid: false,
+      error: err instanceof Error ? err.message : 'Failed to verify Receptionist staff code.',
+    }
+  }
+}
+

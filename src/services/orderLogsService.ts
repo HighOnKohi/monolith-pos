@@ -189,9 +189,9 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
   // 1. Resolve table metadata map
   const tableMap = await getTableDisplayMap()
 
-  // 2. Fetch Completed_Orders and Restaurant_Orders
+  // 2. Fetch Order_History and Restaurant_Orders
   let tableRows: OrderLogRow[] = []
-  let compQuery = supabase.from('Completed_Orders').select('*')
+  let compQuery = supabase.schema('system_history').from('Order_History').select('*')
   let restQuery = supabase.from('Restaurant_Orders').select('*')
 
     if (startDate) {
@@ -441,7 +441,8 @@ export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetail
   let isFromCompletedTable = false
 
   const { data: compData } = await supabase
-    .from('Completed_Orders')
+    .schema('system_history')
+    .from('Order_History')
     .select('*')
     .eq('ORDER_ID', orderId)
     .maybeSingle()

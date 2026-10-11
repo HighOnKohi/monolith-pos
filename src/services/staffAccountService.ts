@@ -10,89 +10,8 @@ import type {
 
 const LOCAL_STORAGE_KEY = 'monolith_staff_accounts_fallback'
 
-// Default seed accounts used if the Supabase table has not been migrated yet
-const DEFAULT_SEED_ACCOUNTS: StaffAccount[] = [
-  {
-    accountId: 1,
-    fullName: 'Vincent Administrator',
-    email: 'taponakawnt123@gmail.com',
-    role: 'ADMIN',
-    status: 'ACTIVE',
-    permissions: [
-      'manage_accounts',
-      'manage_menu',
-      'manage_tables',
-      'access_kitchen',
-      'access_cashier',
-      'access_analytics',
-      'view_order_logs',
-    ],
-    phone: '+63 917 123 4567',
-    notes: 'Primary store administrator and owner account.',
-    createdAt: '2026-09-05T14:05:22.865Z',
-    updatedAt: '2026-09-05T14:05:22.865Z',
-    lastLogin: '2026-09-07T19:30:00.000Z',
-  },
-  {
-    accountId: 2,
-    fullName: 'Maria Santos',
-    email: 'manager.maria@monolithpos.com',
-    role: 'MANAGER',
-    status: 'ACTIVE',
-    permissions: [
-      'manage_menu',
-      'manage_tables',
-      'access_kitchen',
-      'access_cashier',
-      'access_analytics',
-      'view_order_logs',
-    ],
-    phone: '+63 918 234 5678',
-    notes: 'Shift manager and restaurant operations supervisor.',
-    createdAt: '2026-09-05T15:10:00.000Z',
-    updatedAt: '2026-09-05T15:10:00.000Z',
-    lastLogin: '2026-09-07T14:20:00.000Z',
-  },
-  {
-    accountId: 3,
-    fullName: 'Juan Dela Cruz',
-    email: 'cashier.juan@monolithpos.com',
-    role: 'CASHIER',
-    status: 'ACTIVE',
-    permissions: ['access_cashier', 'manage_tables', 'view_order_logs'],
-    phone: '+63 919 345 6789',
-    notes: 'Lead cashier for front counter and bill-out checkout.',
-    createdAt: '2026-09-05T15:30:00.000Z',
-    updatedAt: '2026-09-05T15:30:00.000Z',
-    lastLogin: '2026-09-07T18:45:00.000Z',
-  },
-  {
-    accountId: 4,
-    fullName: 'Chef Roberto Gonzales',
-    email: 'kitchen.roberto@monolithpos.com',
-    role: 'KITCHEN',
-    status: 'ACTIVE',
-    permissions: ['access_kitchen', 'manage_menu'],
-    phone: '+63 920 456 7890',
-    notes: 'Head chef managing cooking queue and ingredient inventory.',
-    createdAt: '2026-09-05T16:00:00.000Z',
-    updatedAt: '2026-09-05T16:00:00.000Z',
-    lastLogin: '2026-09-07T17:15:00.000Z',
-  },
-  {
-    accountId: 5,
-    fullName: 'Elena Reyes',
-    email: 'staff.elena@monolithpos.com',
-    role: 'STAFF',
-    status: 'ACTIVE',
-    permissions: ['manage_tables', 'access_kitchen'],
-    phone: '+63 921 567 8901',
-    notes: 'Floor attendant and table server.',
-    createdAt: '2026-09-05T16:30:00.000Z',
-    updatedAt: '2026-09-05T16:30:00.000Z',
-    lastLogin: '2026-09-06T20:00:00.000Z',
-  },
-]
+// Default seed accounts (empty - all accounts must come from database)
+const DEFAULT_SEED_ACCOUNTS: StaffAccount[] = []
 
 // ─── Local Storage Fallback Helpers ───────────────────────────────────────────
 
@@ -100,12 +19,17 @@ function getFallbackAccounts(): StaffAccount[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY)
     if (raw) {
-      return JSON.parse(raw) as StaffAccount[]
+      const parsed = JSON.parse(raw) as StaffAccount[]
+      return parsed.filter(
+        (a) =>
+          a.accountId > 5 ||
+          (!a.email.includes('monolithpos.com') && a.email !== 'taponakawnt123@gmail.com'),
+      )
     }
   } catch (err) {
     console.warn('[staffAccountService] Could not read local storage:', err)
   }
-  return DEFAULT_SEED_ACCOUNTS
+  return []
 }
 
 function saveFallbackAccounts(accounts: StaffAccount[]): void {

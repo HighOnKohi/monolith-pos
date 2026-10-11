@@ -24,84 +24,7 @@ export function isEventServiceUsingFallback(): boolean {
 // ─── Seed Data for Fallback Mode ──────────────────────────────────────────────
 
 function getInitialSeedEvents(): RestaurantEvent[] {
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const dateStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-
-  const today = new Date(now)
-  const tomorrow = new Date(now)
-  tomorrow.setDate(now.getDate() + 1)
-  const inThreeDays = new Date(now)
-  inThreeDays.setDate(now.getDate() + 3)
-
-  return [
-    {
-      eventId: 1001,
-      title: 'Chef Special Tasting & Wine Pairing',
-      description: 'Exclusive 5-course tasting menu paired with regional artisan wines.',
-      category: 'Promotion',
-      color: '#16a34a',
-      startAt: `${dateStr(today)}T18:00:00.000Z`,
-      endAt: `${dateStr(today)}T21:00:00.000Z`,
-      location: 'Main Dining Room',
-      organizer: 'Chef Marco',
-      expectedAttendees: 24,
-      contactName: 'Marco Bellini',
-      contactPhone: '+1 555-0192',
-      contactEmail: 'chef.marco@monolithpos.local',
-      notes: 'Prepare welcome glasses of sparkling wine at arrival.',
-      isCancelled: false,
-      createdBy: 'admin@monolith.pos',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      updatedBy: null,
-      deletedAt: null,
-    },
-    {
-      eventId: 1002,
-      title: 'Private Birthday Dinner — Smith Family',
-      description: 'Milestone 40th birthday celebration with customized dessert cake.',
-      category: 'Birthday',
-      color: '#ec4899',
-      startAt: `${dateStr(tomorrow)}T17:30:00.000Z`,
-      endAt: `${dateStr(tomorrow)}T21:00:00.000Z`,
-      location: 'Private Dining Suite A',
-      organizer: 'Sarah Smith',
-      expectedAttendees: 16,
-      contactName: 'Sarah Smith',
-      contactPhone: '+1 555-0144',
-      contactEmail: 'sarah.smith@example.com',
-      notes: 'Cake delivery scheduled for 16:30. Store in kitchen chiller.',
-      isCancelled: false,
-      createdBy: 'manager@monolith.pos',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      updatedBy: null,
-      deletedAt: null,
-    },
-    {
-      eventId: 1003,
-      title: 'Corporate Executive Luncheon',
-      description: 'Quarterly business review luncheon with pre-set three-course menu.',
-      category: 'Corporate Event',
-      color: '#14274E',
-      startAt: `${dateStr(inThreeDays)}T12:00:00.000Z`,
-      endAt: `${dateStr(inThreeDays)}T14:30:00.000Z`,
-      location: 'Executive Terrace',
-      organizer: 'Nexus Dynamics',
-      expectedAttendees: 30,
-      contactName: 'David Zhang',
-      contactPhone: '+1 555-0188',
-      contactEmail: 'events@nexusdyn.local',
-      notes: 'Projector and AV screen setup required by 11:30 AM.',
-      isCancelled: false,
-      createdBy: 'admin@monolith.pos',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      updatedBy: null,
-      deletedAt: null,
-    },
-  ]
+  return []
 }
 
 function getFallbackEvents(): RestaurantEvent[] {
@@ -109,14 +32,18 @@ function getFallbackEvents(): RestaurantEvent[] {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      if (Array.isArray(parsed)) {
+        // Filter out any legacy dummy mock events with ids 1001, 1002, 1003
+        return parsed.filter(
+          (e: RestaurantEvent) =>
+            e.eventId !== 1001 && e.eventId !== 1002 && e.eventId !== 1003,
+        )
+      }
     }
   } catch (err) {
     console.warn('[eventService] Failed to read fallback localStorage:', err)
   }
-  const initial = getInitialSeedEvents()
-  saveFallbackEvents(initial)
-  return initial
+  return []
 }
 
 function saveFallbackEvents(events: RestaurantEvent[]): void {

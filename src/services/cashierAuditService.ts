@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabase'
 import type { CashierAuditAction, CashierAuditLog } from '@/types/cashierShift'
 import { fetchStaffCodes } from './staffCodeService'
 
-const LOCAL_STORAGE_AUDIT_FALLBACK = 'monolith_cashier_audit_logs_fallback'
+const LOCAL_STORAGE_AUDIT_FALLBACK = 'monolith_action_history_fallback'
 const LOCAL_STORAGE_SHIFT_ID_KEY = 'monolith_cashier_shift_id'
 const LOCAL_STORAGE_STAFF_ID_KEY = 'monolith_cashier_staff_id'
 const LOCAL_STORAGE_BUSINESS_DAY_ID_KEY = 'monolith_active_business_day_id'
@@ -12,7 +12,7 @@ export interface LogCashierActionParams {
   businessDayId?: number | null
   shiftId?: number | null
   staffId?: number | null
-  shiftType?: 'CASHIER' | 'SERVICE'
+  shiftType?: 'CASHIER' | 'SERVICE' | 'ORGANIZER' | 'DISPATCHER'
   authUserId?: string | null
   entityType?: string | null
   entityId?: string | null
@@ -64,7 +64,6 @@ function saveFallbackAuditLog(log: CashierAuditLog): void {
 
 function getActiveAuthUserId(): string | null {
   try {
-    // Read cached supabase auth session from localStorage if available
     const keys = Object.keys(localStorage)
     for (const key of keys) {
       if (key.startsWith('sb-') && key.endsWith('-auth-token')) {
@@ -97,7 +96,9 @@ function getStoredStaffId(): number | null {
   try {
     const raw =
       localStorage.getItem(LOCAL_STORAGE_STAFF_ID_KEY) ||
-      localStorage.getItem('monolith_service_staff_id')
+      localStorage.getItem('monolith_service_staff_id') ||
+      sessionStorage.getItem('monolith_organizer_staff_id') ||
+      localStorage.getItem('monolith_dispatcher_staff_id')
     if (raw) return Number(raw) || null
   } catch {
     // ignore
@@ -115,13 +116,10 @@ function getStoredBusinessDayId(): number | null {
   return null
 }
 
-// ─── Audit Logging Core ──────────────────────────────────────────────────────
+// ─── Audit Logging Core (system_history.Action_History) ──────────────────────
 
 /**
- * Appends an audit log entry.
- * Primary destination: staff."Audit_Logs" or public."Audit_Logs".
- * Secondary destination: system_history."Action_History" (if available).
- * Resilient fallback: localStorage fallback array.
+ * Appends an audit log entry directly to system_history."Action_History".
  */
 export async function logCashierAction(params: LogCashierActionParams): Promise<CashierAuditLog> {
   const resolvedShiftId = params.shiftId !== undefined ? params.shiftId : getStoredShiftId()
@@ -143,133 +141,58 @@ export async function logCashierAction(params: LogCashierActionParams): Promise<
     createdAt: new Date().toISOString(),
   }
 
-  // Always save to fallback store immediately for instant local reflection
+  // Save to fallback store for resilient local continuity
   saveFallbackAuditLog(logEntry)
 
-  // 1. Attempt writing to staff."Audit_Logs" or public."Audit_Logs"
+  // Write directly to system_history."Action_History"
   try {
-    const isServiceShift =
-      params.shiftType === 'SERVICE' ||
-      params.metadata?.['shift_type'] === 'SERVICE' ||
-      (Boolean(localStorage.getItem('monolith_service_shift_id')) &&
-        params.action !== 'SHIFT_STARTED' &&
-        params.action !== 'SHIFT_ENDED')
-
-    // Audit_Logs.SHIFT_ID foreign key constraint references staff."Cashier_Shifts".
-    // Service shifts must not be inserted into SHIFT_ID column, but kept in METADATA.
-    const safeShiftId =
-      !isServiceShift && resolvedShiftId && resolvedShiftId < 1000000000000
-        ? resolvedShiftId
-        : null
-
     const safeStaffId = resolvedStaffId && resolvedStaffId < 1000000000000 ? resolvedStaffId : null
 
-    const meta = { ...(params.metadata ?? {}) }
+    const meta: Record<string, unknown> = { ...(params.metadata ?? {}) }
     if (params.shiftType) {
       meta['shift_type'] = params.shiftType
-    } else if (isServiceShift) {
-      meta['shift_type'] = 'SERVICE'
     }
     if (resolvedShiftId) {
-      if (isServiceShift) {
-        meta['service_shift_id'] = resolvedShiftId
-      } else {
-        meta['shift_id'] = resolvedShiftId
-      }
+      meta['shift_id'] = resolvedShiftId
     }
     if (resolvedBusinessDayId) {
       meta['business_day_id'] = resolvedBusinessDayId
     }
+    if (resolvedAuthUserId) {
+      meta['auth_user'] = resolvedAuthUserId
+    }
 
     const payload: Record<string, unknown> = {
-      AUTH_USER_ID: resolvedAuthUserId,
-      ACTION: params.action,
-      ENTITY_TYPE: params.entityType ?? null,
-      ENTITY_ID: params.entityId ? String(params.entityId) : null,
-      DESCRIPTION: params.description ?? null,
-      METADATA: meta,
+      STAFF_ID: safeStaffId,
+      ACTION_TYPE: params.action,
+      DESCRIPTION: params.description || `Action: ${params.action}`,
       CREATED_AT: logEntry.createdAt,
     }
 
-    if (safeShiftId) payload.SHIFT_ID = safeShiftId
-    if (safeStaffId) payload.STAFF_ID = safeStaffId
-
+    // Write directly to system_history."Action_History"
     const { data, error } = await supabase
-      .schema('staff')
-      .from('Audit_Logs')
+      .schema('system_history')
+      .from('Action_History')
       .insert([payload])
       .select('LOG_ID')
-      .single()
+      .maybeSingle()
 
     if (!error && data?.LOG_ID) {
       logEntry.logId = Number(data.LOG_ID)
-    } else {
-      const isFkOrColError =
-        error?.code === '23503' ||
-        error?.code === '42703' ||
-        error?.message?.includes('foreign key') ||
-        error?.message?.includes('fkey') ||
-        error?.message?.includes('column')
+    } else if (error) {
+      // Try public view fallback
+      const { data: pubData } = await supabase
+        .from('Action_History')
+        .insert([payload])
+        .select('LOG_ID')
+        .maybeSingle()
 
-      const sanitizedPayload = {
-        AUTH_USER_ID: resolvedAuthUserId,
-        ACTION: params.action,
-        ENTITY_TYPE: params.entityType ?? null,
-        ENTITY_ID: params.entityId ? String(params.entityId) : null,
-        DESCRIPTION: params.description ?? null,
-        METADATA: meta,
-        CREATED_AT: logEntry.createdAt,
-      }
-
-      if (isFkOrColError) {
-        const { data: retryStaff } = await supabase
-          .schema('staff')
-          .from('Audit_Logs')
-          .insert([sanitizedPayload])
-          .select('LOG_ID')
-          .single()
-
-        if (retryStaff?.LOG_ID) {
-          logEntry.logId = Number(retryStaff.LOG_ID)
-        }
-      }
-
-      if (logEntry.logId >= 1000000000000) {
-        // If still not saved to DB, try public view with sanitized payload
-        const { data: pubData } = await supabase
-          .from('Audit_Logs')
-          .insert([sanitizedPayload])
-          .select('LOG_ID')
-          .single()
-
-        if (pubData?.LOG_ID) {
-          logEntry.logId = Number(pubData.LOG_ID)
-        }
+      if (pubData?.LOG_ID) {
+        logEntry.logId = Number(pubData.LOG_ID)
       }
     }
   } catch (err) {
-    console.warn('[cashierAuditService] Supabase Audit_Logs insert failed, retained in fallback:', err)
-  }
-
-  // 2. Dual-write to system_history."Action_History" if it exists
-  try {
-    await supabase.from('Action_History').insert([
-      {
-        STAFF_CODE: resolvedStaffId,
-        ACTION_TYPE: params.action,
-        MODULE: 'CASHIER',
-        DESCRIPTION: params.description || `Cashier Action: ${params.action}`,
-        TARGET_ENTITY: params.entityType ?? 'POS',
-        TARGET_ID: params.entityId ? String(params.entityId) : null,
-        METADATA: {
-          shift_id: resolvedShiftId,
-          auth_user: resolvedAuthUserId,
-          ...params.metadata,
-        },
-      },
-    ])
-  } catch {
-    // Non-fatal
+    console.warn('[cashierAuditService] Action_History insert non-blocking warning:', err)
   }
 
   return logEntry
@@ -278,7 +201,7 @@ export async function logCashierAction(params: LogCashierActionParams): Promise<
 // ─── Query Audit Logs ────────────────────────────────────────────────────────
 
 /**
- * Fetches cashier audit logs with filtering, sorting, and pagination.
+ * Fetches audit logs from system_history."Action_History" with filtering, sorting, and pagination.
  */
 export async function fetchCashierAuditLogs(
   filters: CashierAuditFilterParams = {},
@@ -292,8 +215,8 @@ export async function fetchCashierAuditLogs(
 
   try {
     let query = supabase
-      .schema('staff')
-      .from('Audit_Logs')
+      .schema('system_history')
+      .from('Action_History')
       .select('*')
       .order('CREATED_AT', { ascending: false })
 
@@ -301,7 +224,7 @@ export async function fetchCashierAuditLogs(
       query = query.eq('STAFF_ID', staffId)
     }
     if (action !== 'ALL') {
-      query = query.eq('ACTION', action)
+      query = query.eq('ACTION_TYPE', action)
     }
     if (startDate) {
       query = query.gte('CREATED_AT', startDate.toISOString())
@@ -315,29 +238,29 @@ export async function fetchCashierAuditLogs(
     if (error) {
       // Try public view
       let pubQuery = supabase
-        .from('Audit_Logs')
+        .from('Action_History')
         .select('*')
         .order('CREATED_AT', { ascending: false })
 
       if (staffId !== 'ALL') pubQuery = pubQuery.eq('STAFF_ID', staffId)
-      if (action !== 'ALL') pubQuery = pubQuery.eq('ACTION', action)
+      if (action !== 'ALL') pubQuery = pubQuery.eq('ACTION_TYPE', action)
       if (startDate) pubQuery = pubQuery.gte('CREATED_AT', startDate.toISOString())
       if (endDate) pubQuery = pubQuery.lte('CREATED_AT', endDate.toISOString())
 
       const { data: pubData, error: pubErr } = await pubQuery
       if (pubErr) throw pubErr
 
-      dbLogs = (pubData ?? []).map(mapDbRowToAuditLog)
+      dbLogs = (pubData ?? []).map(mapDbRowToActionHistory)
     } else {
-      dbLogs = (data ?? []).map(mapDbRowToAuditLog)
+      dbLogs = (data ?? []).map(mapDbRowToActionHistory)
     }
   } catch (err) {
-    console.warn('[cashierAuditService] Using fallback audit logs:', err)
+    console.warn('[cashierAuditService] Using fallback action history logs:', err)
     usedFallback = true
     dbLogs = getFallbackAuditLogs()
   }
 
-  // If DB returned rows, also merge any local fallback logs that haven't synced
+  // If DB returned rows, merge local fallback logs
   if (!usedFallback) {
     const fallbackLogs = getFallbackAuditLogs()
     const dbLogIds = new Set(dbLogs.map((l) => l.logId))
@@ -349,7 +272,7 @@ export async function fetchCashierAuditLogs(
     dbLogs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }
 
-  // Enrich with staff names from Staff_Codes
+  // Enrich with staff names from Staff_Codes if not already populated
   try {
     const staffResult = await fetchStaffCodes({}, 1, 100)
     const staffMap = new Map(staffResult.codes.map((s) => [s.codeId, s]))
@@ -358,8 +281,8 @@ export async function fetchCashierAuditLogs(
         const staff = staffMap.get(log.staffId)!
         return {
           ...log,
-          staffName: staff.staffName,
-          staffRole: staff.staffRole,
+          staffName: log.staffName || staff.staffName,
+          staffRole: log.staffRole || staff.staffRole,
         }
       }
       return log
@@ -406,17 +329,35 @@ export async function fetchCashierAuditLogs(
   }
 }
 
-function mapDbRowToAuditLog(row: Record<string, unknown>): CashierAuditLog {
+function mapDbRowToActionHistory(row: Record<string, unknown>): CashierAuditLog {
+  const meta =
+    typeof row['METADATA'] === 'string'
+      ? JSON.parse(row['METADATA'])
+      : ((row['METADATA'] as Record<string, unknown>) ?? {})
+
+  const staffId = row['STAFF_ID'] != null ? Number(row['STAFF_ID']) : (row['STAFF_CODE'] != null ? Number(row['STAFF_CODE']) : null)
+
   return {
     logId: Number(row['LOG_ID']),
-    shiftId: row['SHIFT_ID'] != null ? Number(row['SHIFT_ID']) : null,
-    staffId: row['STAFF_ID'] != null ? Number(row['STAFF_ID']) : null,
-    authUserId: row['AUTH_USER_ID'] ? String(row['AUTH_USER_ID']) : null,
-    action: String(row['ACTION'] || 'UNKNOWN'),
-    entityType: row['ENTITY_TYPE'] ? String(row['ENTITY_TYPE']) : null,
-    entityId: row['ENTITY_ID'] ? String(row['ENTITY_ID']) : null,
+    businessDayId: Number(meta['business_day_id'] ?? row['BUSINESS_DAY_ID'] ?? 0) || null,
+    shiftId: Number(meta['shift_id'] ?? meta['service_shift_id'] ?? row['SHIFT_ID'] ?? 0) || null,
+    staffId,
+    staffName: row['STAFF_NAME'] ? String(row['STAFF_NAME']) : undefined,
+    staffRole: row['STAFF_ROLE'] ? String(row['STAFF_ROLE']) : undefined,
+    authUserId: (meta['auth_user'] || meta['auth_user_id'] || row['AUTH_USER_ID'] || null) as string | null,
+    action: String(row['ACTION_TYPE'] || row['ACTION'] || 'UNKNOWN'),
+    entityType: row['TARGET_ENTITY']
+      ? String(row['TARGET_ENTITY'])
+      : row['ENTITY_TYPE']
+        ? String(row['ENTITY_TYPE'])
+        : null,
+    entityId: row['TARGET_ID']
+      ? String(row['TARGET_ID'])
+      : row['ENTITY_ID']
+        ? String(row['ENTITY_ID'])
+        : null,
     description: row['DESCRIPTION'] ? String(row['DESCRIPTION']) : null,
-    metadata: (row['METADATA'] as Record<string, unknown>) || null,
+    metadata: meta,
     createdAt: String(row['CREATED_AT'] || new Date().toISOString()),
   }
 }

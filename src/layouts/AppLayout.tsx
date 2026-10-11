@@ -4,6 +4,8 @@ import { Menu } from 'lucide-react'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { BusinessDayStatusIndicator } from '@/components/layout/BusinessDayStatusIndicator'
 import { MenuProvider } from '@/hooks/useMenu'
+import { OrganizerSessionProvider } from '@/contexts/OrganizerSessionContext'
+import { ReceptionistSessionProvider } from '@/contexts/ReceptionistSessionContext'
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -13,7 +15,7 @@ export default function AppLayout() {
 
   const pageTitle = (() => {
     const p = location.pathname.replace('/', '')
-    if (p.startsWith('dispatcher')) return 'Dispatcher Interface'
+    if (p.startsWith('dispatcher')) return 'Dispatcher'
     if (p.startsWith('order-viewer')) return 'Order Viewer'
     if (p.startsWith('service')) return 'Service Interface'
     if (p.startsWith('cashier')) return 'Cashier Interface'
@@ -29,7 +31,9 @@ export default function AppLayout() {
   })()
 
   return (
-    <MenuProvider>
+    <OrganizerSessionProvider>
+      <ReceptionistSessionProvider>
+        <MenuProvider>
       <div className="website staff-shell">
         <div className="website-container">
         <AppSidebar open={sidebarOpen} onClose={handleSidebarClose} />
@@ -65,5 +69,7 @@ export default function AppLayout() {
         </div>
       </div>
     </MenuProvider>
+      </ReceptionistSessionProvider>
+    </OrganizerSessionProvider>
   )
 }

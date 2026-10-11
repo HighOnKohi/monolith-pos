@@ -35,6 +35,8 @@ import { CashierRouteGuard } from '@/components/cashier/CashierRouteGuard'
 import { ServiceRouteGuard } from '@/components/service/ServiceRouteGuard'
 import { KitchenRouteGuard } from '@/components/kitchen/KitchenRouteGuard'
 import { CustomerDayGuard } from '@/components/customer/CustomerDayGuard'
+import { OrganizerRouteGuard } from '@/components/organizer/OrganizerRouteGuard'
+import { ReceptionistRouteGuard } from '@/components/receptionist/ReceptionistRouteGuard'
 
 function wrap(Component: React.ComponentType) {
   return (
@@ -104,6 +106,26 @@ function wrapService(Component: React.ComponentType) {
         <Component />
       </Suspense>
     </ServiceRouteGuard>
+  )
+}
+
+function wrapOrganizer(Component: React.ComponentType) {
+  return (
+    <OrganizerRouteGuard>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </OrganizerRouteGuard>
+  )
+}
+
+function wrapReceptionist(Component: React.ComponentType) {
+  return (
+    <ReceptionistRouteGuard>
+      <Suspense fallback={<PageLoader />}>
+        <Component />
+      </Suspense>
+    </ReceptionistRouteGuard>
   )
 }
 
@@ -210,12 +232,12 @@ export const router = createBrowserRouter([
           { path: 'order-viewer', element: wrapKitchen(OrderViewerPage) },
           { path: 'service', element: wrapService(CashierPage) },
           { path: 'cashier', element: wrapCashier(CashierInterfacePage) },
-          { path: 'reception', element: wrap(ReceptionistPage) },
-          { path: 'tables', element: wrap(TableManagerPage) },
-          { path: 'catalog', element: wrap(MenuCatalogPage) },
-          { path: 'menu', element: wrap(MenuManagerPage) },
+          { path: 'reception', element: wrapReceptionist(ReceptionistPage) },
+          { path: 'tables', element: wrapOrganizer(TableManagerPage) },
+          { path: 'catalog', element: wrapOrganizer(MenuCatalogPage) },
+          { path: 'menu', element: wrapOrganizer(MenuManagerPage) },
           { path: 'analytics', element: wrap(AnalyticsPage) },
-          { path: 'events', element: wrap(EventsPage) },
+          { path: 'events', element: wrapOrganizer(EventsPage) },
           { path: 'accounts', element: wrap(AccountManagerPage) },
           { path: 'order-logs', element: wrap(OrderLogsPage) },
           { path: 'admin', element: wrap(AdminPanelPage) },

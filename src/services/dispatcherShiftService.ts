@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import type { StaffCodeItem } from '@/types/account'
 import { getActiveBusinessDay } from './businessDayService'
+import { ensureRoleStaffRecord, recordShiftHistoryAndReset } from './shiftHistoryService'
 
 const LOCAL_STORAGE_DISPATCHER_SHIFT_ID = 'monolith_dispatcher_shift_id'
 const LOCAL_STORAGE_DISPATCHER_STAFF_ID = 'monolith_dispatcher_staff_id'
@@ -143,27 +144,21 @@ export async function startDispatcherShift(staffId: number): Promise<DispatcherS
     console.warn('[dispatcherShiftService] Failed to update Staff_Codes shift status:', err)
   }
 
-  // 2. Create/upsert row in Dispatcher_Staff
+  // 2. Ensure row in Dispatcher_Staff and reset metrics to 0
   try {
-    const dispatcherPayload = {
-      DISPATCHER_ID: shiftId,
-      STAFF_ID: staffId,
-      ORDERS_ACCEPTED: 0,
-      ORDERS_COOKED: 0,
-      ORDERS_CANCELLED: 0,
-      ORDERS_COMPLETED: 0,
-    }
-
-    const { error: dispErr } = await supabase
+    await ensureRoleStaffRecord(staffId, 'DISPATCHER')
+    await supabase
       .schema('staff')
       .from('Dispatcher_Staff')
-      .insert([dispatcherPayload])
-
-    if (dispErr) {
-      await supabase.from('Dispatcher_Staff').insert([dispatcherPayload])
-    }
+      .update({
+        ORDERS_ACCEPTED: 0,
+        ORDERS_COOKED: 0,
+        ORDERS_CANCELLED: 0,
+        ORDERS_COMPLETED: 0,
+      })
+      .eq('STAFF_ID', staffId)
   } catch (err) {
-    console.warn('[dispatcherShiftService] Failed to insert Dispatcher_Staff record:', err)
+    console.warn('[dispatcherShiftService] Failed to reset Dispatcher_Staff record:', err)
   }
 
   localStorage.setItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID, String(shiftId))
@@ -230,21 +225,12 @@ export async function endDispatcherShift(): Promise<void> {
   if (staffIdStr) {
     const staffId = Number(staffIdStr)
     try {
-      const codePayload = {
-        SHIFT_STATUS: 'ENDED',
-        SHIFT_END: now,
-      }
-      const { error: codeErr } = await supabase
-        .schema('staff')
-        .from('Staff_Codes')
-        .update(codePayload)
-        .eq('CODE_ID', staffId)
-
-      if (codeErr) {
-        await supabase.from('Staff_Codes').update(codePayload).eq('CODE_ID', staffId)
-      }
+      await recordShiftHistoryAndReset(staffId, {
+        staffRole: 'DISPATCHER',
+        endedAt: now,
+      })
     } catch (err) {
-      console.warn('[dispatcherShiftService] Failed to end Staff_Codes shift:', err)
+      console.warn('[dispatcherShiftService] Failed to record shift history and reset:', err)
     }
   }
 
@@ -261,14 +247,14 @@ async function incrementDispatcherColumn(columnName: 'ORDERS_ACCEPTED' | 'ORDERS
   if (!staffId) return
 
   try {
-    // 1. Fetch current value in Dispatcher_Staff
+    await ensureRoleStaffRecord(staffId, 'DISPATCHER')
+
     let record: Record<string, unknown> | null = null
     const { data: schemaData } = await supabase
       .schema('staff')
       .from('Dispatcher_Staff')
       .select('*')
       .eq('STAFF_ID', staffId)
-      .order('DISPATCHER_ID', { ascending: false })
       .limit(1)
       .maybeSingle()
 
@@ -279,7 +265,6 @@ async function incrementDispatcherColumn(columnName: 'ORDERS_ACCEPTED' | 'ORDERS
         .from('Dispatcher_Staff')
         .select('*')
         .eq('STAFF_ID', staffId)
-        .order('DISPATCHER_ID', { ascending: false })
         .limit(1)
         .maybeSingle()
       if (pubData) record = pubData as Record<string, unknown>
@@ -288,32 +273,11 @@ async function incrementDispatcherColumn(columnName: 'ORDERS_ACCEPTED' | 'ORDERS
     const currentVal = Number(record?.[columnName] || 0)
     const newVal = currentVal + amount
 
-    if (record?.DISPATCHER_ID) {
-      const { error: updateErr } = await supabase
-        .schema('staff')
-        .from('Dispatcher_Staff')
-        .update({ [columnName]: newVal })
-        .eq('DISPATCHER_ID', record.DISPATCHER_ID)
-
-      if (updateErr) {
-        await supabase
-          .from('Dispatcher_Staff')
-          .update({ [columnName]: newVal })
-          .eq('DISPATCHER_ID', record.DISPATCHER_ID)
-      }
-    } else {
-      // Insert new row if none found
-      const newPayload = {
-        DISPATCHER_ID: Date.now(),
-        STAFF_ID: staffId,
-        ORDERS_ACCEPTED: columnName === 'ORDERS_ACCEPTED' ? amount : 0,
-        ORDERS_COOKED: columnName === 'ORDERS_COOKED' ? amount : 0,
-        ORDERS_CANCELLED: columnName === 'ORDERS_CANCELLED' ? amount : 0,
-        ORDERS_COMPLETED: columnName === 'ORDERS_COMPLETED' ? amount : 0,
-      }
-      const { error: insErr } = await supabase.schema('staff').from('Dispatcher_Staff').insert([newPayload])
-      if (insErr) await supabase.from('Dispatcher_Staff').insert([newPayload])
-    }
+    await supabase
+      .schema('staff')
+      .from('Dispatcher_Staff')
+      .update({ [columnName]: newVal })
+      .eq('STAFF_ID', staffId)
   } catch (err) {
     console.warn(`[dispatcherShiftService] Increment ${columnName} error:`, err)
   }

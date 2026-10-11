@@ -38,8 +38,14 @@ export async function verifyAdminPassword(
     console.warn('[verifyAdminPassword] Staff_Accounts query warning:', err)
   }
 
-  // Known fallback administrator account
-  candidateEmails.add('taponakawnt123@gmail.com')
+  try {
+    const { data: userData } = await supabase.auth.getUser()
+    if (userData?.user?.email) {
+      candidateEmails.add(userData.user.email.trim().toLowerCase())
+    }
+  } catch {
+    // ignore
+  }
 
   // Capture existing session before attempting verification
   let originalSession: { access_token: string; refresh_token: string } | null = null

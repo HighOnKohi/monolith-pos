@@ -13,10 +13,7 @@ export interface TableTemplate {
   isCustom?: boolean
 }
 
-export const DEFAULT_TABLE_TEMPLATES: TableTemplate[] = [
-  { id: 'tmpl-2top', label: '2-TOP', seats: 2, widthBlocks: 2, heightBlocks: 2, isCustom: false },
-  { id: 'tmpl-4top', label: '4-TOP', seats: 4, widthBlocks: 2, heightBlocks: 2, isCustom: false },
-]
+export const DEFAULT_TABLE_TEMPLATES: TableTemplate[] = []
 
 const TEMPLATES_STORAGE_KEY = 'monolith_table_templates'
 
@@ -33,7 +30,7 @@ export function getLocalTemplates(): TableTemplate[] {
   } catch {
     // ignore parsing errors
   }
-  return [...DEFAULT_TABLE_TEMPLATES]
+  return []
 }
 
 /** Save templates cache to localStorage */

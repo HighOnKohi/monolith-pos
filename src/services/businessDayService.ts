@@ -143,25 +143,40 @@ export async function checkActiveShifts(): Promise<ActiveShiftsCheckResult> {
   const activeCashier: Array<{ shiftId: number; staffId: number; staffName?: string; startedAt: string }> = []
   const activeService: Array<{ shiftId: number; staffId: number; staffName?: string; startedAt: string }> = []
 
-  // 1. Check Cashier Shifts in Supabase
+  // 1. Check Ongoing Shifts from Staff_Codes in Supabase
   try {
-    const { data: cData } = await supabase
+    const { data: codeData } = await supabase
       .schema('staff')
-      .from('Cashier_Shifts')
-      .select('SHIFT_ID, STAFF_ID, STARTED_AT, STATUS')
-      .eq('STATUS', 'ACTIVE')
+      .from('Staff_Codes')
+      .select('CODE_ID, STAFF_NAME, STAFF_ROLE, SHIFT_START, SHIFT_STATUS')
+      .eq('SHIFT_STATUS', 'ONGOING')
 
-    if (cData && cData.length > 0) {
-      for (const row of cData) {
-        activeCashier.push({
-          shiftId: Number(row.SHIFT_ID),
-          staffId: Number(row.STAFF_ID),
-          startedAt: String(row.STARTED_AT),
-        })
+    if (codeData && codeData.length > 0) {
+      for (const row of codeData) {
+        const role = String(row.STAFF_ROLE || '').toUpperCase()
+        if (role === 'CASHIER') {
+          activeCashier.push({
+            shiftId: Number(row.CODE_ID),
+            staffId: Number(row.CODE_ID),
+            staffName: String(row.STAFF_NAME || 'Cashier'),
+            startedAt: String(row.SHIFT_START || new Date().toISOString()),
+          })
+        } else if (role === 'SERVICE') {
+          activeService.push({
+            shiftId: Number(row.CODE_ID),
+            staffId: Number(row.CODE_ID),
+            staffName: String(row.STAFF_NAME || 'Server'),
+            startedAt: String(row.SHIFT_START || new Date().toISOString()),
+          })
+        }
       }
     }
   } catch {
     // Check fallback
+  }
+
+  // Fallbacks if nothing in DB
+  if (activeCashier.length === 0) {
     try {
       const raw = localStorage.getItem(LOCAL_STORAGE_CASHIER_SHIFTS_FALLBACK)
       if (raw) {
@@ -180,25 +195,7 @@ export async function checkActiveShifts(): Promise<ActiveShiftsCheckResult> {
     }
   }
 
-  // 2. Check Service Shifts in Supabase
-  try {
-    const { data: sData } = await supabase
-      .schema('staff')
-      .from('Service_Shifts')
-      .select('SHIFT_ID, STAFF_ID, STARTED_AT, STATUS')
-      .eq('STATUS', 'ACTIVE')
-
-    if (sData && sData.length > 0) {
-      for (const row of sData) {
-        activeService.push({
-          shiftId: Number(row.SHIFT_ID),
-          staffId: Number(row.STAFF_ID),
-          startedAt: String(row.STARTED_AT),
-        })
-      }
-    }
-  } catch {
-    // Check fallback
+  if (activeService.length === 0) {
     try {
       const raw = localStorage.getItem(LOCAL_STORAGE_SERVICE_SHIFTS_FALLBACK)
       if (raw) {
@@ -542,32 +539,18 @@ export async function calculateDailySummary(businessDayId: number): Promise<Dail
   const startTime = targetDay.startedAt
   const endTime = targetDay.endedAt || new Date().toISOString()
 
-  // 2. Fetch completed orders from Completed_Orders (system_history schema or public view)
+  // 2. Fetch completed orders from system_history.Order_History
   let completedRows: Array<Record<string, unknown>> = []
   try {
-    let dbOrders: Array<Record<string, unknown>> | null = null
-    try {
-      const res = await supabase
-        .schema('system_history')
-        .from('Completed_Orders')
-        .select('*')
-        .or(`BUSINESS_DAY_ID.eq.${businessDayId},COMPLETED_AT.gte.${startTime}`)
-        .order('COMPLETED_AT', { ascending: false })
-      if (!res.error && res.data) {
-        dbOrders = res.data
-      } else {
-        throw res.error
-      }
-    } catch {
-      const res = await supabase
-        .from('Completed_Orders')
-        .select('*')
-        .or(`BUSINESS_DAY_ID.eq.${businessDayId},COMPLETED_AT.gte.${startTime}`)
-        .order('COMPLETED_AT', { ascending: false })
-      dbOrders = res.data
-    }
+    const { data: dbOrders, error: orderErr } = await supabase
+      .schema('system_history')
+      .from('Order_History')
+      .select('*')
+      .gte('COMPLETED_AT', startTime)
+      .lte('COMPLETED_AT', endTime)
+      .order('COMPLETED_AT', { ascending: false })
 
-    if (dbOrders && dbOrders.length > 0) {
+    if (!orderErr && dbOrders && dbOrders.length > 0) {
       completedRows = dbOrders.filter((o) => {
         if (o.BUSINESS_DAY_ID && Number(o.BUSINESS_DAY_ID) === businessDayId) return true
         const cTime = String(o.COMPLETED_AT || o.TIME)
@@ -575,52 +558,25 @@ export async function calculateDailySummary(businessDayId: number): Promise<Dail
       })
     }
   } catch (err) {
-    console.warn('[businessDayService] Failed to query Completed_Orders:', err)
+    console.warn('[businessDayService] Failed to query Order_History:', err)
   }
 
   // 3. Fetch audit logs for the day (for discounts, voids, refunds, cashier actions)
   let auditRows: Array<Record<string, unknown>> = []
   try {
-    let dbLogs: Array<Record<string, unknown>> | null = null
-    try {
-      const res = await supabase
-        .schema('staff')
-        .from('Audit_Logs')
-        .select('*')
-        .gte('CREATED_AT', startTime)
-        .lte('CREATED_AT', endTime)
-      if (!res.error && res.data) {
-        dbLogs = res.data
-      } else {
-        throw res.error
-      }
-    } catch {
-      try {
-        const res2 = await supabase
-          .schema('staff')
-          .from('Cashier_Audit_Logs')
-          .select('*')
-          .gte('CREATED_AT', startTime)
-          .lte('CREATED_AT', endTime)
-        if (!res2.error && res2.data) {
-          dbLogs = res2.data
-        } else {
-          throw res2.error
-        }
-      } catch {
-        const res3 = await supabase
-          .from('Audit_Logs')
-          .select('*')
-          .gte('CREATED_AT', startTime)
-          .lte('CREATED_AT', endTime)
-        dbLogs = res3.data
-      }
-    }
+    const { data: dbLogs } = await supabase
+      .schema('system_history')
+      .from('Action_History')
+      .select('*')
+      .gte('CREATED_AT', startTime)
+      .lte('CREATED_AT', endTime)
 
     if (dbLogs) auditRows = dbLogs
   } catch {
     try {
-      const raw = localStorage.getItem('monolith_cashier_audit_logs_fallback')
+      const raw =
+        localStorage.getItem('monolith_action_history_fallback') ||
+        localStorage.getItem('monolith_cashier_audit_logs_fallback')
       if (raw) {
         const logs = JSON.parse(raw) as Array<Record<string, unknown>>
         auditRows = logs.filter((l) => {
@@ -733,8 +689,8 @@ export async function calculateDailySummary(businessDayId: number): Promise<Dail
   let voidsCount = 0
   let refundsCount = 0
   for (const log of auditRows) {
-    const act = String(log['ACTION'] || log['action'] || '')
-    const sId = Number(log['STAFF_ID'] || log['staffId'])
+    const act = String(log['ACTION_TYPE'] || log['ACTION'] || log['action'] || '')
+    const sId = Number(log['STAFF_CODE'] || log['STAFF_ID'] || log['staffId'])
     if (act === 'ORDER_CANCELLED' || act === 'ORDER_DELETED' || act === 'PAYMENT_VOIDED') {
       voidsCount += 1
       if (sId && cashierMap[sId]) {

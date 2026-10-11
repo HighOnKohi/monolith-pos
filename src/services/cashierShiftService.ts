@@ -11,6 +11,7 @@ import type {
 import { fetchStaffCodes } from './staffCodeService'
 import { logCashierAction } from './cashierAuditService'
 import { getActiveBusinessDay } from './businessDayService'
+import { ensureRoleStaffRecord, recordShiftHistoryAndReset } from './shiftHistoryService'
 
 const LOCAL_STORAGE_SHIFT_ID = 'monolith_cashier_shift_id'
 const LOCAL_STORAGE_STAFF_ID = 'monolith_cashier_staff_id'
@@ -217,25 +218,19 @@ export async function startCashierShift(staffId: number): Promise<CashierShift> 
     console.warn('[cashierShiftService] Update Staff_Codes shift error:', err)
   }
 
-  // 2. Insert record into Cashier_Staff
+  // 2. Ensure record exists in Cashier_Staff and reset shift metrics to 0
   try {
-    const cashierStaffPayload = {
-      CASHIER_ID: shiftId,
-      STAFF_ID: staffId,
-      TOTAL_SHIFT_EARNING: 0,
-      TOTAL_TABLES_HANDLED: 0,
-    }
-
-    const { error: csErr } = await supabase
+    await ensureRoleStaffRecord(staffId, 'CASHIER')
+    await supabase
       .schema('staff')
       .from('Cashier_Staff')
-      .insert([cashierStaffPayload])
-
-    if (csErr) {
-      await supabase.from('Cashier_Staff').insert([cashierStaffPayload])
-    }
+      .update({
+        TOTAL_SHIFT_EARNING: 0,
+        TOTAL_TABLES_HANDLED: 0,
+      })
+      .eq('STAFF_ID', staffId)
   } catch (err) {
-    console.warn('[cashierShiftService] Insert Cashier_Staff error:', err)
+    console.warn('[cashierShiftService] Update Cashier_Staff on start error:', err)
   }
 
   // Persist session references and fallback
@@ -264,32 +259,38 @@ export async function startCashierShift(staffId: number): Promise<CashierShift> 
 }
 
 /**
- * Finds an active shift for a staff member.
+ * Finds an active shift for a cashier staff member.
  */
 async function findActiveShiftForStaff(staffId: number): Promise<CashierShift | null> {
   try {
-    const { data, error } = await supabase
+    const { data: codeData } = await supabase
       .schema('staff')
-      .from('Cashier_Shifts')
+      .from('Staff_Codes')
       .select('*')
-      .eq('STAFF_ID', staffId)
-      .eq('STATUS', 'ACTIVE')
+      .eq('CODE_ID', staffId)
+      .eq('SHIFT_STATUS', 'ONGOING')
       .maybeSingle()
 
-    if (!error && data) {
-      return mapDbRowToCashierShift(data)
-    }
+    if (codeData) {
+      const { data: csData } = await supabase
+        .schema('staff')
+        .from('Cashier_Staff')
+        .select('*')
+        .eq('STAFF_ID', staffId)
+        .limit(1)
+        .maybeSingle()
 
-    // Try public view
-    const { data: pubData } = await supabase
-      .from('Cashier_Shifts')
-      .select('*')
-      .eq('STAFF_ID', staffId)
-      .eq('STATUS', 'ACTIVE')
-      .maybeSingle()
-
-    if (pubData) {
-      return mapDbRowToCashierShift(pubData)
+      return {
+        shiftId: Number(csData?.CASHIER_ID || codeData.CODE_ID),
+        staffId: Number(codeData.CODE_ID),
+        startedAt: String(codeData.SHIFT_START || new Date().toISOString()),
+        endedAt: null,
+        status: 'ACTIVE',
+        totalEarning: Number(csData?.TOTAL_SHIFT_EARNING || 0),
+        totalTablesHandled: Number(csData?.TOTAL_TABLES_HANDLED || 0),
+        staffName: String(codeData.STAFF_NAME || 'Cashier'),
+        staffRole: 'CASHIER',
+      }
     }
   } catch {
     // fallback check below
@@ -300,59 +301,48 @@ async function findActiveShiftForStaff(staffId: number): Promise<CashierShift | 
 }
 
 /**
- * Authoritatively retrieves the active shift by ID, verifying that STATUS === 'ACTIVE'.
+ * Authoritatively retrieves the active cashier shift.
  */
 export async function getActiveCashierShift(shiftId?: number): Promise<CashierShift | null> {
-  const targetId = shiftId ?? (Number(localStorage.getItem(LOCAL_STORAGE_SHIFT_ID)) || null)
-  if (!targetId) return null
-
-  let shift: CashierShift | null = null
+  const staffId = Number(localStorage.getItem(LOCAL_STORAGE_STAFF_ID)) || null
+  if (!staffId) return null
 
   try {
-    const { data, error } = await supabase
+    const { data: codeData } = await supabase
       .schema('staff')
-      .from('Cashier_Shifts')
+      .from('Staff_Codes')
       .select('*')
-      .eq('SHIFT_ID', targetId)
+      .eq('CODE_ID', staffId)
+      .eq('SHIFT_STATUS', 'ONGOING')
       .maybeSingle()
 
-    if (!error && data) {
-      shift = mapDbRowToCashierShift(data)
-    } else {
-      const { data: pubData } = await supabase
-        .from('Cashier_Shifts')
+    if (codeData) {
+      const { data: csData } = await supabase
+        .schema('staff')
+        .from('Cashier_Staff')
         .select('*')
-        .eq('SHIFT_ID', targetId)
+        .eq('STAFF_ID', staffId)
+        .limit(1)
         .maybeSingle()
 
-      if (pubData) {
-        shift = mapDbRowToCashierShift(pubData)
+      return {
+        shiftId: Number(csData?.CASHIER_ID || codeData.CODE_ID),
+        staffId: Number(codeData.CODE_ID),
+        startedAt: String(codeData.SHIFT_START || new Date().toISOString()),
+        endedAt: null,
+        status: 'ACTIVE',
+        totalEarning: Number(csData?.TOTAL_SHIFT_EARNING || 0),
+        totalTablesHandled: Number(csData?.TOTAL_TABLES_HANDLED || 0),
+        staffName: String(codeData.STAFF_NAME || 'Cashier'),
+        staffRole: 'CASHIER',
       }
     }
   } catch {
     // ignore
   }
 
-  if (!shift) {
-    const fallbackShifts = getFallbackShifts()
-    shift = fallbackShifts.find((s) => s.shiftId === targetId) ?? null
-  }
-
-  // Only consider valid if STATUS is ACTIVE
-  if (!shift || shift.status !== 'ACTIVE') {
-    return null
-  }
-
-  // Attach staff details
-  if (shift.staffId) {
-    const validation = await validateCashierStaff(shift.staffId)
-    if (validation.valid && validation.staff) {
-      shift.staffName = validation.staff.staffName
-      shift.staffRole = validation.staff.staffRole
-    }
-  }
-
-  return shift
+  const fallbackShifts = getFallbackShifts()
+  return fallbackShifts.find((s) => s.staffId === staffId && s.status === 'ACTIVE') ?? null
 }
 
 /**
@@ -379,40 +369,18 @@ export async function endCashierShift(
     staffRole: activeShift?.staffRole,
   }
 
-  // 1. Update in Supabase (Staff_Codes & Cashier_Staff)
+  // 1. Record Shift_History, reset Cashier_Staff, and mark Staff_Codes ended in Supabase
   try {
-    const codePayload = {
-      SHIFT_STATUS: 'ENDED',
-      SHIFT_END: now,
-    }
     if (updatedShift.staffId) {
-      const { error: codeErr } = await supabase
-        .schema('staff')
-        .from('Staff_Codes')
-        .update(codePayload)
-        .eq('CODE_ID', updatedShift.staffId)
-
-      if (codeErr) {
-        await supabase.from('Staff_Codes').update(codePayload).eq('CODE_ID', updatedShift.staffId)
-      }
-
-      // Update Cashier_Staff metrics
-      const csPayload = {
-        TOTAL_SHIFT_EARNING: finalEarning,
-        TOTAL_TABLES_HANDLED: finalTables,
-      }
-      const { error: csErr } = await supabase
-        .schema('staff')
-        .from('Cashier_Staff')
-        .update(csPayload)
-        .eq('STAFF_ID', updatedShift.staffId)
-
-      if (csErr) {
-        await supabase.from('Cashier_Staff').update(csPayload).eq('STAFF_ID', updatedShift.staffId)
-      }
+      await recordShiftHistoryAndReset(updatedShift.staffId, {
+        staffName: updatedShift.staffName,
+        staffRole: 'CASHIER',
+        startedAt: updatedShift.startedAt,
+        endedAt: now,
+      })
     }
   } catch (err) {
-    console.warn('[cashierShiftService] Failed to update shift in Supabase:', err)
+    console.warn('[cashierShiftService] Failed to record shift history and reset in Supabase:', err)
   }
 
   // 2. Update in fallback storage
@@ -451,23 +419,25 @@ export async function recordCashierSettlement(amount = 0): Promise<void> {
   if (!staffId) return
 
   try {
+    // Ensure single row exists
+    await ensureRoleStaffRecord(staffId, 'CASHIER')
+
     let currentRecord: Record<string, unknown> | null = null
     const { data: schemaData } = await supabase
       .schema('staff')
       .from('Cashier_Staff')
       .select('*')
       .eq('STAFF_ID', staffId)
-      .order('CASHIER_ID', { ascending: false })
       .limit(1)
       .maybeSingle()
 
-    if (schemaData) currentRecord = schemaData as Record<string, unknown>
-    else {
+    if (schemaData) {
+      currentRecord = schemaData as Record<string, unknown>
+    } else {
       const { data: pubData } = await supabase
         .from('Cashier_Staff')
         .select('*')
         .eq('STAFF_ID', staffId)
-        .order('CASHIER_ID', { ascending: false })
         .limit(1)
         .maybeSingle()
       if (pubData) currentRecord = pubData as Record<string, unknown>
@@ -478,24 +448,14 @@ export async function recordCashierSettlement(amount = 0): Promise<void> {
     const newEarning = currentEarning + Number(amount)
     const newTables = currentTables + 1
 
-    if (currentRecord?.CASHIER_ID) {
-      await supabase
-        .schema('staff')
-        .from('Cashier_Staff')
-        .update({
-          TOTAL_SHIFT_EARNING: newEarning,
-          TOTAL_TABLES_HANDLED: newTables,
-        })
-        .eq('CASHIER_ID', currentRecord.CASHIER_ID)
-    } else {
-      const payload = {
-        CASHIER_ID: Date.now(),
-        STAFF_ID: staffId,
+    await supabase
+      .schema('staff')
+      .from('Cashier_Staff')
+      .update({
         TOTAL_SHIFT_EARNING: newEarning,
         TOTAL_TABLES_HANDLED: newTables,
-      }
-      await supabase.schema('staff').from('Cashier_Staff').insert([payload])
-    }
+      })
+      .eq('STAFF_ID', staffId)
   } catch (err) {
     console.warn('[cashierShiftService] recordCashierSettlement error:', err)
   }
@@ -516,19 +476,18 @@ export async function calculateShiftMetrics(startedAt: string): Promise<ShiftSum
   let ordersHandled = 0
 
   try {
-    // Query Completed_Orders from analytics or Restaurant_Orders settled since startedAt
-    const { data: orders } = await supabase
-      .schema('orders')
-      .from('Restaurant_Orders')
-      .select('ORDER_ID, TOTAL_AMOUNT, TABLE_ID, UPDATED_AT, ORDER_STATUS')
-      .in('ORDER_STATUS', ['COMPLETED', 'SETTLED', 'PAID'])
-      .gte('UPDATED_AT', startedAt)
+    // Query completed orders from system_history.Order_History since startedAt
+    const { data: histOrders } = await supabase
+      .schema('system_history')
+      .from('Order_History')
+      .select('ORDER_ID, TOTAL_BILL, TABLE_ID, COMPLETED_AT')
+      .gte('COMPLETED_AT', startedAt)
 
-    if (orders && orders.length > 0) {
-      ordersHandled = orders.length
+    if (histOrders && histOrders.length > 0) {
+      ordersHandled = histOrders.length
       const uniqueTables = new Set<number>()
-      orders.forEach((o) => {
-        totalEarnings += Number(o.TOTAL_AMOUNT || 0)
+      histOrders.forEach((o) => {
+        totalEarnings += Number(o.TOTAL_BILL || 0)
         if (o.TABLE_ID) uniqueTables.add(Number(o.TABLE_ID))
       })
       tablesHandled = uniqueTables.size
@@ -568,74 +527,42 @@ export async function calculateShiftSummary(shift: CashierShift): Promise<Cashie
   const endTime = shift.endedAt || new Date().toISOString()
   const durationMinutes = Math.max(1, Math.round((new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000))
 
-  // 1. Fetch completed orders from Completed_Orders (system_history or public schema)
+  // 1. Fetch completed orders from system_history.Order_History
   let completedRows: Array<Record<string, unknown>> = []
   try {
-    let dbOrders: Array<Record<string, unknown>> | null = null
-    try {
-      const res = await supabase
-        .schema('system_history')
-        .from('Completed_Orders')
-        .select('*')
-        .or(`SHIFT_ID.eq.${shift.shiftId},COMPLETED_AT.gte.${startTime}`)
-        .order('COMPLETED_AT', { ascending: false })
-      if (!res.error && res.data) {
-        dbOrders = res.data
-      } else {
-        throw res.error
-      }
-    } catch {
-      const res = await supabase
-        .from('Completed_Orders')
-        .select('*')
-        .or(`SHIFT_ID.eq.${shift.shiftId},COMPLETED_AT.gte.${startTime}`)
-        .order('COMPLETED_AT', { ascending: false })
-      dbOrders = res.data
-    }
+    const { data: dbOrders, error: orderErr } = await supabase
+      .schema('system_history')
+      .from('Order_History')
+      .select('*')
+      .gte('COMPLETED_AT', startTime)
+      .lte('COMPLETED_AT', endTime)
+      .order('COMPLETED_AT', { ascending: false })
 
-    if (dbOrders && dbOrders.length > 0) {
+    if (!orderErr && dbOrders && dbOrders.length > 0) {
       completedRows = dbOrders.filter((o) => {
-        if (o.SHIFT_ID && Number(o.SHIFT_ID) === shift.shiftId) return true
-        if (o.STAFF_ID && Number(o.STAFF_ID) === shift.staffId) {
-          const cTime = String(o.COMPLETED_AT || o.TIME || '')
-          return cTime >= startTime && cTime <= endTime
-        }
-        return false
+        if (o.FROM_CASHIER_ID && Number(o.FROM_CASHIER_ID) === shift.staffId) return true
+        if (o.BUSINESS_DAY_ID && shift.businessDayId && Number(o.BUSINESS_DAY_ID) === shift.businessDayId) return true
+        return true
       })
     }
   } catch (err) {
-    console.warn('[cashierShiftService] Failed to query Completed_Orders:', err)
+    console.warn('[cashierShiftService] Failed to query Order_History:', err)
   }
 
-  // 2. Fetch audit logs for the shift (for voids, cancellations, discounts)
+  // 2. Fetch audit logs for the shift (from system_history.Action_History)
   let auditRows: Array<Record<string, unknown>> = []
   try {
-    let dbLogs: Array<Record<string, unknown>> | null = null
-    try {
-      const res = await supabase
-        .schema('staff')
-        .from('Audit_Logs')
-        .select('*')
-        .gte('CREATED_AT', startTime)
-        .lte('CREATED_AT', endTime)
-      if (!res.error && res.data) dbLogs = res.data
-    } catch {
-      try {
-        const res2 = await supabase
-          .from('Audit_Logs')
-          .select('*')
-          .gte('CREATED_AT', startTime)
-          .lte('CREATED_AT', endTime)
-        if (!res2.error && res2.data) dbLogs = res2.data
-      } catch {
-        // ignore
-      }
-    }
+    const { data: dbLogs } = await supabase
+      .schema('system_history')
+      .from('Action_History')
+      .select('*')
+      .gte('CREATED_AT', startTime)
+      .lte('CREATED_AT', endTime)
+
     if (dbLogs) {
       auditRows = dbLogs.filter((l) => {
         const sId = Number(l['STAFF_ID'] || l['staffId'])
-        const shId = Number(l['SHIFT_ID'] || l['shiftId'])
-        return shId === shift.shiftId || sId === shift.staffId
+        return sId === shift.staffId
       })
     }
   } catch {
@@ -644,7 +571,9 @@ export async function calculateShiftSummary(shift: CashierShift): Promise<Cashie
 
   // Fallback audit logs from localStorage
   try {
-    const raw = localStorage.getItem('monolith_cashier_audit_logs_fallback')
+    const raw =
+      localStorage.getItem('monolith_action_history_fallback') ||
+      localStorage.getItem('monolith_cashier_audit_logs_fallback')
     if (raw) {
       const localLogs = JSON.parse(raw) as Array<Record<string, unknown>>
       const matchedLocal = localLogs.filter((l) => {
@@ -747,7 +676,7 @@ export async function calculateShiftSummary(shift: CashierShift): Promise<Cashie
   // Count voids and cancellations from audit rows
   let voidsCount = 0
   for (const log of auditRows) {
-    const act = String(log['ACTION'] || log['action'] || '')
+    const act = String(log['ACTION_TYPE'] || log['ACTION'] || log['action'] || '')
     if (act === 'ORDER_CANCELLED' || act === 'ORDER_DELETED' || act === 'PAYMENT_VOIDED') {
       voidsCount += 1
     }

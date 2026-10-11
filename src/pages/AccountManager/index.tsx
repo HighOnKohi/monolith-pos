@@ -40,6 +40,8 @@ export default function AccountManagerPage() {
     dispatcherCount: 0,
     serviceCount: 0,
     cashierCount: 0,
+    organizerCount: 0,
+    receptionistCount: 0,
     ongoingShiftsCount: 0,
   })
   const [totalCount, setTotalCount] = useState(0)

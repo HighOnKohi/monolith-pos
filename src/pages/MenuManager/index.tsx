@@ -26,6 +26,8 @@ import {
   updateMenuPreset,
   deleteMenuPreset,
   sortMenuPresets,
+  getAllPresetItemIds,
+  type ScheduledPresetItems,
 } from '@/services/menuService'
 import type { MenuItem } from '@/types/menu'
 import { DEFAULT_FOOD_PLACEHOLDER } from '@/types/menu'
@@ -105,17 +107,16 @@ export default function MenuManagerPage() {
     return presets.find((p) => p.PRESET_NAME.trim().toLowerCase() === 'global')
   }, [presets])
 
-  // Active preset items filtered by active preset ITEM_IDS array + Global preset items
+  // Active preset items filtered by active preset items across all schedules + Global preset items
   const currentPresetItems = useMemo(() => {
     const sourceItems = catalogItems.length > 0 ? catalogItems : presetItems
-    if (activePreset && Array.isArray(activePreset.ITEM_IDS)) {
+    if (activePreset) {
       const isGlobal = activePreset.PRESET_NAME.trim().toLowerCase() === 'global'
-      const globalItemIds = (globalPreset?.ITEM_IDS ?? []).map(String)
-      const activeItemIds = isGlobal
-        ? new Set(activePreset.ITEM_IDS.map(String))
-        : new Set([...activePreset.ITEM_IDS.map(String), ...globalItemIds])
+      const allActivePresetIds = getAllPresetItemIds(activePreset)
+      const allGlobalIds = globalPreset ? getAllPresetItemIds(globalPreset) : []
+      const combinedIds = new Set(isGlobal ? allActivePresetIds : [...allActivePresetIds, ...allGlobalIds])
 
-      return sourceItems.filter((item) => !item.isItemGroup && activeItemIds.has(item.id))
+      return sourceItems.filter((item) => !item.isItemGroup && combinedIds.has(item.id))
     }
     return sourceItems.filter((item) => !item.isItemGroup)
   }, [activePreset, globalPreset, catalogItems, presetItems])
@@ -209,28 +210,39 @@ export default function MenuManagerPage() {
 
   const handlePickerSubmit = async ({
     presetName,
-    selectedItemIds,
+    wholeDayItemIds,
+    morningItemIds,
+    afternoonItemIds,
   }: {
     presetName?: string
-    selectedItemIds: string[]
+    wholeDayItemIds: string[]
+    morningItemIds: string[]
+    afternoonItemIds: string[]
   }) => {
+    const scheduled: ScheduledPresetItems = {
+      wholeDayItemIds,
+      morningItemIds,
+      afternoonItemIds,
+    }
+    const totalCount = wholeDayItemIds.length + morningItemIds.length + afternoonItemIds.length
+
     if (pickerMode === 'create') {
       if (!presetName) return
       try {
-        const created = await createPreset(presetName, selectedItemIds)
+        const created = await createPreset(presetName, scheduled)
         await setActivePresetId(created.PRESET_ID)
         await loadCatalog()
         reload()
-        showToast(`Created preset "${presetName}" with ${selectedItemIds.length} dishes!`, 'success')
+        showToast(`Created preset "${presetName}" with ${totalCount} scheduled dishes!`, 'success')
       } catch (err) {
         showToast(err instanceof Error ? err.message : 'Failed to create preset.', 'error')
       }
     } else {
       try {
-        await savePresetItems(activePresetId, selectedItemIds)
+        await savePresetItems(activePresetId, scheduled)
         await loadCatalog()
         reload()
-        showToast(`Preset items updated (${selectedItemIds.length} items in set).`, 'success')
+        showToast(`Preset schedule items updated (${totalCount} dishes configured).`, 'success')
       } catch (err) {
         showToast(err instanceof Error ? err.message : 'Failed to update preset items.', 'error')
       }
@@ -243,12 +255,16 @@ export default function MenuManagerPage() {
       message: `Remove "${item.name}" from the active preset "${activePreset?.PRESET_NAME ?? 'Preset'}"? (The item will remain safe in the Menu Catalog).`,
       onConfirm: async () => {
         setConfirmState(null)
-        const remainingIds = currentPresetItems.filter((i) => i.id !== item.id).map((i) => i.id)
         if (selectedItem?.id === item.id) {
           setSelectedItem(null)
         }
+        const updatedScheduled: ScheduledPresetItems = {
+          wholeDayItemIds: (activePreset?.WHOLE_DAY_ITEM_IDS ?? []).filter((id) => id !== item.id),
+          morningItemIds: (activePreset?.MORNING_ITEM_IDS ?? []).filter((id) => id !== item.id),
+          afternoonItemIds: (activePreset?.AFTERNOON_ITEM_IDS ?? []).filter((id) => id !== item.id),
+        }
         try {
-          await savePresetItems(activePresetId, remainingIds)
+          await savePresetItems(activePresetId, updatedScheduled)
           reload()
           showToast(`Removed "${item.name}" from "${activePreset?.PRESET_NAME}".`, 'info')
         } catch (err) {
@@ -710,24 +726,11 @@ export default function MenuManagerPage() {
                           }}
                         />
 
-                        {/* Dietary Badge */}
-                        <div className="absolute top-2 left-2">
-                          {item.dietaryType === 'veg' ? (
-                            <span className="text-[9px] font-black tracking-wide text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-1.5 py-0.5 rounded-md shadow-2xs">
-                              VEG
-                            </span>
-                          ) : (
-                            <span className="text-[9px] font-black tracking-wide text-rose-800 bg-rose-100/90 border border-rose-300 px-1.5 py-0.5 rounded-md shadow-2xs">
-                              NON-VEG
-                            </span>
-                          )}
-                        </div>
-
                         {/* Discount / Best Seller Badge */}
                         {item.badge && (
                           <div className="absolute top-2 right-2">
                             <span
-                              className={`text-[9px] font-black tracking-wide px-1.5 py-0.5 rounded-md shadow-2xs ${
+                              className={`text-[8.5px] font-black tracking-wide px-1.5 py-0.5 rounded-md shadow-2xs ${
                                 item.badge.type === 'discount'
                                   ? 'bg-amber-400 text-amber-950 border border-amber-500'
                                   : 'bg-[#14274E] text-[#E9C46A] border border-[#E9C46A]/30'
@@ -862,20 +865,17 @@ export default function MenuManagerPage() {
         }}
       />
 
-      {/* Preset Item Picker Modal (Grid selection from Catalog) */}
+      {/* Preset Item Picker Modal (Grid selection from Catalog with Schedule Tabs) */}
       <PresetItemPickerModal
         isOpen={isPickerModalOpen}
-        title={pickerMode === 'create' ? 'Create New Preset from Catalog' : `Edit Preset "${activePreset?.PRESET_NAME}"`}
-        subtitle={
-          pickerMode === 'create'
-            ? 'Choose catalog dishes to include in your new preset set.'
-            : 'Select or unselect dishes from the catalog for this preset.'
-        }
+        title={pickerMode === 'create' ? 'Create Preset' : 'Edit Preset'}
         presetName={pickerMode === 'create' ? '' : activePreset?.PRESET_NAME}
         isCreatingNewPreset={pickerMode === 'create'}
         catalogItems={catalogItems}
         categories={categories}
-        initialSelectedItemIds={pickerMode === 'create' ? catalogItems.map((i) => i.id) : activePresetItemIds}
+        initialWholeDayItemIds={pickerMode === 'create' ? catalogItems.map((i) => i.id) : (activePreset?.WHOLE_DAY_ITEM_IDS ?? [])}
+        initialMorningItemIds={pickerMode === 'create' ? [] : (activePreset?.MORNING_ITEM_IDS ?? [])}
+        initialAfternoonItemIds={pickerMode === 'create' ? [] : (activePreset?.AFTERNOON_ITEM_IDS ?? [])}
         onClose={() => setPickerModalOpen(false)}
         onSubmit={handlePickerSubmit}
       />

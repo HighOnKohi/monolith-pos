@@ -11,6 +11,7 @@ import {
   ClipboardList,
   ConciergeBell,
   ShieldCheck,
+  HandPlatter,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -44,30 +45,34 @@ export interface NavSection {
 export const navigation: NavSection[] = [
   {
     section: 'Front Ops',
-    items: [
-      {
-        title: 'Receptionist Interface',
-        description: 'Floor view, seating, and table status.',
-        path: '/reception',
-        icon: ConciergeBell,
-      },
-    ],
     groups: [
       {
         title: 'Kitchen Interfaces',
         icon: ChefHat,
         children: [
           { title: 'Order Viewer', description: 'View live orders.', path: '/order-viewer', icon: ClipboardList },
-          { title: 'Dispatcher Interface', description: 'Manage the cooking queue.', path: '/dispatcher', icon: UtensilsCrossed },
+          { title: 'Dispatcher', description: 'Manage the cooking queue.', path: '/dispatcher', icon: UtensilsCrossed },
         ],
       },
+    ],
+    items: [
       {
-        title: 'Counter Interfaces',
+        title: 'Service Interface',
+        description: 'Manage service orders and bills.',
+        path: '/service',
+        icon: HandPlatter,
+      },
+      {
+        title: 'Cashier Interface',
+        description: 'Cashier tools.',
+        path: '/cashier',
         icon: Receipt,
-        children: [
-          { title: 'Service Interface', description: 'Manage service orders and bills.', path: '/service', icon: LayoutGrid },
-          { title: 'Cashier Interface', description: 'Cashier tools.', path: '/cashier', icon: Receipt },
-        ],
+      },
+      {
+        title: 'Receptionist Interface',
+        description: 'Floor view, seating, and table status.',
+        path: '/reception',
+        icon: ConciergeBell,
       },
     ],
   },

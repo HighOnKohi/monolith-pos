@@ -251,16 +251,17 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   const { startDate, endDate } = range
   const { prevStart, prevEnd } = getPreviousPeriod(startDate, endDate)
 
-  // 1. Fetch completed orders from Completed_Orders table (dedicated archive for completed orders)
+  // 1. Fetch completed orders from system_history.Order_History
   const { data: rawCompletedOrders, error: completedOrdersErr } = await supabase
-    .from('Completed_Orders')
+    .schema('system_history')
+    .from('Order_History')
     .select('*')
     .gte('TIME', toIsoDate(startDate))
     .lte('TIME', toIsoDate(endDate))
     .order('TIME', { ascending: true })
 
   if (completedOrdersErr) {
-    console.warn('[analyticsService] Note on Completed_Orders table:', completedOrdersErr.message)
+    console.warn('[analyticsService] Note on Order_History table:', completedOrdersErr.message)
   }
 
   // Also query Restaurant_Orders for active/legacy orders in period
@@ -402,8 +403,9 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
 
   // 2. Fetch table orders in the previous equivalent period for % comparison
   const { data: previousCompletedOrders } = await supabase
-    .from('Completed_Orders')
-    .select('ORDER_STATUS, TOTAL_BILL, GUEST_COUNT')
+    .schema('system_history')
+    .from('Order_History')
+    .select('ORDER_ID, TOTAL_BILL, GUEST_COUNT')
     .gte('TIME', toIsoDate(prevStart))
     .lte('TIME', toIsoDate(prevEnd))
 
@@ -1475,20 +1477,21 @@ export async function clearAnalyticsData(adminEmail: string, adminPassword: stri
     throw new Error(authError?.message || 'Invalid administrator email or password.')
   }
 
-  // 2. Purge dedicated Completed_Orders table
+  // 2. Purge system_history.Order_History table
   let deletedCompletedCount = 0
   try {
     const { data: targetCompleted } = await supabase
-      .from('Completed_Orders')
+      .schema('system_history')
+      .from('Order_History')
       .select('ORDER_ID')
 
     if (targetCompleted && targetCompleted.length > 0) {
       const completedIds = targetCompleted.map((c) => Number(c['ORDER_ID']))
-      await supabase.from('Completed_Orders').delete().in('ORDER_ID', completedIds)
+      await supabase.schema('system_history').from('Order_History').delete().in('ORDER_ID', completedIds)
       deletedCompletedCount = completedIds.length
     }
   } catch (cErr) {
-    console.warn('[analyticsService] Warning purging Completed_Orders:', cErr)
+    console.warn('[analyticsService] Warning purging Order_History:', cErr)
   }
 
   // 3. Fetch IDs of COMPLETED and CANCELLED orders in Restaurant_Orders to purge

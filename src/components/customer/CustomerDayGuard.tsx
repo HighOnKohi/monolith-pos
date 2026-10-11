@@ -21,7 +21,11 @@ export function CustomerDayGuard({ children }: CustomerDayGuardProps) {
   }
 
   if (!isOpen) {
-    return <BusinessDayClosedNotice mode="customer" onRetry={() => void refreshDay()} />
+    return (
+      <div className="relative w-full min-h-screen">
+        <BusinessDayClosedNotice mode="customer" onRetry={() => void refreshDay()} />
+      </div>
+    )
   }
 
   return <>{children}</>

@@ -15,6 +15,12 @@ function usePageTitle(): string {
   for (const section of navigation) {
     const found = section.items.find((item) => item.path === pathname)
     if (found) return found.title
+    if (section.groups) {
+      for (const group of section.groups) {
+        const groupFound = group.children.find((item) => item.path === pathname)
+        if (groupFound) return groupFound.title
+      }
+    }
   }
   return APP_NAME
 }

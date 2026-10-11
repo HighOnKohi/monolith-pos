@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import monolithLogoYellow from '@/assets/images/monolith-logo-yellow.png'
 
 interface BusinessDayClosedNoticeProps {
-  mode?: 'cashier' | 'service' | 'customer' | 'kitchen'
+  mode?: 'cashier' | 'service' | 'customer' | 'kitchen' | 'receptionist'
   onRetry?: () => void
 }
 
@@ -46,11 +46,19 @@ export function BusinessDayClosedNotice({
       hint: 'Please contact a manager or system administrator to start the business day from the management portal to begin processing tickets.',
       showAdminAction: true,
     },
+    receptionist: {
+      tag: 'Reception Desk Locked',
+      title: 'Business Day Closed',
+      description:
+        'Floor plan viewing, guest seating, and reservation management are currently unavailable because the operational business day is closed.',
+      hint: 'Please contact a manager or system administrator to start the business day from the management portal to begin seating guests.',
+      showAdminAction: true,
+    },
   }[mode]
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-4 animate-fade-in">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden text-center">
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto animate-fade-in">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden text-center my-auto">
         {/* Header Visual */}
         <div className="bg-[#14274E] px-8 pt-8 pb-7 relative overflow-hidden">
           <div className="absolute -top-12 -right-12 w-36 h-36 rounded-full bg-amber-500/15 blur-2xl pointer-events-none" />

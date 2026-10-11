@@ -7,6 +7,8 @@ import {
   ChefHat,
   Store,
   UtensilsCrossed,
+  FolderKanban,
+  ConciergeBell,
   Sparkles,
   Check,
 } from 'lucide-react'
@@ -121,7 +123,13 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
 
   if (!isOpen) return null
 
-  const rolesList: StaffRole[] = ['DISPATCHER', 'SERVICE', 'CASHIER']
+  const rolesList: StaffRole[] = [
+    'DISPATCHER',
+    'SERVICE',
+    'CASHIER',
+    'ORGANIZER',
+    'RECEPTIONIST',
+  ]
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -230,6 +238,8 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
                 let Icon = ChefHat
                 if (rKey === 'SERVICE') Icon = UtensilsCrossed
                 if (rKey === 'CASHIER') Icon = Store
+                if (rKey === 'ORGANIZER') Icon = FolderKanban
+                if (rKey === 'RECEPTIONIST') Icon = ConciergeBell
 
                 return (
                   <button

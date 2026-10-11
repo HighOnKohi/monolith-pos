@@ -8,6 +8,8 @@ import {
   ChefHat,
   Store,
   UtensilsCrossed,
+  FolderKanban,
+  ConciergeBell,
   PowerOff,
   Clock,
   ShieldCheck,
@@ -63,6 +65,8 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
     let RoleIcon = ChefHat
     if (role === 'SERVICE') RoleIcon = UtensilsCrossed
     if (role === 'CASHIER') RoleIcon = Store
+    if (role === 'ORGANIZER') RoleIcon = FolderKanban
+    if (role === 'RECEPTIONIST') RoleIcon = ConciergeBell
 
     return (
       <span
