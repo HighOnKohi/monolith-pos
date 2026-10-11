@@ -4,16 +4,30 @@ import type { MenuItem } from '@/types/menu'
 
 export const MENU_ITEM_STATUS_UPDATED = 'menu-item-status-updated'
 
-export function broadcastMenuItemStatus(itemId: string | number, isSoldOut: boolean) {
+export function broadcastMenuItemStatus(itemId: string | number, isSoldOut: boolean, orderLimit?: number) {
   window.dispatchEvent(new CustomEvent(MENU_ITEM_STATUS_UPDATED, {
-    detail: { itemId: String(itemId), isSoldOut },
+    detail: { itemId: String(itemId), isSoldOut, orderLimit },
   }))
+
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const bc = new BroadcastChannel('monolith_order_events')
+      bc.postMessage({
+        type: 'menu_item_status_updated',
+        itemId: String(itemId),
+        isSoldOut,
+        orderLimit,
+      })
+      bc.close()
+    }
+  } catch {
+    // Non-fatal
+  }
 }
 
 /**
- * Subscribes to Menu_Items ITEM_STATUS changes via Supabase Realtime.
- * When an item becomes OUT_OF_STOCK or AVAILABLE, calls onUpdate with
- * the updated item ID and new sold-out state so the parent can merge.
+ * Subscribes to Menu_Items ITEM_STATUS & ORDER_LIMIT changes via Supabase Realtime.
+ * When an item becomes OUT_OF_STOCK or AVAILABLE or changes limit, calls onUpdate.
  */
 export function useRealtimeMenu(
   onUpdate: (itemId: string, isSoldOut: boolean, orderLimit?: number) => void,
@@ -27,8 +41,8 @@ export function useRealtimeMenu(
         (payload) => {
           const row = payload.new as Record<string, unknown>
           const itemId = String(row['ITEM_ID'])
-          const isSoldOut = row['ITEM_STATUS'] === 'OUT_OF_STOCK'
           const orderLimit = row['ORDER_LIMIT'] != null ? Number(row['ORDER_LIMIT']) : undefined
+          const isSoldOut = row['ITEM_STATUS'] === 'OUT_OF_STOCK' || (orderLimit !== undefined && orderLimit <= 0)
           onUpdate(itemId, isSoldOut, orderLimit)
         },
       )

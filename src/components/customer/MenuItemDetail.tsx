@@ -20,9 +20,9 @@ export function MenuItemDetail({
   onClose,
   onUpdateCart,
 }: MenuItemDetailProps) {
+  const isSoldOut = item.isSoldOut || (item.orderLimit !== undefined && item.orderLimit <= 0)
   const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit > 0
   const maxQty = hasLimit ? Math.max(0, item.orderLimit!) : Infinity
-  const isSoldOut = item.isSoldOut || (hasLimit && item.orderLimit! <= 0)
 
   const [qty, setQty] = useState(() => {
     const raw = initialQuantity === 0 ? 1 : initialQuantity

@@ -1,6 +1,7 @@
 import React from 'react'
 import { useOrganizerSession } from '@/contexts/OrganizerSessionContext'
 import { OrganizerStaffGate } from './OrganizerStaffGate'
+import { OrganizerShiftHeaderBar } from './OrganizerShiftHeaderBar'
 import PageLoader from '@/components/common/PageLoader'
 
 interface OrganizerRouteGuardProps {
@@ -13,6 +14,7 @@ interface OrganizerRouteGuardProps {
  * Wraps Management interface routes (/tables, /catalog, /menu, /events).
  * Verifies that an active Organizer staff code session is unlocked.
  * If not, renders OrganizerStaffGate prompt requiring an ORGANIZER staff code.
+ * When authenticated, displays OrganizerShiftHeaderBar with active Organizer details and End Shift button.
  */
 export function OrganizerRouteGuard({ children }: OrganizerRouteGuardProps) {
   const { isAuthenticated, loading } = useOrganizerSession()
@@ -25,5 +27,14 @@ export function OrganizerRouteGuard({ children }: OrganizerRouteGuardProps) {
     return <OrganizerStaffGate />
   }
 
-  return <>{children}</>
+  return (
+    <div className="flex flex-col h-full w-full overflow-hidden">
+      <div className="px-4 pt-3 pb-1 shrink-0">
+        <OrganizerShiftHeaderBar />
+      </div>
+      <div className="flex-1 min-h-0 overflow-hidden relative">
+        {children}
+      </div>
+    </div>
+  )
 }

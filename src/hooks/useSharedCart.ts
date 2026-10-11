@@ -212,7 +212,10 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
   const addItem = useCallback(
     (item: MenuItem, notes?: string, quantity = 1) => {
       setCartState((prev) => {
-        const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit > 0
+        if (item.isSoldOut || (item.orderLimit !== undefined && item.orderLimit <= 0)) {
+          return prev
+        }
+        const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit >= 0
         const limit = hasLimit ? item.orderLimit! : Infinity
         const existing = prev.items.find((ci) => ci.item.id === item.id)
         const currentQty = existing?.quantity ?? 0
@@ -245,7 +248,13 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
   const setItemQuantity = useCallback(
     (item: MenuItem, quantity: number, notes?: string) => {
       setCartState((prev) => {
-        const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit > 0
+        if (item.isSoldOut || (item.orderLimit !== undefined && item.orderLimit <= 0)) {
+          return {
+            ...prev,
+            items: prev.items.filter((ci) => ci.item.id !== item.id),
+          }
+        }
+        const hasLimit = typeof item.orderLimit === 'number' && item.orderLimit >= 0
         const limit = hasLimit ? item.orderLimit! : Infinity
         const clampedQty = Math.min(quantity, limit)
 
@@ -288,7 +297,10 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
       const existing = prev.items.find((ci) => ci.item.id === itemId)
       if (!existing) return prev
 
-      const hasLimit = typeof existing.item.orderLimit === 'number' && existing.item.orderLimit > 0
+      if (existing.item.isSoldOut || (existing.item.orderLimit !== undefined && existing.item.orderLimit <= 0)) {
+        return prev
+      }
+      const hasLimit = typeof existing.item.orderLimit === 'number' && existing.item.orderLimit >= 0
       const limit = hasLimit ? existing.item.orderLimit! : Infinity
       if (existing.quantity >= limit) {
         return prev

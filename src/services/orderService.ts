@@ -219,9 +219,7 @@ export async function createOrder(
           })
           .eq('ITEM_ID', itemId)
 
-        if (isNowSoldOut) {
-          broadcastMenuItemStatus(itemId, true)
-        }
+        broadcastMenuItemStatus(itemId, isNowSoldOut, newLimit)
       }
     }
   } catch (stockErr) {

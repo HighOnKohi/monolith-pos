@@ -15,17 +15,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onAddToCart,
   onDecreaseQty,
 }) => {
+  const isSoldOut = item.isSoldOut || (item.orderLimit !== undefined && item.orderLimit <= 0)
+  const isLimitReached = item.orderLimit !== undefined && quantityInCart >= item.orderLimit
   const isSelected = quantityInCart > 0
 
   return (
     <div
       className={[
-        'service-interface-dish-card p-3 relative select-none cursor-pointer',
+        'service-interface-dish-card p-3 relative select-none',
+        isSoldOut ? 'opacity-50 grayscale cursor-not-allowed' : isLimitReached ? 'cursor-not-allowed' : 'cursor-pointer',
         isSelected ? 'is-selected ring-2 ring-[#14274E]/15' : '',
-        item.isSoldOut ? 'opacity-50 grayscale' : '',
       ].join(' ')}
       onClick={() => {
-        if (!item.isSoldOut) onAddToCart(item)
+        if (!isSoldOut && !isLimitReached) onAddToCart(item)
       }}
       onContextMenu={(event) => {
         event.preventDefault()
@@ -51,11 +53,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               Selected ({quantityInCart})
             </span>
           )}
-          {item.isSoldOut && (
+          {isSoldOut ? (
             <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#C94A4A] text-white shadow-xs">
               SOLD OUT
             </span>
-          )}
+          ) : item.orderLimit !== undefined && item.orderLimit > 0 ? (
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-500 text-white shadow-xs">
+              {item.orderLimit} left
+            </span>
+          ) : null}
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Loader2, RefreshCw, RotateCcw } from 'lucide-react'
+import { Loader2, RotateCcw } from 'lucide-react'
 import {
   ClockFilledIcon,
   ChefHatFilledIcon,
@@ -846,18 +846,6 @@ export default function DispatcherInterface() {
               <span>Undo Last ({undoHistory.length})</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              loadOrders(false)
-            }}
-            disabled={isLoading}
-            className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-black flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer active:scale-95"
-            title="Refresh orders"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
         </div>
       </div>
 

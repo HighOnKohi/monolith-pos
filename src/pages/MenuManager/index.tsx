@@ -359,6 +359,7 @@ export default function MenuManagerPage() {
   const handleEditItemSubmit = async (form: NewMenuItemForm) => {
     if (!editingItem) return
     const prev = editingItem
+    const isOutOfStock = !form.isAvailable || (form.orderLimit !== undefined && form.orderLimit <= 0)
     const updated: MenuItem = {
       ...editingItem,
       name: form.name,
@@ -369,10 +370,11 @@ export default function MenuManagerPage() {
       isBestSeller: form.isBestSeller,
       categoryId: form.categoryId,
       dietaryType: form.dietaryType,
-      isAvailable: form.isAvailable,
-      isSoldOut: !form.isAvailable,
+      isAvailable: !isOutOfStock,
+      isSoldOut: isOutOfStock,
       imageUrl: form.imageUrl,
       description: form.description,
+      orderLimit: form.orderLimit,
     }
     setItems((current) => current.map((i) => (i.id === editingItem.id ? updated : i)))
     if (selectedItem?.id === editingItem.id) {

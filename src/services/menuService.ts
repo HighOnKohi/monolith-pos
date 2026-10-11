@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import { DEFAULT_FOOD_PLACEHOLDER, type MenuItem, type Category } from '@/types/menu'
 import { isMorningMenuTime } from '@/services/configurationService'
+import { broadcastMenuItemStatus } from '@/hooks/useRealtimeMenu'
 
 export interface ScheduledPresetItems {
   wholeDayItemIds?: string[]
@@ -382,6 +383,12 @@ function mapItem(row: Record<string, unknown>): MenuItem {
     badge = { label: 'Best Seller', type: 'best-seller' as const }
   }
 
+  const rawLimit = row['ORDER_LIMIT']
+  const orderLimit = rawLimit != null ? Number(rawLimit) : undefined
+  const isOutOfStock =
+    String(row['ITEM_STATUS'] ?? 'AVAILABLE') === 'OUT_OF_STOCK' ||
+    (orderLimit !== undefined && orderLimit <= 0)
+
   return {
     id: String(row['ITEM_ID']),
     name: String(row['ITEM_NAME']),
@@ -393,13 +400,13 @@ function mapItem(row: Record<string, unknown>): MenuItem {
     categoryId: String(row['CATEGORY_ID']),
     dietaryType: mapDietaryType(row['MENU_ITEM_DIETARY']),
     imageUrl: (row['ITEM_IMAGE_URL'] as string | undefined) || DEFAULT_FOOD_PLACEHOLDER,
-    isAvailable: String(row['ITEM_STATUS'] ?? 'AVAILABLE') !== 'OUT_OF_STOCK',
-    isSoldOut: String(row['ITEM_STATUS'] ?? 'AVAILABLE') === 'OUT_OF_STOCK',
+    isAvailable: !isOutOfStock,
+    isSoldOut: isOutOfStock,
     isItemGroup: row['IS_ITEM_GROUP'] === true,
     description: description || undefined,
     isBestSeller: isDirectBestSeller,
     badge,
-    orderLimit: row['ORDER_LIMIT'] != null ? Number(row['ORDER_LIMIT']) : 0,
+    orderLimit,
   }
 }
 
@@ -555,11 +562,14 @@ export async function createMenuItem(payload: {
       ITEM_NAME: payload.name,
       ITEM_PRICE: payload.price,
       CATEGORY_ID: Number(payload.categoryId),
-      ITEM_STATUS: payload.isAvailable === false ? 'OUT_OF_STOCK' : 'AVAILABLE',
+      ITEM_STATUS:
+        payload.isAvailable === false || (payload.orderLimit !== undefined && payload.orderLimit <= 0)
+          ? 'OUT_OF_STOCK'
+          : 'AVAILABLE',
       MENU_ITEM_DIETARY: toDatabaseDietaryType(payload.dietaryType),
       ITEM_IMAGE_URL: payload.imageUrl ?? null,
       ITEM_DESCRIPTION: formattedDesc || null,
-      ORDER_LIMIT: payload.orderLimit ?? 0,
+      ORDER_LIMIT: payload.orderLimit !== undefined ? payload.orderLimit : null,
       IS_ITEM_GROUP: (payload.itemIds?.length ?? 0) > 0,
     })
     .select()
@@ -588,7 +598,7 @@ export async function updateMenuItem(id: string, patch: {
   isAvailable?: boolean
   imageUrl?: string
   description?: string
-  orderLimit?: number
+  orderLimit?: number | null
   itemIds?: string[]
 }): Promise<void> {
   const update: Record<string, unknown> = {}
@@ -598,7 +608,14 @@ export async function updateMenuItem(id: string, patch: {
   if (patch.imageUrl !== undefined) update['ITEM_IMAGE_URL'] = patch.imageUrl
   if (patch.dietaryType !== undefined) update['MENU_ITEM_DIETARY'] = toDatabaseDietaryType(patch.dietaryType)
   if (patch.isAvailable !== undefined) update['ITEM_STATUS'] = patch.isAvailable ? 'AVAILABLE' : 'OUT_OF_STOCK'
-  if (patch.orderLimit !== undefined) update['ORDER_LIMIT'] = patch.orderLimit
+  if (patch.orderLimit !== undefined) {
+    update['ORDER_LIMIT'] = patch.orderLimit
+    if (patch.orderLimit !== null && patch.orderLimit <= 0) {
+      update['ITEM_STATUS'] = 'OUT_OF_STOCK'
+    } else if (patch.orderLimit !== null && patch.orderLimit > 0 && patch.isAvailable === undefined) {
+      update['ITEM_STATUS'] = 'AVAILABLE'
+    }
+  }
   if (patch.itemIds !== undefined) update['IS_ITEM_GROUP'] = patch.itemIds.length > 0
 
   if (
@@ -624,6 +641,12 @@ export async function updateMenuItem(id: string, patch: {
     .update(update)
     .eq('ITEM_ID', Number(id))
   if (error) throw error
+
+  if (patch.isAvailable !== undefined || patch.orderLimit !== undefined) {
+    const isSoldOut = update['ITEM_STATUS'] === 'OUT_OF_STOCK'
+    const newLimit = patch.orderLimit !== null && patch.orderLimit !== undefined ? patch.orderLimit : undefined
+    broadcastMenuItemStatus(id, isSoldOut, newLimit)
+  }
 
   if (patch.itemIds !== undefined) {
     const { error: deleteError } = await supabase
@@ -703,7 +726,7 @@ export interface MenuItemGroup {
   price: number
   imageUrl: string
   status: string
-  orderLimit: number
+  orderLimit?: number
   categoryId: string
   itemIds: string[]
   itemNames: string[]
@@ -762,7 +785,7 @@ export async function fetchMenuItemGroups(): Promise<MenuItemGroup[]> {
       status: itemIds.some((itemId) => childStatuses.get(itemId) === 'OUT_OF_STOCK')
         ? 'OUT_OF_STOCK'
         : String(raw['ITEM_STATUS'] ?? 'AVAILABLE'),
-      orderLimit: Number(raw['ORDER_LIMIT'] ?? 0),
+      orderLimit: raw['ORDER_LIMIT'] != null ? Number(raw['ORDER_LIMIT']) : undefined,
       categoryId: String(raw['CATEGORY_ID'] ?? ''),
       itemIds,
       itemNames: itemIds.map((itemId) => childNames.get(itemId) ?? `Item #${itemId}`),
@@ -775,21 +798,24 @@ export async function fetchMenuItemGroups(): Promise<MenuItemGroup[]> {
 export async function fetchServiceMenuItems(): Promise<MenuItem[]> {
   const [items, groups] = await Promise.all([fetchMenuItems(), fetchMenuItemGroups()])
 
-  const groupItems: MenuItem[] = groups.map((group) => ({
-    id: group.id,
-    name: group.name,
-    description: group.description || undefined,
-    code: group.id,
-    price: group.price,
-    categoryId: group.categoryId,
-    dietaryType: 'non-veg',
-    imageUrl: group.imageUrl || DEFAULT_FOOD_PLACEHOLDER,
-    isAvailable: group.status !== 'OUT_OF_STOCK',
-    isSoldOut: group.status === 'OUT_OF_STOCK',
-    isItemGroup: true,
-    includedItemNames: group.itemNames,
-    orderLimit: group.orderLimit,
-  }))
+  const groupItems: MenuItem[] = groups.map((group) => {
+    const isOutOfStock = group.status === 'OUT_OF_STOCK' || (group.orderLimit !== undefined && group.orderLimit <= 0)
+    return {
+      id: group.id,
+      name: group.name,
+      description: group.description || undefined,
+      code: group.id,
+      price: group.price,
+      categoryId: group.categoryId,
+      dietaryType: 'non-veg',
+      imageUrl: group.imageUrl || DEFAULT_FOOD_PLACEHOLDER,
+      isAvailable: !isOutOfStock,
+      isSoldOut: isOutOfStock,
+      isItemGroup: true,
+      includedItemNames: group.itemNames,
+      orderLimit: group.orderLimit,
+    }
+  })
 
   return [...items, ...groupItems]
 }
@@ -834,16 +860,28 @@ export async function updateMenuItemGroup(id: string, payload: {
   price: number
   imageUrl?: string
   status: string
-  orderLimit: number
+  orderLimit?: number
   categoryId: string
   itemIds: string[]
 }): Promise<void> {
-  const { error } = await supabase.schema('menu').from('Menu_Items').update({ IS_ITEM_GROUP: true, ITEM_NAME: payload.name, ITEM_DESCRIPTION: payload.description || null, ITEM_PRICE: payload.price, ITEM_IMAGE_URL: payload.imageUrl ?? null, ITEM_STATUS: payload.status, ORDER_LIMIT: payload.orderLimit, CATEGORY_ID: Number(payload.categoryId) }).eq('ITEM_ID', Number(id))
+  const isOutOfStock = payload.status === 'OUT_OF_STOCK' || (payload.orderLimit !== undefined && payload.orderLimit <= 0)
+  const status = isOutOfStock ? 'OUT_OF_STOCK' : payload.status
+  const { error } = await supabase.schema('menu').from('Menu_Items').update({
+    IS_ITEM_GROUP: true,
+    ITEM_NAME: payload.name,
+    ITEM_DESCRIPTION: payload.description || null,
+    ITEM_PRICE: payload.price,
+    ITEM_IMAGE_URL: payload.imageUrl ?? null,
+    ITEM_STATUS: status,
+    ORDER_LIMIT: payload.orderLimit !== undefined ? payload.orderLimit : null,
+    CATEGORY_ID: Number(payload.categoryId),
+  }).eq('ITEM_ID', Number(id))
   if (error) throw error
   const { error: deleteError } = await supabase.schema('menu').from('Item_Groups').delete().eq('MENU_GROUP_ID', Number(id))
   if (deleteError) throw deleteError
   const { error: linkError } = await supabase.schema('menu').from('Item_Groups').insert(payload.itemIds.map((itemId) => ({ MENU_GROUP_ID: Number(id), ITEM_ID: Number(itemId) })))
   if (linkError) throw linkError
+  broadcastMenuItemStatus(id, isOutOfStock, payload.orderLimit)
 }
 
 export async function deleteMenuItemGroup(id: string): Promise<void> {

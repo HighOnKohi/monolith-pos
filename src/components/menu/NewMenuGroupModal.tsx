@@ -9,7 +9,7 @@ export interface NewMenuGroupForm {
   price: number
   imageUrl?: string
   status: string
-  orderLimit: number
+  orderLimit?: number
   categoryId: string
   itemIds: string[]
 }
@@ -29,7 +29,7 @@ interface NewMenuGroupModalProps {
 }
 
 export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items, categories, editGroup, onClose, onSubmit }: NewMenuGroupModalProps) {
-  const [form, setForm] = useState({ name: '', description: '', price: '', imageUrl: '', status: 'AVAILABLE', orderLimit: '0', categoryId: '', itemIds: [] as string[] })
+  const [form, setForm] = useState({ name: '', description: '', price: '', imageUrl: '', status: 'AVAILABLE', orderLimit: '', categoryId: '', itemIds: [] as string[] })
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +43,7 @@ export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items
 
   useEffect(() => {
     if (!isOpen) return
-    setForm(editGroup ? { name: editGroup.name, description: editGroup.description, price: String(editGroup.price), imageUrl: editGroup.imageUrl ?? '', status: editGroup.status, orderLimit: String(editGroup.orderLimit), categoryId: editGroup.categoryId, itemIds: editGroup.itemIds } : { name: '', description: '', price: '', imageUrl: '', status: 'AVAILABLE', orderLimit: '0', categoryId: categories.find((category) => category.id !== 'all')?.id ?? '', itemIds: [] })
+    setForm(editGroup ? { name: editGroup.name, description: editGroup.description, price: String(editGroup.price), imageUrl: editGroup.imageUrl ?? '', status: editGroup.status, orderLimit: editGroup.orderLimit !== undefined ? String(editGroup.orderLimit) : '', categoryId: editGroup.categoryId, itemIds: editGroup.itemIds } : { name: '', description: '', price: '', imageUrl: '', status: 'AVAILABLE', orderLimit: '', categoryId: categories.find((category) => category.id !== 'all')?.id ?? '', itemIds: [] })
     setImageFile(null)
     setError(null)
     setUploadError(null)
@@ -68,8 +68,10 @@ export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     const price = Number(form.price.replace(/,/g, ''))
-    const orderLimit = Number(form.orderLimit.replace(/,/g, ''))
-    if (!form.name.trim() || !Number.isFinite(price) || price < 0 || !Number.isFinite(orderLimit) || orderLimit < 0 || form.itemIds.length === 0) {
+    const rawLimit = form.orderLimit.trim()
+    const parsedLimit = rawLimit === '' ? undefined : Number(rawLimit.replace(/,/g, ''))
+    const orderLimit = parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit >= 0 ? parsedLimit : undefined
+    if (!form.name.trim() || !Number.isFinite(price) || price < 0 || form.itemIds.length === 0) {
       setError('Enter a group name, valid values, and select at least one item.')
       return
     }
@@ -115,7 +117,7 @@ export const NewMenuGroupModal = memo(function NewMenuGroupModal({ isOpen, items
           <div className="menu-item-row">
             <label className="menu-modal-field"><span>Category</span><select value={form.categoryId} onChange={(event) => update('categoryId', event.target.value)} disabled={isSaving}>{categories.filter((category) => category.id !== 'all').map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
             <label className="menu-modal-field"><span>Status</span><select value={form.status} onChange={(event) => update('status', event.target.value)} disabled={isSaving}><option value="AVAILABLE">Available</option><option value="OUT_OF_STOCK">Out of stock</option></select></label>
-            <label className="menu-modal-field"><span>Order limit</span><input type="number" min="0" step="1" value={form.orderLimit} onChange={(event) => update('orderLimit', event.target.value)} disabled={isSaving} /></label>
+            <label className="menu-modal-field"><span>Order limit</span><input type="number" min="0" step="1" placeholder="Leave blank for unlimited" value={form.orderLimit} onChange={(event) => update('orderLimit', event.target.value)} disabled={isSaving} /></label>
           </div>
           <fieldset className="menu-group-item-picker">
             <legend>Items in this group</legend>

@@ -17,7 +17,7 @@ export interface NewMenuItemForm {
   isBestSeller?: boolean
   isAvailable: boolean
   description?: string
-  orderLimit: number
+  orderLimit?: number
   itemIds: string[]
 }
 
@@ -55,7 +55,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
     imageUrl: '', name: '', categoryId: defaultCategoryId ?? '',
     dietaryType: 'veg' as DietaryType, priceRaw: '', isAvailable: true, description: '',
     hasDiscount: false, originalPriceRaw: '', discountPercentRaw: '', isBestSeller: false,
-    orderLimitRaw: '0', itemIds: [] as string[],
+    orderLimitRaw: '', itemIds: [] as string[],
   })
   const [imageFile, setImageFile]     = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -103,7 +103,12 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         originalPriceRaw: editItem?.originalPrice ? String(editItem.originalPrice) : '',
         discountPercentRaw: editItem?.discountPercent ? String(editItem.discountPercent) : '',
         isBestSeller: Boolean(editItem?.isBestSeller),
-        orderLimitRaw: String(editGroup?.orderLimit ?? 0),
+        orderLimitRaw:
+          editItem?.orderLimit !== undefined
+            ? String(editItem.orderLimit)
+            : editGroup?.orderLimit !== undefined
+              ? String(editGroup.orderLimit)
+              : '',
         itemIds: editGroup?.itemIds ?? [],
       })
       setImageFile(null)
@@ -113,7 +118,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         categoryId:  defaultCategoryId ?? firstCategoryId,
         dietaryType: 'veg', priceRaw: '', isAvailable: true, description: '',
         hasDiscount: false, originalPriceRaw: '', discountPercentRaw: '', isBestSeller: false,
-        orderLimitRaw: '0', itemIds: [],
+        orderLimitRaw: '', itemIds: [],
       })
       setImageFile(null)
     }
@@ -212,7 +217,13 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     const price = Number(form.priceRaw.replace(/,/g, '').replace(/\.$/, ''))
-    const orderLimit = Number(form.orderLimitRaw.replace(/,/g, ''))
+    const rawLimitTrimmed = form.orderLimitRaw.trim()
+    const orderLimit =
+      rawLimitTrimmed !== '' &&
+      Number.isFinite(Number(rawLimitTrimmed.replace(/,/g, ''))) &&
+      Number(rawLimitTrimmed.replace(/,/g, '')) >= 0
+        ? Math.floor(Number(rawLimitTrimmed.replace(/,/g, '')))
+        : undefined
 
     const errors: { name?: string; price?: string } = {}
     if (!form.name.trim())                         errors.name  = 'Name is required.'
@@ -259,7 +270,7 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
         isBestSeller: form.isBestSeller,
         isAvailable: form.isAvailable,
         description: form.description,
-        orderLimit: Number.isFinite(orderLimit) && orderLimit >= 0 ? orderLimit : 0,
+        orderLimit,
         itemIds: sanitizedItemIds,
       })
       onClose()
@@ -470,7 +481,15 @@ export const NewMenuItemModal = memo(function NewMenuItemModal({
 
           <label className="menu-modal-field">
             <span>Order limit</span>
-            <input type="number" min="0" step="1" value={form.orderLimitRaw} onChange={(event) => update('orderLimitRaw', event.target.value)} disabled={isSaving} />
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Leave blank for unlimited"
+              value={form.orderLimitRaw}
+              onChange={(event) => update('orderLimitRaw', event.target.value)}
+              disabled={isSaving}
+            />
           </label>
 
           {selectableItems.length > 0 && (

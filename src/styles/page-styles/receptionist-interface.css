@@ -90,3 +90,9 @@
 .receptionist-interface-page ::-webkit-scrollbar-thumb:hover {
   background: rgba(20, 39, 78, 0.35);
 }
+
+.receptionist-interface-page .table-node-item {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}

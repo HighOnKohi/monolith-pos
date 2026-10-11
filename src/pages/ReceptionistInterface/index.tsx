@@ -23,9 +23,6 @@ import { fetchActiveLabels, assignLabelToTable, type TableLabel } from '@/servic
 import { resolveTableGroupByList } from '@/services/tableGroupService'
 import { logTableAction } from '@/services/tableAuditService'
 import { TableVisual, TableShapeIcon } from '@/pages/TableManager/components/TableVisual'
-import { TableQrPreview } from '@/components/table-qr/TableQrPreview'
-import { printBulkQrPdf } from '@/components/table-qr/tableQrPrinter'
-import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
 import { LabelSelector } from '@/components/common/LabelSelector'
 import {
   Users,
@@ -33,19 +30,12 @@ import {
   Clock,
   Ban,
   GitMerge,
-  QrCode,
-  Printer,
-  FileDown,
   Unlink,
   Minus,
   Plus,
-  Crown,
-  Sparkles,
   AlertCircle,
   X,
   Check,
-  Layers,
-  Flame,
   Tag,
   Receipt,
 } from 'lucide-react'
@@ -56,6 +46,7 @@ import {
 } from '@/services/advanceOrderService'
 import type { AdvanceOrder } from '@/types/advanceOrder'
 import { LabelManagementModal } from '@/pages/TableManager/components/LabelManagementModal'
+import { ReceptionistShiftHeaderBar } from '@/components/receptionist/ReceptionistShiftHeaderBar'
 
 interface MergeGroupVisualBox {
   type: 'box'
@@ -92,8 +83,6 @@ export default function ReceptionistInterface() {
   const [selectedTableNum, setSelectedTableNum] = useState<number | null>(null)
   const [selectedTableNums, setSelectedTableNums] = useState<Set<number>>(new Set())
   const [statusFilter, setStatusFilter] = useState<TableStatus | 'ALL'>('ALL')
-  const [showQrModal, setShowQrModal] = useState(false)
-  const [qrTableNum, setQrTableNum] = useState<number | null>(null)
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 })
   const [labelsModalOpen, setLabelsModalOpen] = useState(false)
   const [advanceOrderForSelectedTable, setAdvanceOrderForSelectedTable] = useState<AdvanceOrder | null>(null)
@@ -736,6 +725,9 @@ export default function ReceptionistInterface() {
     // Ctrl/Cmd click is reserved for multi-selection toggle
     if (e.ctrlKey || e.metaKey) return
 
+    e.preventDefault()
+    e.stopPropagation()
+
     const newDrag: DragState = {
       tableNum: table.TABLE_NUM,
       startMouseX: e.clientX,
@@ -1125,62 +1117,65 @@ export default function ReceptionistInterface() {
       <div className="receptionist-interface-layout">
         {/* ── Left Div: inner-receptionist-container ── */}
         <div className="inner-receptionist-container">
+          {/* Receptionist Active Shift & End Shift Header (Moved above original container) */}
+          <ReceptionistShiftHeaderBar />
+
           {/* Top: Status Filter Bar Card */}
           <div className="receptionist-top-header flex items-center justify-between gap-3 flex-wrap bg-white px-4 py-2.5 rounded-2xl border border-slate-200/90 shadow-2xs shrink-0">
-          {/* Status Filter Pills */}
-          <div className="flex items-center gap-1 bg-slate-100/80 p-0.5 rounded-xl border border-slate-200/80 overflow-x-auto max-w-full">
-            {(
-              [
-                { key: 'ALL', label: 'All', color: '#14274E', count: layoutTables.length },
-                { key: 'AVAILABLE', label: 'Available', color: '#10B981', count: statusCounts.AVAILABLE },
-                { key: 'OCCUPIED', label: 'Occupied', color: '#3B82F6', count: statusCounts.OCCUPIED },
-                { key: 'RESERVED', label: 'Reserved', color: '#F59E0B', count: statusCounts.RESERVED },
-                { key: 'HAS_REQUEST', label: 'Bill Out', color: '#EF4444', count: statusCounts.HAS_REQUEST },
-                { key: 'UNAVAILABLE', label: 'Unavailable', color: '#64748B', count: statusCounts.UNAVAILABLE },
-              ] as const
-            ).map((item) => {
-              const isSelected = statusFilter === item.key
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => setStatusFilter(item.key)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    isSelected
-                      ? 'bg-white text-[#14274E] shadow-xs ring-1 ring-slate-200'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-                  }`}
-                >
-                  {item.key !== 'ALL' && (
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: item.color }}
-                    />
-                  )}
-                  <span>{item.label}</span>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
-                      isSelected ? 'bg-slate-100 text-[#14274E]' : 'bg-slate-200/80 text-slate-600'
+            {/* Status Filter Pills (Legend on left) */}
+            <div className="flex items-center gap-1 bg-slate-100/80 p-0.5 rounded-xl border border-slate-200/80 overflow-x-auto max-w-full">
+              {(
+                [
+                  { key: 'ALL', label: 'All', color: '#14274E', count: layoutTables.length },
+                  { key: 'AVAILABLE', label: 'Available', color: '#10B981', count: statusCounts.AVAILABLE },
+                  { key: 'OCCUPIED', label: 'Occupied', color: '#3B82F6', count: statusCounts.OCCUPIED },
+                  { key: 'RESERVED', label: 'Reserved', color: '#F59E0B', count: statusCounts.RESERVED },
+                  { key: 'HAS_REQUEST', label: 'Bill Out', color: '#EF4444', count: statusCounts.HAS_REQUEST },
+                  { key: 'UNAVAILABLE', label: 'Unavailable', color: '#64748B', count: statusCounts.UNAVAILABLE },
+                ] as const
+              ).map((item) => {
+                const isSelected = statusFilter === item.key
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setStatusFilter(item.key)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                      isSelected
+                        ? 'bg-white text-[#14274E] shadow-xs ring-1 ring-slate-200'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    {item.count}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
+                    {item.key !== 'ALL' && (
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: item.color }}
+                      />
+                    )}
+                    <span>{item.label}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                        isSelected ? 'bg-slate-100 text-[#14274E]' : 'bg-slate-200/80 text-slate-600'
+                      }`}
+                    >
+                      {item.count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
 
-          {/* Venue Capacity Indicator */}
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100/90 border border-slate-200 text-xs font-semibold text-slate-700">
-            <Users className="w-3.5 h-3.5 text-slate-500" />
-            <span>
-              Occupancy: <strong className="text-[#14274E]">{totalSeatedPax}</strong> / {totalVenueCapacity} Pax
-            </span>
-            <span className="text-[10px] text-slate-500 ml-0.5">
-              ({totalVenueCapacity > 0 ? Math.round((totalSeatedPax / totalVenueCapacity) * 100) : 0}%)
-            </span>
+            {/* Occupancy Counter on right */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/90 border border-slate-200 text-xs font-semibold text-slate-700">
+              <Users className="w-3.5 h-3.5 text-slate-500" />
+              <span>
+                Occupancy: <strong className="text-[#14274E]">{totalSeatedPax}</strong> / {totalVenueCapacity} Pax
+              </span>
+              <span className="text-[10px] text-slate-500 ml-0.5">
+                ({totalVenueCapacity > 0 ? Math.round((totalSeatedPax / totalVenueCapacity) * 100) : 0}%)
+              </span>
+            </div>
           </div>
-        </div>
 
         {/* Floor Plan Canvas Container */}
         <div className="layout-container flex-1 min-h-0 relative flex overflow-hidden">
@@ -1321,15 +1316,16 @@ export default function ReceptionistInterface() {
                   return (
                     <div
                       key={node.TABLE_NUM}
+                      draggable={false}
                       onMouseDown={(e) => handleTableMouseDown(node, e)}
                       onClick={(e) => handleTableClick(node, e)}
                       className={`table-node-item absolute select-none cursor-grab active:cursor-grabbing ${
                         dragState?.tableNum === node.TABLE_NUM
-                          ? 'transition-none z-50 shadow-2xl scale-105'
+                          ? 'transition-none z-50 scale-105 opacity-90'
                           : 'transition-all'
                       } ${
                         isSelected || selectedTableNums.has(node.TABLE_NUM)
-                          ? 'z-40 scale-105 filter drop-shadow-lg'
+                          ? 'z-40 scale-105 filter drop-shadow-md'
                           : matchesFilter
                             ? 'z-20 hover:scale-103'
                             : 'z-10 opacity-30 hover:opacity-80'
@@ -1385,21 +1381,32 @@ export default function ReceptionistInterface() {
         </div>
 
         {/* ── Right Div: receptionist-sidebar (Docked with gap and rounded corners) ── */}
+        {/* ── Right Div: receptionist-sidebar (Docked with gap and rounded corners) ── */}
         <aside className="receptionist-sidebar">
           <div className="h-full overflow-y-auto flex flex-col">
             {selectedTable ? (
-              <div className="p-4 flex flex-col gap-4">
+              <div className="p-4 flex flex-col gap-3.5">
                 {/* Header: Table Title & Shape */}
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-2xl bg-[#14274E] text-[#E9C46A] flex items-center justify-center font-black text-lg shadow-sm">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-2xl bg-[#14274E] text-[#E9C46A] flex items-center justify-center font-black text-base shadow-xs shrink-0">
                       {selectedTable.TABLE_NUM}
                     </div>
-                    <div>
-                      <h2 className="text-base font-black text-[#14274E] leading-tight">
-                        Table {selectedTable.TABLE_NUM}
-                      </h2>
-                      <span className="text-xs text-slate-500 font-medium">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h2 className="text-base font-black text-[#14274E] leading-tight">
+                          Table {selectedTable.TABLE_NUM}
+                        </h2>
+                        {selectedLabel && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase text-white shadow-2xs truncate max-w-[120px]"
+                            style={{ backgroundColor: selectedLabel.COLOR }}
+                          >
+                            {selectedLabel.NAME}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs text-slate-500 font-medium block truncate">
                         {TABLE_TYPES[selectedTable.TABLE_TYPE]?.name ?? 'Table'} •{' '}
                         {isSelectedMerged ? (
                           <span className="text-indigo-600 font-bold">Max {selectedEffectiveCapacity} Pax (Combined)</span>
@@ -1414,200 +1421,51 @@ export default function ReceptionistInterface() {
                   <button
                     type="button"
                     onClick={() => setSelectedTableNum(null)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer shrink-0"
                     title="Close inspector"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 </div>
 
-                {/* ── CARD 1: VIP & Table Tier (The "Label Thingy" & VIP Stuff) ── */}
-                <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-500/10 via-rose-500/5 to-slate-50 border border-amber-200/60 shadow-2xs">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1.5 text-xs font-black text-[#14274E]">
-                      <Crown className="w-4 h-4 text-amber-500 fill-amber-500/30" />
-                      <span>VIP & Table Tier</span>
-                      <button
-                        type="button"
-                        onClick={() => setLabelsModalOpen(true)}
-                        className="p-1 rounded-md text-amber-700 hover:text-amber-900 hover:bg-amber-100/60 transition-colors cursor-pointer ml-1"
-                        title="Manage labels"
-                      >
-                        <Tag className="w-3 h-3 text-amber-600" />
-                      </button>
+                {/* Merged Group Banner (if merged) */}
+                {selectedGroup?.isMerged && (
+                  <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5 text-indigo-900 font-bold truncate">
+                      <GitMerge className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                      <span className="truncate">Merged Group #{selectedGroup.anchorTableId}</span>
                     </div>
-
-                    {/* Active Label Pill */}
-                    {selectedLabel ? (
-                      <span
-                        className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider text-white shadow-xs flex items-center gap-1"
-                        style={{ backgroundColor: selectedLabel.COLOR }}
-                      >
-                        <Sparkles className="w-2.5 h-2.5" />
-                        <span>{selectedLabel.NAME}</span>
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-slate-400 bg-slate-100">
-                        Regular
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-[11px] text-slate-500 mb-2.5">
-                    {selectedLabel
-                      ? `This table is designated as "${selectedLabel.NAME}". Provide priority service.`
-                      : 'Assign a VIP, Gold, or Priority tier to this table for special service.'}
-                  </p>
-
-                  {/* Label Selector Dropdown */}
-                  <div className="bg-white rounded-xl p-1 border border-slate-200 shadow-2xs">
-                    <LabelSelector
-                      tableId={selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM}
-                      currentLabelId={selectedTable.LABEL_ID ?? null}
-                      labels={labels}
-                      onLabelChanged={(labelId) =>
-                        handleLabelChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, labelId)
-                      }
-                    />
-                  </div>
-                </div>
-
-                {/* ── CARD: Active Advance Order ── */}
-                {advanceOrderForSelectedTable && (
-                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-500/15 via-orange-500/10 to-slate-50 border-2 border-amber-300 shadow-sm animate-in fade-in duration-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-1.5 text-xs font-black text-amber-950">
-                        <Receipt className="w-4 h-4 text-amber-600" />
-                        <span>Advance Order: {advanceOrderForSelectedTable.orderNumber}</span>
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          advanceOrderForSelectedTable.status === 'CONFIRMED'
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                            : 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
-                        }`}
-                      >
-                        {advanceOrderForSelectedTable.status === 'CONFIRMED'
-                          ? 'Confirmed Regular'
-                          : 'Pending Seating'}
-                      </span>
-                    </div>
-
-                    {/* Customer & Guest details */}
-                    <div className="bg-white/90 rounded-xl p-2.5 border border-amber-200/80 mb-2.5 space-y-1.5 text-xs shadow-2xs">
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 font-medium">Customer:</span>
-                        <span className="font-black text-[#14274E]">{advanceOrderForSelectedTable.customerName}</span>
-                      </div>
-                      {advanceOrderForSelectedTable.guestCount && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-500 font-medium">Party Size:</span>
-                          <span className="font-bold text-[#14274E]">{advanceOrderForSelectedTable.guestCount} Guests</span>
-                        </div>
-                      )}
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 font-medium">Dishes Ordered:</span>
-                        <span className="font-black text-[#14274E]">
-                          {advanceOrderForSelectedTable.items.length} items • ₱{advanceOrderForSelectedTable.totalAmount.toFixed(2)}
-                        </span>
-                      </div>
-
-                      {/* Item list snippet */}
-                      <div className="pt-1.5 border-t border-slate-100 divide-y divide-slate-100/80 max-h-24 overflow-y-auto">
-                        {advanceOrderForSelectedTable.items.map((it) => (
-                          <div key={it.advanceItemId} className="py-1 flex items-center justify-between text-[11px]">
-                            <span className="text-slate-700 truncate font-semibold">
-                              {it.quantity}x {it.itemName}
-                            </span>
-                            <span className="text-slate-500 font-mono ml-2 shrink-0">
-                              ₱{it.totalPrice.toFixed(2)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Mark to keep orders checkbox */}
-                    {advanceOrderForSelectedTable.status === 'PENDING' && (
-                      <div className="mb-2.5">
-                        <label className="flex items-start gap-2 p-2 rounded-xl bg-white border border-amber-200/90 cursor-pointer hover:bg-amber-50/50 transition-colors shadow-2xs">
-                          <input
-                            type="checkbox"
-                            checked={keepAdvanceOrder}
-                            onChange={(e) => setKeepAdvanceOrder(e.target.checked)}
-                            className="w-4 h-4 mt-0.5 rounded text-[#14274E] accent-[#14274E] cursor-pointer"
-                          />
-                          <div className="text-[11px] leading-tight">
-                            <span className="font-extrabold text-[#14274E] block">
-                              Mark table to keep orders
-                            </span>
-                            <span className="text-slate-500 text-[10px] block mt-0.5">
-                              Keep dishes as a regular order when Occupied (disarms 30m expiry).
-                            </span>
-                          </div>
-                        </label>
-                      </div>
-                    )}
-
-                    {/* Seating action buttons */}
-                    {advanceOrderForSelectedTable.status === 'PENDING' ? (
-                      <div className="flex flex-col gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleSeatWithAdvanceOrder(keepAdvanceOrder)}
-                          className="w-full py-2 px-3 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] active:scale-98 text-[#E9C46A] text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition-all"
-                        >
-                          <Users className="w-3.5 h-3.5" />
-                          <span>Seat & {keepAdvanceOrder ? 'Keep Regular Order' : 'Discard Order'} (Occupied)</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleSeatWithAdvanceOrder(false)}
-                          className="w-full py-1.5 px-2 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                        >
-                          <Ban className="w-3 h-3" />
-                          <span>Discard Advance Order</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
-                        <span className="text-xs font-extrabold text-emerald-800 flex items-center justify-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          Kept as Regular Order
-                        </span>
-                        <p className="text-[10px] text-emerald-700/80 mt-0.5">
-                          Table is occupied and advance order is permanently active.
-                        </p>
-                      </div>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleUnmerge(selectedGroup.anchorTableId)}
+                      className="px-2 py-1 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shrink-0"
+                    >
+                      <Unlink className="w-3 h-3" />
+                      <span>Unmerge</span>
+                    </button>
                   </div>
                 )}
 
-                {/* ── CARD 2: Live Table Status (Tactile Status Buttons) ── */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 shadow-2xs">
-                  <div className="flex items-center justify-between mb-2.5">
-                    <div className="flex items-center gap-1.5 text-xs font-black text-[#14274E]">
-                      <Layers className="w-4 h-4 text-[#14274E]" />
-                      <span>Table Status</span>
-                    </div>
+                {/* ── A: Table Status (4 Statuses: Available, Occupied, Reserved, Unavailable) ── */}
+                <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black text-[#14274E] tracking-tight">Table Status</span>
                     <span
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide ${
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide ${
                         selectedTable.STATUS === 'AVAILABLE'
                           ? 'bg-emerald-100 text-emerald-800'
                           : selectedTable.STATUS === 'OCCUPIED'
                             ? 'bg-blue-100 text-blue-800'
                             : selectedTable.STATUS === 'RESERVED'
                               ? 'bg-amber-100 text-amber-800'
-                              : selectedTable.STATUS === 'HAS_REQUEST'
-                                ? 'bg-rose-100 text-rose-800 animate-pulse'
-                                : 'bg-slate-200 text-slate-700'
+                              : 'bg-slate-200 text-slate-700'
                       }`}
                     >
                       {selectedTable.STATUS?.replace('_', ' ') ?? 'AVAILABLE'}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-1.5">
                     {(
                       [
                         {
@@ -1635,14 +1493,6 @@ export default function ReceptionistInterface() {
                           border: '#FDE68A',
                         },
                         {
-                          status: 'HAS_REQUEST',
-                          label: 'Bill Out',
-                          icon: Flame,
-                          color: '#EF4444',
-                          bg: '#FEF2F2',
-                          border: '#FECACA',
-                        },
-                        {
                           status: 'UNAVAILABLE',
                           label: 'Unavailable',
                           icon: Ban,
@@ -1667,8 +1517,8 @@ export default function ReceptionistInterface() {
                           }
                           className={`flex items-center gap-2 p-2 rounded-xl text-left font-bold text-xs transition-all cursor-pointer border ${
                             isActive
-                              ? 'ring-2 ring-offset-1 shadow-sm scale-102'
-                              : 'bg-white hover:bg-slate-100/80 border-slate-200 text-slate-700'
+                              ? 'ring-2 ring-offset-1 shadow-xs'
+                              : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-700'
                           }`}
                           style={
                             isActive
@@ -1682,7 +1532,7 @@ export default function ReceptionistInterface() {
                           }
                         >
                           <IconComponent
-                            className="w-4 h-4 shrink-0"
+                            className="w-3.5 h-3.5 shrink-0"
                             style={{ color: isActive ? btn.color : '#94A3B8' }}
                           />
                           <span className="truncate">{btn.label}</span>
@@ -1692,15 +1542,38 @@ export default function ReceptionistInterface() {
                   </div>
                 </div>
 
-                {/* ── CARD 3: Seated Guests Stepper ── */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 shadow-2xs">
+                {/* ── B: Table Label / Hierarchy ── */}
+                <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1.5 text-xs font-black text-[#14274E]">
-                      <Users className="w-4 h-4 text-[#14274E]" />
-                      <span>Seated Guests</span>
-                    </div>
-                    <span className="text-xs font-semibold text-slate-500">
-                      Max {selectedEffectiveCapacity} Pax {isSelectedMerged ? '(Combined)' : ''}
+                    <span className="text-xs font-black text-[#14274E] tracking-tight">Table Label / Tier</span>
+                    <button
+                      type="button"
+                      onClick={() => setLabelsModalOpen(true)}
+                      className="flex items-center gap-1 text-[11px] font-bold text-[#14274E] hover:text-[#1e3a6d] cursor-pointer"
+                    >
+                      <Tag className="w-3 h-3" />
+                      <span>Manage</span>
+                    </button>
+                  </div>
+
+                  <div className="bg-white rounded-xl p-1 border border-slate-200">
+                    <LabelSelector
+                      tableId={selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM}
+                      currentLabelId={selectedTable.LABEL_ID ?? null}
+                      labels={labels}
+                      onLabelChanged={(labelId) =>
+                        handleLabelChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, labelId)
+                      }
+                    />
+                  </div>
+                </div>
+
+                {/* ── C: Seated Guests ── */}
+                <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black text-[#14274E] tracking-tight">Seated Guests</span>
+                    <span className="text-[11px] font-semibold text-slate-500">
+                      Capacity: {selectedEffectiveCapacity} Pax
                     </span>
                   </div>
 
@@ -1713,18 +1586,18 @@ export default function ReceptionistInterface() {
                           Math.max(0, selectedCurrentPax - 1),
                         )
                       }
-                      className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-black cursor-pointer transition-colors active:scale-95"
+                      className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-black cursor-pointer transition-colors active:scale-95"
                       title="Decrease seated guests"
                     >
-                      <Minus className="w-4 h-4 stroke-[3]" />
+                      <Minus className="w-3.5 h-3.5 stroke-[3]" />
                     </button>
 
                     <div className="flex flex-col items-center">
                       <span className="text-2xl font-black text-[#14274E] leading-none">
                         {selectedCurrentPax}
                       </span>
-                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
-                        {isSelectedMerged ? 'Combined Guests' : 'Guests Seated'}
+                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                        {isSelectedMerged ? 'Combined' : 'Guests'}
                       </span>
                     </div>
 
@@ -1739,15 +1612,15 @@ export default function ReceptionistInterface() {
                           ),
                         )
                       }
-                      className="w-10 h-10 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] text-[#E9C46A] flex items-center justify-center font-black cursor-pointer transition-colors active:scale-95"
+                      className="w-9 h-9 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] text-[#E9C46A] flex items-center justify-center font-black cursor-pointer transition-colors active:scale-95"
                       title="Increase seated guests"
                     >
-                      <Plus className="w-4 h-4 stroke-[3]" />
+                      <Plus className="w-3.5 h-3.5 stroke-[3]" />
                     </button>
                   </div>
 
-                  {/* Quick Pax Buttons */}
-                  <div className="flex items-center gap-1.5 mt-2.5">
+                  {/* Quick Pax Shortcuts */}
+                  <div className="flex items-center gap-1.5 mt-2">
                     {quickPaxOptions.map((pax) => (
                       <button
                         key={pax}
@@ -1761,7 +1634,7 @@ export default function ReceptionistInterface() {
                             : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                         }`}
                       >
-                        {pax} Pax
+                        {pax}P
                       </button>
                     ))}
                     <button
@@ -1783,7 +1656,7 @@ export default function ReceptionistInterface() {
                     <button
                       type="button"
                       onClick={() => handleClearTable(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM)}
-                      className="w-full mt-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                      className="w-full mt-2 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       <span>Clear Table & Mark Available</span>
@@ -1791,52 +1664,101 @@ export default function ReceptionistInterface() {
                   )}
                 </div>
 
-                {/* ── CARD 4: Merge Group Information ── */}
-                {selectedGroup?.isMerged && (
-                  <div className="p-3.5 rounded-2xl bg-indigo-50/80 border border-indigo-200 shadow-2xs">
+                {/* ── D: Pending Advance Order ── */}
+                {advanceOrderForSelectedTable ? (
+                  <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-300 shadow-2xs">
                     <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-1.5 text-xs font-black text-indigo-900">
-                        <GitMerge className="w-4 h-4 text-indigo-600" />
-                        <span>Merged Group #{selectedGroup.anchorTableId}</span>
+                      <div className="flex items-center gap-1.5 text-xs font-black text-amber-950">
+                        <Receipt className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Advance Order: {advanceOrderForSelectedTable.orderNumber}</span>
                       </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-200/70 text-indigo-800">
-                        {selectedGroup.capacity} Pax Total
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide ${
+                          advanceOrderForSelectedTable.status === 'CONFIRMED'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
+                        }`}
+                      >
+                        {advanceOrderForSelectedTable.status === 'CONFIRMED' ? 'Confirmed' : 'Pending'}
                       </span>
                     </div>
 
-                    <p className="text-xs text-indigo-800 mb-3">
-                      Connected with:{' '}
-                      <strong>
-                        {selectedGroup.memberTableNums
-                          .filter((n) => n !== selectedTable.TABLE_NUM)
-                          .map((n) => `Table ${n}`)
-                          .join(', ')}
-                      </strong>
-                    </p>
+                    {/* Customer & details */}
+                    <div className="bg-white rounded-xl p-2.5 border border-amber-200/80 mb-2 space-y-1 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 font-medium">Customer:</span>
+                        <span className="font-bold text-[#14274E]">{advanceOrderForSelectedTable.customerName}</span>
+                      </div>
+                      {advanceOrderForSelectedTable.guestCount && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-500 font-medium">Party Size:</span>
+                          <span className="font-bold text-[#14274E]">{advanceOrderForSelectedTable.guestCount} Guests</span>
+                        </div>
+                      )}
 
-                    <button
-                      type="button"
-                      onClick={() => handleUnmerge(selectedGroup.anchorTableId)}
-                      className="w-full py-1.5 rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <Unlink className="w-3.5 h-3.5" />
-                      <span>Unmerge Table Group</span>
-                    </button>
+                      {/* Order items list */}
+                      <div className="pt-1.5 border-t border-slate-100 max-h-28 overflow-y-auto space-y-1">
+                        {advanceOrderForSelectedTable.items.map((it) => (
+                          <div key={it.advanceItemId} className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-700 truncate font-semibold">
+                              {it.quantity}× {it.itemName}
+                            </span>
+                            <span className="text-slate-600 font-mono ml-2 shrink-0">
+                              ₱{it.totalPrice.toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between font-black text-xs text-[#14274E]">
+                        <span>Total:</span>
+                        <span>₱{advanceOrderForSelectedTable.totalAmount.toFixed(2)}</span>
+                      </div>
+                    </div>
+
+                    {/* Action buttons */}
+                    {advanceOrderForSelectedTable.status === 'PENDING' ? (
+                      <div className="flex flex-col gap-1.5">
+                        <label className="flex items-center gap-2 px-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={keepAdvanceOrder}
+                            onChange={(e) => setKeepAdvanceOrder(e.target.checked)}
+                            className="w-3.5 h-3.5 rounded text-[#14274E] accent-[#14274E] cursor-pointer"
+                          />
+                          <span className="text-[11px] font-bold text-amber-950">
+                            Keep items as regular order
+                          </span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleSeatWithAdvanceOrder(keepAdvanceOrder)}
+                          className="w-full py-2 px-3 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] active:scale-98 text-[#E9C46A] text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          <span>Seat Guests ({keepAdvanceOrder ? 'Keep Order' : 'Discard'})</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSeatWithAdvanceOrder(false)}
+                          className="w-full py-1 px-2 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <Ban className="w-3 h-3" />
+                          <span>Discard Advance Order</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="p-1.5 bg-emerald-50 border border-emerald-200 rounded-xl text-center text-xs font-bold text-emerald-800 flex items-center justify-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Kept as Regular Order</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-2xl bg-slate-50/60 border border-slate-200/60 text-center">
+                    <span className="text-[11px] text-slate-400 font-semibold">No pending advance order</span>
                   </div>
                 )}
-
-                {/* ── CARD 5: QR Code & Ordering ── */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setQrTableNum(selectedTable.TABLE_NUM)
-                    setShowQrModal(true)
-                  }}
-                  className="w-full py-2.5 rounded-2xl bg-[#14274E] hover:bg-[#1e3a6d] text-[#E9C46A] text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md active:scale-98"
-                >
-                  <QrCode className="w-4 h-4" />
-                  <span>View & Print Table QR Code</span>
-                </button>
               </div>
             ) : (
               /* Empty Selection State */
@@ -1847,78 +1769,13 @@ export default function ReceptionistInterface() {
                 <h3 className="text-sm font-black text-[#14274E]">Select a Table</h3>
                 <p className="text-xs text-slate-400 font-medium max-w-xs mt-1.5">
                   Click any table on the floor plan canvas to update status, adjust seated guests, assign VIP
-                  tiers, or print table QR codes.
+                  tiers, or view advance orders.
                 </p>
               </div>
             )}
           </div>
         </aside>
       </div>
-
-      {/* ── QR Code Preview Modal ── */}
-      {showQrModal && qrTableNum !== null && (() => {
-        const qrTable = layoutTables.find((t) => t.TABLE_NUM === qrTableNum)
-        const tableId = qrTable?.TABLE_ID ?? qrTableNum
-        const qrItem = { TABLE_ID: tableId, TABLE_NUM: qrTableNum }
-
-        return (
-          <div
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in duration-150"
-            onClick={() => setShowQrModal(false)}
-          >
-            <div
-              className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 flex flex-col"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <QrCode className="w-5 h-5 text-[#14274E]" />
-                  <h3 className="text-base font-black text-[#14274E]">Table {qrTableNum} QR Code</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowQrModal(false)}
-                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-auto flex justify-center py-2">
-                <TableQrPreview
-                  tableId={tableId}
-                  tableNum={qrTableNum}
-                  guestCapacity={qrTable?.GUEST_CAPACITY}
-                  onClose={() => setShowQrModal(false)}
-                />
-              </div>
-
-              <div className="flex gap-2.5 mt-5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    void printBulkQrPdf([qrItem])
-                  }}
-                  className="flex-1 py-2.5 text-xs font-black bg-[#14274E] text-[#E9C46A] hover:bg-[#1e3a6d] rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-colors"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>Print QR Code</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void downloadBulkQrPdf([qrItem])
-                  }}
-                  className="flex-1 py-2.5 text-xs font-black border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                >
-                  <FileDown className="w-4 h-4" />
-                  <span>Download PDF</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {/* Label Management In-App Modal */}
       <LabelManagementModal

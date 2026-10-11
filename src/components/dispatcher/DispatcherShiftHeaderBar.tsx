@@ -1,7 +1,23 @@
-import React, { useState } from 'react'
-import { ChefHat, Clock, PowerOff } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import {
+  BarChart3,
+  Clock,
+  X,
+  Loader2,
+  ChefHat,
+  Flame,
+  CheckCircle2,
+  XCircle,
+} from 'lucide-react'
 import type { DispatcherShift } from '@/services/dispatcherShiftService'
-import { endDispatcherShift } from '@/services/dispatcherShiftService'
+import { endDispatcherShift, getDispatcherShiftMetrics } from '@/services/dispatcherShiftService'
+import { UnifiedShiftHeaderBar } from '@/components/common/UnifiedShiftHeaderBar'
+
+interface DispatcherShiftHeaderBarProps {
+  shift: DispatcherShift
+  onShiftEnded: () => void
+  className?: string
+}
 
 function formatShiftTime(isoString?: string): string {
   if (!isoString) return 'Just now'
@@ -13,119 +29,177 @@ function formatShiftTime(isoString?: string): string {
   }
 }
 
-interface DispatcherShiftHeaderBarProps {
-  shift: DispatcherShift
-  onShiftEnded: () => void
-  className?: string
-}
-
 export const DispatcherShiftHeaderBar: React.FC<DispatcherShiftHeaderBarProps> = ({
   shift,
   onShiftEnded,
   className = '',
 }) => {
-  const [isEnding, setIsEnding] = useState(false)
-  const [showConfirm, setShowConfirm] = useState(false)
+  const [showSummary, setShowSummary] = useState(false)
+  const [metrics, setMetrics] = useState({
+    ordersAccepted: shift.ordersAccepted || 0,
+    ordersCooked: shift.ordersCooked || 0,
+    ordersCancelled: shift.ordersCancelled || 0,
+    ordersCompleted: shift.ordersCompleted || 0,
+  })
+  const [loadingMetrics, setLoadingMetrics] = useState(false)
 
-  const handleConfirmEndShift = async () => {
-    setIsEnding(true)
-    try {
-      await endDispatcherShift()
-      setShowConfirm(false)
-      onShiftEnded()
-    } finally {
-      setIsEnding(false)
+  useEffect(() => {
+    if (showSummary && shift.staffId) {
+      setLoadingMetrics(true)
+      void getDispatcherShiftMetrics(shift.staffId)
+        .then((res) => {
+          setMetrics(res)
+        })
+        .finally(() => {
+          setLoadingMetrics(false)
+        })
     }
+  }, [showSummary, shift.staffId])
+
+  const handleEndShift = async () => {
+    await endDispatcherShift()
+    onShiftEnded()
   }
 
   const startTime = formatShiftTime(shift.startedAt)
 
   return (
     <>
-      <div
-        className={`flex items-center justify-between gap-3 px-3.5 py-2 bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-xs ${className}`}
-      >
-        {/* Dispatcher Status Info */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="relative">
-            <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-700 font-black text-xs shrink-0">
-              <ChefHat className="w-4 h-4" />
-            </div>
-            <span
-              className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-white animate-pulse"
-              title="Shift is Active"
-            />
-          </div>
-
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="font-extrabold text-xs text-[#14274E] truncate max-w-[140px] sm:max-w-xs">
-                {shift.staffName || `Dispatcher #${shift.staffId}`}
-              </span>
-              <span className="text-[10px] font-black px-1.5 py-0.2 rounded-md bg-slate-100 text-slate-600 uppercase">
-                ID: {shift.staffId}
-              </span>
-              <span className="hidden sm:inline-block text-[10px] font-black px-1.5 py-0.2 rounded-md bg-amber-50 text-amber-700 border border-amber-200 uppercase">
-                DISPATCHER
-              </span>
-            </div>
-            <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-400">
-              <Clock className="w-3 h-3 text-slate-400" />
-              <span>Shift active since {startTime}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* End Shift Button */}
-        <div className="flex items-center gap-2 shrink-0">
+      <UnifiedShiftHeaderBar
+        role="DISPATCHER"
+        staffName={shift.staffName || `Dispatcher #${shift.staffId}`}
+        startedAt={shift.startedAt}
+        onEndShift={handleEndShift}
+        className={className}
+        confirmTitle="Conclude Dispatcher Shift"
+        confirmMessage={`End kitchen shift for ${shift.staffName || `Staff #${shift.staffId}`}?`}
+        extraActions={
           <button
             type="button"
-            onClick={() => setShowConfirm(true)}
-            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
-            title="Conclude current dispatcher shift"
+            onClick={() => setShowSummary(true)}
+            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200/80 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
+            title="View current shift performance & breakdown"
           >
-            <PowerOff className="w-3.5 h-3.5 text-rose-600" />
-            <span>End Shift</span>
+            <BarChart3 className="w-3.5 h-3.5 text-[#14274E]" />
+            <span className="hidden sm:inline">Shift</span> Summary
           </button>
-        </div>
-      </div>
+        }
+      />
 
-      {/* Confirmation Modal */}
-      {showConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-sm bg-white rounded-2xl p-6 shadow-2xl border border-slate-100 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
-                <PowerOff className="w-5 h-5" />
+      {/* Dispatcher Shift Summary Modal */}
+      {showSummary && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() => setShowSummary(false)}
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="bg-[#14274E] px-6 py-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-400 text-amber-950 flex items-center justify-center shadow-xs">
+                  <ChefHat className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base leading-tight">Dispatcher Shift Summary</h3>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    {shift.staffName || `Staff #${shift.staffId}`}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-[#14274E]">Conclude Dispatcher Shift</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  End kitchen shift for {shift.staffName || `Staff #${shift.staffId}`}?
-                </p>
+              <button
+                type="button"
+                onClick={() => setShowSummary(false)}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                aria-label="Close summary"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4">
+              {/* Shift info row */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200/60">
+                  <span className="text-slate-500 font-bold flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                    Shift Started
+                  </span>
+                  <span className="font-extrabold text-[#14274E]">{startTime}</span>
+                </div>
+
+                {/* 2x2 Metrics Grid */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
+                      <ChefHat className="w-3 h-3 text-blue-500" />
+                      Orders Accepted
+                    </span>
+                    <p className="text-base font-black text-[#14274E] mt-0.5">
+                      {loadingMetrics ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 mt-1" />
+                      ) : (
+                        metrics.ordersAccepted
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
+                      <Flame className="w-3 h-3 text-amber-500" />
+                      Orders Cooked
+                    </span>
+                    <p className="text-base font-black text-amber-700 mt-0.5">
+                      {loadingMetrics ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 mt-1" />
+                      ) : (
+                        metrics.ordersCooked
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                      Orders Completed
+                    </span>
+                    <p className="text-base font-black text-emerald-700 mt-0.5">
+                      {loadingMetrics ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 mt-1" />
+                      ) : (
+                        metrics.ordersCompleted
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
+                      <XCircle className="w-3 h-3 text-rose-500" />
+                      Orders Cancelled
+                    </span>
+                    <p className="text-base font-black text-rose-700 mt-0.5">
+                      {loadingMetrics ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 mt-1" />
+                      ) : (
+                        metrics.ordersCancelled
+                      )}
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <p className="text-xs text-slate-600">
-              This will record your shift end timestamp and log you out of the kitchen dispatch line.
-            </p>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end">
               <button
                 type="button"
-                onClick={() => setShowConfirm(false)}
-                disabled={isEnding}
-                className="px-3.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                onClick={() => setShowSummary(false)}
+                className="px-4 py-2 rounded-xl bg-[#14274E] hover:bg-[#1E3A8A] text-white text-xs font-black transition-colors cursor-pointer"
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmEndShift}
-                disabled={isEnding}
-                className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs active:scale-98 transition-all cursor-pointer disabled:opacity-50"
-              >
-                {isEnding ? 'Ending...' : 'Yes, End Shift'}
+                Done
               </button>
             </div>
           </div>

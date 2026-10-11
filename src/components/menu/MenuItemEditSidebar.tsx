@@ -72,7 +72,7 @@ export function MenuItemEditSidebar({
       setOriginalPrice(item.originalPrice ? String(item.originalPrice) : '')
       setDiscountPercent(item.discountPercent ? String(item.discountPercent) : '')
       setIsBestSeller(Boolean(item.isBestSeller))
-      setOrderLimit(String(item.orderLimit ?? 0))
+      setOrderLimit(item.orderLimit !== undefined ? String(item.orderLimit) : '')
       setErrorMessage(null)
       setValidationErrors({})
     }
@@ -184,7 +184,7 @@ export function MenuItemEditSidebar({
         imageUrl: imageUrl.trim() || undefined,
         isAvailable,
         dietaryType,
-        orderLimit: Math.max(0, parseInt(orderLimit, 10) || 0),
+        orderLimit: orderLimit.trim() === '' ? null : Math.max(0, parseInt(orderLimit, 10) || 0),
       })
 
       // Notify parent to refresh and close sidebar
@@ -470,6 +470,24 @@ export function MenuItemEditSidebar({
                 Sold Out (Unavailable)
               </button>
             </div>
+          </div>
+
+          {/* Order Limit */}
+          <div className="menu-edit-field">
+            <label htmlFor="dish-order-limit" className="menu-edit-label">
+              <span>Order Limit</span>
+            </label>
+            <input
+              id="dish-order-limit"
+              type="number"
+              min="0"
+              step="1"
+              value={orderLimit}
+              onChange={(e) => setOrderLimit(e.target.value)}
+              placeholder="Leave blank for unlimited"
+              className="menu-edit-input"
+              disabled={isSaving}
+            />
           </div>
 
           {/* Dietary Type */}

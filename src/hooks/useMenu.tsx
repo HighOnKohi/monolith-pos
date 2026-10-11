@@ -179,9 +179,9 @@ function useMenuState(enabled: boolean): UseMenuResult {
     }
 
     const handleMenuItemStatusUpdate = (event: Event) => {
-      const detail = (event as CustomEvent<{ itemId: string; isSoldOut: boolean }>).detail
+      const detail = (event as CustomEvent<{ itemId: string; isSoldOut: boolean; orderLimit?: number }>).detail
       if (detail?.itemId) {
-        setItems((current) => applyMenuUpdate(current, detail.itemId, detail.isSoldOut))
+        setItems((current) => applyMenuUpdate(current, detail.itemId, detail.isSoldOut, detail.orderLimit))
       }
     }
 
@@ -213,7 +213,9 @@ function useMenuState(enabled: boolean): UseMenuResult {
         bc = new BroadcastChannel('monolith_order_events')
         bc.addEventListener('message', (event) => {
           const data = event.data
-          if (data?.type === 'event_activated' || data?.type === 'event_deactivated' || data?.type === 'menu_preset_changed') {
+          if (data?.type === 'menu_item_status_updated' && data.itemId) {
+            setItems((current) => applyMenuUpdate(current, data.itemId, data.isSoldOut, data.orderLimit))
+          } else if (data?.type === 'event_activated' || data?.type === 'event_deactivated' || data?.type === 'menu_preset_changed') {
             const targetId = data.menuPresetId ?? data.presetId
             if (targetId) {
               setActivePresetIdState(targetId)

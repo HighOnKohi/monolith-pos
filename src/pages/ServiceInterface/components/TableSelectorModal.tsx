@@ -123,7 +123,7 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
         <div>
           <div className="flex items-start justify-between mb-1.5 gap-1">
             <span className="text-sm font-black text-[#14274E] block truncate">
-              Table #{table.TABLE_NUM || table.TABLE_ID}
+              Table {table.TABLE_NUM || table.TABLE_ID}
             </span>
             {isSelected && (
               <CheckCircle2 className="w-4 h-4 text-[#14274E] shrink-0 mt-0.5" />

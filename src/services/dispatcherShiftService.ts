@@ -5,6 +5,7 @@ import { ensureRoleStaffRecord, recordShiftHistoryAndReset } from './shiftHistor
 
 const LOCAL_STORAGE_DISPATCHER_SHIFT_ID = 'monolith_dispatcher_shift_id'
 const LOCAL_STORAGE_DISPATCHER_STAFF_ID = 'monolith_dispatcher_staff_id'
+const LOCAL_STORAGE_DISPATCHER_SHIFT_START = 'monolith_dispatcher_shift_start'
 
 export interface DispatcherShift {
   shiftId: number
@@ -54,6 +55,8 @@ export async function validateDispatcherStaff(staffId: number): Promise<Dispatch
         codeStatus: (data.CODE_STATUS || data.STATUS || 'ACTIVE') as StaffCodeItem['codeStatus'],
         status: (data.CODE_STATUS || data.STATUS || 'ACTIVE') as StaffCodeItem['codeStatus'],
         shiftStatus: (data.SHIFT_STATUS || 'ENDED') as StaffCodeItem['shiftStatus'],
+        shiftStart: data.SHIFT_START ? String(data.SHIFT_START) : null,
+        shiftEnd: data.SHIFT_END ? String(data.SHIFT_END) : null,
       }
     } else {
       const { data: pubData } = await supabase
@@ -70,6 +73,8 @@ export async function validateDispatcherStaff(staffId: number): Promise<Dispatch
           codeStatus: (pubData.CODE_STATUS || pubData.STATUS || 'ACTIVE') as StaffCodeItem['codeStatus'],
           status: (pubData.CODE_STATUS || pubData.STATUS || 'ACTIVE') as StaffCodeItem['codeStatus'],
           shiftStatus: (pubData.SHIFT_STATUS || 'ENDED') as StaffCodeItem['shiftStatus'],
+          shiftStart: pubData.SHIFT_START ? String(pubData.SHIFT_START) : null,
+          shiftEnd: pubData.SHIFT_END ? String(pubData.SHIFT_END) : null,
         }
       }
     }
@@ -163,6 +168,7 @@ export async function startDispatcherShift(staffId: number): Promise<DispatcherS
 
   localStorage.setItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID, String(shiftId))
   localStorage.setItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID, String(staffId))
+  localStorage.setItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START, now)
 
   return {
     shiftId,
@@ -183,6 +189,7 @@ export async function startDispatcherShift(staffId: number): Promise<DispatcherS
 export async function getActiveDispatcherShift(): Promise<DispatcherShift | null> {
   const staffIdStr = localStorage.getItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
   const shiftIdStr = localStorage.getItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID)
+  const shiftStartStr = localStorage.getItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START)
 
   if (!staffIdStr) return null
   const staffId = Number(staffIdStr)
@@ -192,6 +199,7 @@ export async function getActiveDispatcherShift(): Promise<DispatcherShift | null
   if (!validation.valid || !validation.staff) {
     localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID)
     localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
+    localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START)
     return null
   }
 
@@ -199,7 +207,13 @@ export async function getActiveDispatcherShift(): Promise<DispatcherShift | null
   if (staff.shiftStatus === 'ENDED') {
     localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID)
     localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
+    localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START)
     return null
+  }
+
+  const effectiveStart = shiftStartStr || staff.shiftStart || new Date().toISOString()
+  if (!shiftStartStr && staff.shiftStart) {
+    localStorage.setItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START, staff.shiftStart)
   }
 
   return {
@@ -207,7 +221,7 @@ export async function getActiveDispatcherShift(): Promise<DispatcherShift | null
     staffId,
     staffName: staff.staffName,
     staffRole: staff.staffRole,
-    startedAt: staff.shiftStart || new Date().toISOString(),
+    startedAt: effectiveStart,
     ordersAccepted: 0,
     ordersCooked: 0,
     ordersCancelled: 0,
@@ -236,6 +250,7 @@ export async function endDispatcherShift(): Promise<void> {
 
   localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID)
   localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
+  localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START)
 }
 
 // ─── Metric Increments in Dispatcher_Staff ─────────────────────────────────────
@@ -298,3 +313,49 @@ export async function incrementDispatcherCancelled(count = 1): Promise<void> {
 export async function incrementDispatcherCompleted(count = 1): Promise<void> {
   await incrementDispatcherColumn('ORDERS_COMPLETED', count)
 }
+
+export async function getDispatcherShiftMetrics(staffId: number): Promise<{
+  ordersAccepted: number
+  ordersCooked: number
+  ordersCancelled: number
+  ordersCompleted: number
+}> {
+  try {
+    let record: Record<string, unknown> | null = null
+    const { data: schemaData } = await supabase
+      .schema('staff')
+      .from('Dispatcher_Staff')
+      .select('*')
+      .eq('STAFF_ID', staffId)
+      .limit(1)
+      .maybeSingle()
+
+    if (schemaData) {
+      record = schemaData as Record<string, unknown>
+    } else {
+      const { data: pubData } = await supabase
+        .from('Dispatcher_Staff')
+        .select('*')
+        .eq('STAFF_ID', staffId)
+        .limit(1)
+        .maybeSingle()
+      if (pubData) record = pubData as Record<string, unknown>
+    }
+
+    return {
+      ordersAccepted: Number(record?.ORDERS_ACCEPTED || 0),
+      ordersCooked: Number(record?.ORDERS_COOKED || 0),
+      ordersCancelled: Number(record?.ORDERS_CANCELLED || 0),
+      ordersCompleted: Number(record?.ORDERS_COMPLETED || 0),
+    }
+  } catch (err) {
+    console.warn('[dispatcherShiftService] getDispatcherShiftMetrics error:', err)
+    return {
+      ordersAccepted: 0,
+      ordersCooked: 0,
+      ordersCancelled: 0,
+      ordersCompleted: 0,
+    }
+  }
+}
+

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CreditCard,
-  Receipt,
   Users,
   ChevronDown,
   ChevronRight,
@@ -257,7 +256,7 @@ export default function CashierInterface() {
   }, [load, scheduleLoad, showToast])
 
   // Tables group calculations & hierarchy: Merge Groups first, then Standalone Tables
-  const { mergedGroups, standaloneTables, enabledTablesCount } = useMemo(() => {
+  const { mergedGroups, standaloneTables } = useMemo(() => {
     const processedTableIds = new Set<number>()
     const merged: Array<{
       groupId: number
@@ -337,21 +336,9 @@ export default function CashierInterface() {
     // Sort standalone tables by their table number ascending
     standalone.sort((a, b) => (a.table.TABLE_NUM || a.table.TABLE_ID) - (b.table.TABLE_NUM || b.table.TABLE_ID))
 
-    // Total count of accessible active tables
-    const activeCount = tables.filter((t) => {
-      const s = summaries.get(t.TABLE_ID)
-      if (s && s.activeOrderCount > 0) return true
-      const g = resolveTableGroupByList(t.TABLE_ID, tables)
-      if (g.isMerged) {
-        return g.memberTableIds.some((id) => (summaries.get(id)?.activeOrderCount ?? 0) > 0)
-      }
-      return false
-    }).length
-
     return {
       mergedGroups: merged,
       standaloneTables: standalone,
-      enabledTablesCount: activeCount,
     }
   }, [tables, summaries])
 
@@ -770,8 +757,24 @@ export default function CashierInterface() {
     }
   }
 
+  const handleBackgroundClick = (e: React.MouseEvent) => {
+    if (isVoidModalOpen || receipt || busyRef.current) return
+    const target = e.target as HTMLElement
+    if (
+      !target.closest('.ci-table-card') &&
+      !target.closest('.cashier-sidebar') &&
+      !target.closest('button') &&
+      !target.closest('input')
+    ) {
+      if (selectedIdRef.current !== null) {
+        setSelectedId(null)
+        setOrders([])
+      }
+    }
+  }
+
   return (
-    <div className="cashier-interface-page staff-page">
+    <div className="cashier-interface-page staff-page" onClick={handleBackgroundClick}>
       {/* Toast Alert for live assistance requests */}
       {toastMessage && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-2xl shadow-xl border bg-[#14274E] text-white text-xs font-bold animate-slide-down flex items-center gap-2">
@@ -797,17 +800,6 @@ export default function CashierInterface() {
             onClearBillOut={handleClearBillOut}
             className="mb-3"
           />
-
-          {/* Header */}
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-2.5">
-            <h2 className="text-sm font-black text-[#14274E]">
-              Tables ({enabledTablesCount})
-            </h2>
-
-            <span className="text-xs font-bold text-slate-400">
-              Showing dine-in & takeout tables
-            </span>
-          </div>
 
           {/* Tables Hierarchy */}
           <div className="ci-tables-wrapper">
@@ -836,11 +828,14 @@ export default function CashierInterface() {
                         className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${
                           isCardSelected ? 'is-selected' : isGroupMemberSelected ? 'is-group-selected' : ''
                         }`}
-                        onClick={() => void selectTable(table.TABLE_ID)}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void selectTable(table.TABLE_ID)
+                        }}
                       >
-                        <div className="ci-table-top">
-                          <span className="flex items-center gap-1.5 font-extrabold">
-                            Table #{table.TABLE_NUM || table.TABLE_ID}
+                        <div className="ci-table-center">
+                          <span className="font-black text-base text-[#14274E]">
+                            Table {table.TABLE_NUM || table.TABLE_ID}
                           </span>
                         </div>
                         <div
@@ -873,11 +868,14 @@ export default function CashierInterface() {
                       className={`ci-table-card ${enabled ? '' : 'is-disabled'} ${
                         isSelected ? 'is-selected' : ''
                       }`}
-                      onClick={() => void selectTable(table.TABLE_ID)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void selectTable(table.TABLE_ID)
+                      }}
                     >
-                      <div className="ci-table-top">
-                        <span className="flex items-center gap-1.5 font-extrabold">
-                          Table #{table.TABLE_NUM || table.TABLE_ID}
+                      <div className="ci-table-center">
+                        <span className="font-black text-base text-[#14274E]">
+                          Table {table.TABLE_NUM || table.TABLE_ID}
                         </span>
                       </div>
                       <div
@@ -903,11 +901,10 @@ export default function CashierInterface() {
         </section>
 
         {/* Sidebar Panel */}
-        <aside className="cashier-sidebar">
+        <aside className="cashier-sidebar" onClick={(e) => e.stopPropagation()}>
           <header className="ci-sidebar-header">
             <div>
-              <span className="ci-sidebar-kicker">Table Cashier</span>
-              <h2 className="flex items-center gap-2">
+              <h2 className="text-xl md:text-2xl font-black text-[#14274E] flex items-center gap-2">
                 {selectedTableGroup
                   ? selectedTableGroup.group.displayLabel
                   : 'Select a table'}
@@ -918,8 +915,12 @@ export default function CashierInterface() {
                   </span>
                 )}
               </h2>
+              {selectedTableGroup && (
+                <div className="text-xs font-bold text-slate-500 mt-1">
+                  {activeItems.length > 0 && activeItems[0].orderType === 'TAKEOUT' ? 'Take Out' : 'Dine In'}
+                </div>
+              )}
             </div>
-            <Receipt className="ci-header-icon" />
           </header>
 
           <div className="ci-sidebar-body">
@@ -927,17 +928,6 @@ export default function CashierInterface() {
               <div className="ci-sidebar-empty">Select an enabled table card to review its completed order.</div>
             ) : (
               <>
-                <div className="ci-top-body">
-                  <div className="ci-guest-info">
-                    <Users className="ci-icon" />
-                    <span>
-                      {selectedTableGroup.group.currentGuestCount}/{selectedTableGroup.group.capacity}
-                    </span>
-                  </div>
-                  <div className="ci-order-type">
-                    {activeItems.length > 0 && activeItems[0].orderType === 'TAKEOUT' ? 'Takeout' : 'Dine In'}
-                  </div>
-                </div>
 
                 {/* Orders in kitchen status with void buttons */}
                 {orders.filter((o) => ['REQUESTED', 'VERIFIED', 'PREPARING'].includes(o.orderStatus)).length > 0 && (

@@ -95,19 +95,29 @@
 
 .ci-table-card {
   display: flex;
-  min-height: 145px;
+  min-height: 120px;
   flex-direction: column;
+  align-items: center;
   justify-content: space-between;
-  gap: .75rem;
-  padding: 1rem;
+  text-align: center;
+  gap: .5rem;
+  padding: 1.25rem 0.75rem 0.85rem;
   border-radius: 1rem;
   background: #fff;
   color: #14274e;
-  text-align: left;
   box-shadow: 0 4px 14px rgba(33, 55, 88, .08);
   cursor: pointer;
   transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
   border: 2px solid #9ba4b4;
+}
+
+.ci-table-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  text-align: center;
 }
 
 .ci-table-card:hover:not(:disabled) {
@@ -238,10 +248,30 @@
 }
 
 .ci-sidebar-header h2 {
-  margin: .2rem 0 0;
+  margin: 0;
   color: #14274e;
-  font-size: 1rem;
+  font-size: 1.35rem;
   font-weight: 900;
+  line-height: 1.25;
+}
+
+.tm-pax-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.tm-pax-row .ci-icon {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.tm-pax-row.tm-pax-full {
+  color: #e11d48;
 }
 
 .ci-sidebar-body {
@@ -358,28 +388,30 @@
   padding: .5rem .65rem;
   min-height: 50px;
   transition: all 0.2s ease;
-}
-
-.ci-item-row.ci-collapsed-row .ci-item-checkbox,
-.ci-item-row.ci-collapsed-row .ci-item-custom {
-  visibility: hidden;
+  box-sizing: border-box;
 }
 
 .ci-row-even {
   background: #eef0f3;
   border: 3px solid #dbe3ed;
   border-radius: .9rem;
+  box-sizing: border-box;
 }
 
 .ci-row-odd {
   background: #fff;
   border: 3px solid #dbe3ed;
   border-radius: .9rem;
+  box-sizing: border-box;
 }
 
 .ci-item-subrow {
+  box-sizing: border-box !important;
   border-radius: 0px !important;
   border-top: 0 !important;
+  border-left: 3px solid #dbe3ed !important;
+  border-right: 3px solid #dbe3ed !important;
+  border-bottom: 3px solid #dbe3ed !important;
 }
 
 .ci-item-subrow.ci-row-even {
@@ -396,7 +428,7 @@
 }
 
 .ci-item-subrow:not(:last-child) {
-  border-top: 0px
+  border-bottom: 3px solid #dbe3ed !important;
 }
 
 .ci-item-group-header {
@@ -409,10 +441,13 @@
   grid-template-rows: 0fr;
   transition: grid-template-rows 0.3s ease;
   overflow: hidden;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .ci-subrows-container.expanded {
   grid-template-rows: 1fr;
+  overflow: visible;
 }
 
 .ci-subrows-container.no-animation {
@@ -421,6 +456,8 @@
 
 .ci-subrows-inner {
   min-height: 0;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .ci-item-name {

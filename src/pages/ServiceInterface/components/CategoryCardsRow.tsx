@@ -59,7 +59,7 @@ export const CategoryCardsRow: React.FC<CategoryCardsRowProps> = ({
         <button
           type="button"
           onClick={() => scroll(-240)}
-          className="absolute left-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 rounded-full bg-white/95 border border-slate-200 shadow-md flex items-center justify-center text-slate-700 hover:bg-[#14274E] hover:text-white transition-all cursor-pointer"
+          className="absolute left-7 sm:left-8 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-white/95 border border-slate-200 shadow-md hover:shadow-lg flex items-center justify-center text-slate-700 hover:bg-[#14274E] hover:text-white transition-all cursor-pointer active:scale-95"
           title="Scroll Left"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -71,7 +71,7 @@ export const CategoryCardsRow: React.FC<CategoryCardsRowProps> = ({
         <button
           type="button"
           onClick={() => scroll(240)}
-          className="absolute right-1 top-1/2 -translate-y-1/2 z-10 w-7 h-7 rounded-full bg-white/95 border border-slate-200 shadow-md flex items-center justify-center text-slate-700 hover:bg-[#14274E] hover:text-white transition-all cursor-pointer"
+          className="absolute right-7 sm:right-8 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-white/95 border border-slate-200 shadow-md hover:shadow-lg flex items-center justify-center text-slate-700 hover:bg-[#14274E] hover:text-white transition-all cursor-pointer active:scale-95"
           title="Scroll Right"
         >
           <ChevronRight className="w-4 h-4" />
@@ -101,7 +101,7 @@ export const CategoryCardsRow: React.FC<CategoryCardsRowProps> = ({
                 'group flex items-center gap-3 px-3.5 py-2.5 rounded-2xl transition-all duration-200 shrink-0 cursor-pointer select-none text-left min-w-[130px]',
                 isActive
                   ? 'bg-[#14274E] border-2 border-[#14274E] text-white shadow-md shadow-[#14274E]/20 scale-[1.01]'
-                  : 'bg-white border-2 border-slate-200/80 hover:border-slate-300 hover:bg-slate-50 text-slate-700 shadow-2xs',
+                  : 'bg-white border-2 border-transparent hover:border-[#14274E] hover:bg-slate-50 text-slate-700 shadow-2xs',
               ].join(' ')}
             >
               <div

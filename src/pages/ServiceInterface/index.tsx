@@ -12,6 +12,7 @@ import { useMenu } from '@/hooks/useMenu'
 import { useAuth } from '@/hooks/useAuth'
 import { verifyAdminPassword } from '@/services/authVerificationService'
 import { fetchServiceMenuItems } from '@/services/menuService'
+import { MENU_ITEM_STATUS_UPDATED } from '@/hooks/useRealtimeMenu'
 import type { BillRequest } from '@/types/bill'
 import type { Order } from '@/types/order'
 import type { MenuItem } from '@/types/menu'
@@ -101,9 +102,56 @@ export default function CashierPage() {
     const handleOrderUpdate = () => void loadServiceMenu()
     window.addEventListener('monolith-order-update', handleOrderUpdate)
 
+    const handleMenuStatusUpdated = (e: Event) => {
+      const { itemId, isSoldOut, orderLimit } = (e as CustomEvent).detail ?? {}
+      if (itemId) {
+        setLiveItems((prev) =>
+          prev.map((item) =>
+            item.id === String(itemId)
+              ? {
+                  ...item,
+                  isSoldOut,
+                  isAvailable: !isSoldOut,
+                  ...(orderLimit !== undefined ? { orderLimit } : {}),
+                }
+              : item,
+          ),
+        )
+      }
+    }
+    window.addEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuStatusUpdated)
+
+    let bc: BroadcastChannel | null = null
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        bc = new BroadcastChannel('monolith_order_events')
+        bc.onmessage = (event) => {
+          if (event.data?.type === 'menu_item_status_updated' && event.data?.itemId) {
+            const { itemId, isSoldOut, orderLimit } = event.data
+            setLiveItems((prev) =>
+              prev.map((item) =>
+                item.id === String(itemId)
+                  ? {
+                      ...item,
+                      isSoldOut,
+                      isAvailable: !isSoldOut,
+                      ...(orderLimit !== undefined ? { orderLimit } : {}),
+                    }
+                  : item,
+              ),
+            )
+          }
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
+
     return () => {
       cancelled = true
       window.removeEventListener('monolith-order-update', handleOrderUpdate)
+      window.removeEventListener(MENU_ITEM_STATUS_UPDATED, handleMenuStatusUpdated)
+      bc?.close()
       void supabase.removeChannel(channel)
     }
   }, [])
@@ -617,6 +665,16 @@ export default function CashierPage() {
 
   // ── 7. Punch Cart Handlers ──
   const handleAddToCart = (item: MenuItem) => {
+    const isSoldOut = item.isSoldOut || (item.orderLimit !== undefined && item.orderLimit <= 0)
+    if (isSoldOut) {
+      showToast(`${item.name} is sold out!`, 'error')
+      return
+    }
+    const currentInCart = punchCart.find((ci) => ci.item.id === item.id)?.quantity ?? 0
+    if (item.orderLimit !== undefined && currentInCart >= item.orderLimit) {
+      showToast(`Cannot punch more: only ${item.orderLimit} in stock for ${item.name}.`, 'error')
+      return
+    }
     setPunchCart((prev) => {
       const exists = prev.find((ci) => ci.item.id === item.id)
       if (exists) {
@@ -630,6 +688,19 @@ export default function CashierPage() {
   }
 
   const handleIncreasePunchQty = (itemId: string) => {
+    const item = liveItems.find((i) => i.id === itemId)
+    const currentInCart = punchCart.find((ci) => ci.item.id === itemId)?.quantity ?? 0
+    if (item) {
+      const isSoldOut = item.isSoldOut || (item.orderLimit !== undefined && item.orderLimit <= 0)
+      if (isSoldOut) {
+        showToast(`${item.name} is sold out!`, 'error')
+        return
+      }
+      if (item.orderLimit !== undefined && currentInCart >= item.orderLimit) {
+        showToast(`Cannot punch more: only ${item.orderLimit} in stock for ${item.name}.`, 'error')
+        return
+      }
+    }
     setPunchCart((prev) =>
       prev.map((ci) => (ci.item.id === itemId ? { ...ci, quantity: ci.quantity + 1 } : ci))
     )
@@ -654,9 +725,40 @@ export default function CashierPage() {
   // Submit Order from Cashier to Kitchen
   const handleSendOrderToKitchen = async () => {
     if (!selectedTableId || punchCart.length === 0) return
+
+    // Pre-validate all punch cart items against live order limits
+    for (const ci of punchCart) {
+      const live = liveItems.find((i) => i.id === ci.item.id) || ci.item
+      const isSoldOut = live.isSoldOut || (live.orderLimit !== undefined && live.orderLimit <= 0)
+      if (isSoldOut) {
+        showToast(`${live.name} is sold out and cannot be punched.`, 'error')
+        return
+      }
+      if (live.orderLimit !== undefined && ci.quantity > live.orderLimit) {
+        showToast(`Cannot punch ${ci.quantity}x of ${live.name}: only ${live.orderLimit} in stock.`, 'error')
+        return
+      }
+    }
+
     setIsSubmittingOrder(true)
     const previousOrders = tableOrders
     const previousTables = tables
+
+    // Optimistically update live items stock
+    setLiveItems((prev) =>
+      prev.map((item) => {
+        const inCart = punchCart.find((ci) => ci.item.id === item.id)
+        if (!inCart || item.orderLimit === undefined) return item
+        const newLimit = Math.max(0, item.orderLimit - inCart.quantity)
+        const isSoldOut = newLimit === 0
+        return {
+          ...item,
+          orderLimit: newLimit,
+          isSoldOut,
+          isAvailable: !isSoldOut,
+        }
+      }),
+    )
 
     try {
       const subtotal = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
@@ -750,12 +852,7 @@ export default function CashierPage() {
   }, [liveItems, searchQuery, selectedCategory, activePresetId, presets])
 
 
-  const currentCategoryName = useMemo(() => {
-    if (selectedCategory === 'all') return 'All Menu'
-    if (selectedCategory === 'best_sellers') return 'Best Sellers'
-    const found = categories.find((c) => c.id === selectedCategory)
-    return found ? found.name : 'Dishes'
-  }, [selectedCategory, categories])
+
 
   return (
     <div className="service-page-container service-interface-page-container">
@@ -839,16 +936,8 @@ export default function CashierPage() {
                 mobileActiveView === 'menu' ? 'flex' : 'hidden lg:flex',
               ].join(' ')}
             >
-              {/* Header count bar for Category */}
-              <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80 shrink-0 text-xs text-slate-500">
-                <span className="service-interface-selected-category-label font-semibold">
-                  <strong className="text-[#14274E] font-extrabold">{currentCategoryName}</strong>
-                  <span className="ml-1.5 text-slate-400">({filteredItems.length} dish{filteredItems.length !== 1 ? 'es' : ''})</span>
-                </span>
-              </div>
-
               {/* Dishes Grid — Smoothly Scrollable */}
-              <div className="flex-1 overflow-y-auto pr-1 pb-4">
+              <div className="flex-1 overflow-y-auto pr-1">
                 {filteredItems.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs py-16">
                     <span className="font-bold text-sm text-slate-600 mb-1">No dishes found</span>
@@ -857,7 +946,7 @@ export default function CashierPage() {
                 ) : (
                   <div
                     key={selectedCategory}
-                    className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5 pb-6"
+                    className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5"
                   >
                     {filteredItems.map((item) => {
                       const cartEntry = punchCart.find((ci) => ci.item.id === item.id)
