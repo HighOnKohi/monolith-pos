@@ -1,10 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import type { StaffCodeItem } from '@/types/account'
 import { validateReceptionistStaff, endStaffShiftManually } from '@/services/staffCodeService'
+import {
+  getDeviceId,
+  getDeviceName,
+  getTerminalSession,
+  saveTerminalSession,
+  clearTerminalSession,
+  checkStaffActiveOnOtherTerminal,
+  subscribeToSessionEvents,
+} from '@/services/terminalSessionService'
 import { supabase } from '@/lib/supabase'
-
-const SESSION_STORAGE_RECEPTIONIST_STAFF_ID = 'monolith_receptionist_staff_id'
-const SESSION_STORAGE_RECEPTIONIST_SHIFT_START = 'monolith_receptionist_shift_start'
 
 export interface ReceptionistSessionContextValue {
   staff: StaffCodeItem | null
@@ -28,52 +34,66 @@ export function ReceptionistSessionProvider({ children }: { children: React.Reac
 
   const clearError = useCallback(() => setError(null), [])
 
+  const logout = useCallback(() => {
+    clearTerminalSession('RECEPTIONIST')
+    setStaff(null)
+    setShiftStart(null)
+    setError(null)
+  }, [])
+
   const restoreSession = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const storedId =
-        sessionStorage.getItem(SESSION_STORAGE_RECEPTIONIST_STAFF_ID) ||
-        localStorage.getItem('monolith_receptionist_staff_id')
-      const storedStart =
-        sessionStorage.getItem(SESSION_STORAGE_RECEPTIONIST_SHIFT_START) ||
-        localStorage.getItem('monolith_receptionist_shift_start')
+      const activeTermSession = getTerminalSession('RECEPTIONIST')
+      if (!activeTermSession) {
+        logout()
+        return
+      }
 
-      if (storedId) {
-        const parsedId = Number(storedId)
-        if (parsedId > 0) {
-          const result = await validateReceptionistStaff(parsedId)
-          if (result.valid && result.staff) {
-            setStaff(result.staff)
-            setShiftStart(storedStart || result.staff.shiftStart || new Date().toISOString())
-          } else {
-            sessionStorage.removeItem(SESSION_STORAGE_RECEPTIONIST_STAFF_ID)
-            localStorage.removeItem('monolith_receptionist_staff_id')
-            sessionStorage.removeItem(SESSION_STORAGE_RECEPTIONIST_SHIFT_START)
-            localStorage.removeItem('monolith_receptionist_shift_start')
-            setStaff(null)
-            setShiftStart(null)
-          }
+      const result = await validateReceptionistStaff(activeTermSession.staffId)
+      if (result.valid && result.staff) {
+        // Authoritative database check: shift must be ONGOING
+        if (result.staff.shiftStatus !== 'ONGOING') {
+          console.info('[ReceptionistSessionProvider] Shift was ended in database. Clearing terminal session.')
+          logout()
+          return
         }
+
+        setStaff(result.staff)
+        setShiftStart(activeTermSession.startedAt || result.staff.shiftStart || new Date().toISOString())
       } else {
-        setStaff(null)
-        setShiftStart(null)
+        logout()
       }
     } catch (err) {
       console.warn('[ReceptionistSessionProvider] Failed to restore session:', err)
-      sessionStorage.removeItem(SESSION_STORAGE_RECEPTIONIST_STAFF_ID)
-      localStorage.removeItem('monolith_receptionist_staff_id')
-      sessionStorage.removeItem(SESSION_STORAGE_RECEPTIONIST_SHIFT_START)
-      localStorage.removeItem('monolith_receptionist_shift_start')
-      setStaff(null)
-      setShiftStart(null)
+      logout()
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [logout])
 
   useEffect(() => {
     void restoreSession()
+
+    // Listen for real-time shift ends / force-logouts across network
+    const unsubscribe = subscribeToSessionEvents((ev) => {
+      if (ev.type === 'FORCE_LOGOUT' || ev.type === 'SHIFT_ENDED') {
+        setStaff((currentStaff) => {
+          if (currentStaff && currentStaff.codeId === ev.staffId) {
+            console.info(`[ReceptionistSessionProvider] Received ${ev.type} for staff #${ev.staffId}. Logging out.`)
+            clearTerminalSession('RECEPTIONIST', ev.staffId)
+            setShiftStart(null)
+            return null
+          }
+          return currentStaff
+        })
+      }
+    })
+
+    return () => {
+      unsubscribe()
+    }
   }, [restoreSession])
 
   const authenticate = useCallback(async (staffId: number): Promise<StaffCodeItem> => {
@@ -87,7 +107,16 @@ export function ReceptionistSessionProvider({ children }: { children: React.Reac
         throw new Error(msg)
       }
 
+      // Check if this staff member is already actively clocked in on another terminal
+      const conflict = await checkStaffActiveOnOtherTerminal(staffId, 'RECEPTIONIST')
+      if (conflict.isConflict) {
+        const conflictMsg = `Staff #${staffId} (${conflict.staffName}) is already on an active shift on another terminal. Terminal sessions are unique per PC.`
+        setError(conflictMsg)
+        throw new Error(conflictMsg)
+      }
+
       const now = new Date().toISOString()
+      const shiftId = Date.now()
 
       // Update Staff_Codes shift status to ONGOING
       try {
@@ -116,12 +145,19 @@ export function ReceptionistSessionProvider({ children }: { children: React.Reac
         shiftEnd: null,
       }
 
+      // Save terminal-specific session bound to this device
+      saveTerminalSession({
+        staffId: result.staff.codeId,
+        staffName: result.staff.staffName,
+        staffRole: 'RECEPTIONIST',
+        shiftId,
+        startedAt: now,
+        deviceId: getDeviceId(),
+        deviceName: getDeviceName(),
+      })
+
       setStaff(updatedStaff)
       setShiftStart(now)
-      sessionStorage.setItem(SESSION_STORAGE_RECEPTIONIST_STAFF_ID, String(result.staff.codeId))
-      localStorage.setItem('monolith_receptionist_staff_id', String(result.staff.codeId))
-      sessionStorage.setItem(SESSION_STORAGE_RECEPTIONIST_SHIFT_START, now)
-      localStorage.setItem('monolith_receptionist_shift_start', now)
       return updatedStaff
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Receptionist verification failed.'
@@ -130,16 +166,6 @@ export function ReceptionistSessionProvider({ children }: { children: React.Reac
     } finally {
       setLoading(false)
     }
-  }, [])
-
-  const logout = useCallback(() => {
-    sessionStorage.removeItem(SESSION_STORAGE_RECEPTIONIST_STAFF_ID)
-    localStorage.removeItem('monolith_receptionist_staff_id')
-    sessionStorage.removeItem(SESSION_STORAGE_RECEPTIONIST_SHIFT_START)
-    localStorage.removeItem('monolith_receptionist_shift_start')
-    setStaff(null)
-    setShiftStart(null)
-    setError(null)
   }, [])
 
   const endShift = useCallback(async () => {
@@ -156,7 +182,7 @@ export function ReceptionistSessionProvider({ children }: { children: React.Reac
   const value: ReceptionistSessionContextValue = {
     staff,
     shiftStart,
-    isAuthenticated: Boolean(staff),
+    isAuthenticated: Boolean(staff && staff.shiftStatus === 'ONGOING'),
     loading,
     error,
     authenticate,

@@ -12,9 +12,15 @@ import { fetchStaffCodes } from './staffCodeService'
 import { logCashierAction } from './cashierAuditService'
 import { getActiveBusinessDay } from './businessDayService'
 import { ensureRoleStaffRecord, recordShiftHistoryAndReset } from './shiftHistoryService'
+import {
+  getDeviceId,
+  getDeviceName,
+  getTerminalSession,
+  saveTerminalSession,
+  clearTerminalSession,
+  checkStaffActiveOnOtherTerminal,
+} from './terminalSessionService'
 
-const LOCAL_STORAGE_SHIFT_ID = 'monolith_cashier_shift_id'
-const LOCAL_STORAGE_STAFF_ID = 'monolith_cashier_staff_id'
 const LOCAL_STORAGE_SHIFTS_FALLBACK = 'monolith_cashier_shifts_fallback'
 
 // ─── Local Fallback Storage Helpers ──────────────────────────────────────────
@@ -150,7 +156,7 @@ export async function validateCashierStaff(staffId: number): Promise<CashierStaf
 // ─── Shift Operations ────────────────────────────────────────────────────────
 
 /**
- * Starts a new cashier shift or restores an existing active shift for the staff member.
+ * Starts a new cashier shift or restores an existing active shift for the staff member on this terminal.
  */
 export async function startCashierShift(staffId: number): Promise<CashierShift> {
   const validation = await validateCashierStaff(staffId)
@@ -168,12 +174,26 @@ export async function startCashierShift(staffId: number): Promise<CashierShift> 
     )
   }
 
-  // Check if this staff already has an ACTIVE shift in Supabase or fallback
+  // Cross-PC conflict check: Verify that this staff member is not currently active on another terminal
+  const conflict = await checkStaffActiveOnOtherTerminal(staffId, 'CASHIER')
+  if (conflict.isConflict) {
+    throw new Error(
+      `Staff #${staffId} (${conflict.staffName}) is already on an active shift on another terminal. Sessions are unique per PC to prevent interference.`,
+    )
+  }
+
+  // Check if this terminal already holds an active shift for this staff
   const existingActive = await findActiveShiftForStaff(staffId)
   if (existingActive) {
-    // Restore the active shift
-    localStorage.setItem(LOCAL_STORAGE_SHIFT_ID, String(existingActive.shiftId))
-    localStorage.setItem(LOCAL_STORAGE_STAFF_ID, String(staffId))
+    saveTerminalSession({
+      staffId,
+      staffName: staff.staffName,
+      staffRole: 'CASHIER',
+      shiftId: existingActive.shiftId,
+      startedAt: existingActive.startedAt,
+      deviceId: getDeviceId(),
+      deviceName: getDeviceName(),
+    })
     return {
       ...existingActive,
       businessDayId: activeDay.businessDayId,
@@ -198,7 +218,7 @@ export async function startCashierShift(staffId: number): Promise<CashierShift> 
     staffRole: staff.staffRole,
   }
 
-  // 1. Update Staff_Codes table
+  // 1. Update Staff_Codes table in Supabase
   try {
     const codePayload = {
       SHIFT_STATUS: 'ONGOING',
@@ -233,9 +253,16 @@ export async function startCashierShift(staffId: number): Promise<CashierShift> 
     console.warn('[cashierShiftService] Update Cashier_Staff on start error:', err)
   }
 
-  // Persist session references and fallback
-  localStorage.setItem(LOCAL_STORAGE_SHIFT_ID, String(newShift.shiftId))
-  localStorage.setItem(LOCAL_STORAGE_STAFF_ID, String(staffId))
+  // 3. Save terminal session explicitly bound to THIS PC
+  saveTerminalSession({
+    staffId,
+    staffName: staff.staffName,
+    staffRole: 'CASHIER',
+    shiftId: newShift.shiftId,
+    startedAt: now,
+    deviceId: getDeviceId(),
+    deviceName: getDeviceName(),
+  })
   saveFallbackShift(newShift)
 
   // Append SHIFT_STARTED audit record
@@ -301,14 +328,16 @@ async function findActiveShiftForStaff(staffId: number): Promise<CashierShift | 
 }
 
 /**
- * Authoritatively retrieves the active cashier shift.
+ * Authoritatively retrieves the active cashier shift for THIS terminal.
  */
 export async function getActiveCashierShift(_shiftId?: number): Promise<CashierShift | null> {
-  const staffId = Number(localStorage.getItem(LOCAL_STORAGE_STAFF_ID)) || null
-  if (!staffId) return null
+  const terminalSession = getTerminalSession('CASHIER')
+  if (!terminalSession) return null
+
+  const staffId = terminalSession.staffId
 
   try {
-    const { data: codeData } = await supabase
+    const { data: codeData, error } = await supabase
       .schema('staff')
       .from('Staff_Codes')
       .select('*')
@@ -316,7 +345,7 @@ export async function getActiveCashierShift(_shiftId?: number): Promise<CashierS
       .eq('SHIFT_STATUS', 'ONGOING')
       .maybeSingle()
 
-    if (codeData) {
+    if (!error && codeData) {
       const { data: csData } = await supabase
         .schema('staff')
         .from('Cashier_Staff')
@@ -326,9 +355,9 @@ export async function getActiveCashierShift(_shiftId?: number): Promise<CashierS
         .maybeSingle()
 
       return {
-        shiftId: Number(csData?.CASHIER_ID || codeData.CODE_ID),
+        shiftId: terminalSession.shiftId || Number(csData?.CASHIER_ID || codeData.CODE_ID),
         staffId: Number(codeData.CODE_ID),
-        startedAt: String(codeData.SHIFT_START || new Date().toISOString()),
+        startedAt: terminalSession.startedAt || String(codeData.SHIFT_START || new Date().toISOString()),
         endedAt: null,
         status: 'ACTIVE',
         totalEarning: Number(csData?.TOTAL_SHIFT_EARNING || 0),
@@ -336,13 +365,26 @@ export async function getActiveCashierShift(_shiftId?: number): Promise<CashierS
         staffName: String(codeData.STAFF_NAME || 'Cashier'),
         staffRole: 'CASHIER',
       }
+    } else if (!error && !codeData) {
+      // Shift is ended in Supabase! Immediately purge local terminal session to stay 100% in sync
+      clearTerminalSession('CASHIER', staffId)
+      return null
     }
   } catch {
-    // ignore
+    // Network offline fallback
   }
 
-  const fallbackShifts = getFallbackShifts()
-  return fallbackShifts.find((s) => s.staffId === staffId && s.status === 'ACTIVE') ?? null
+  return {
+    shiftId: terminalSession.shiftId,
+    staffId: terminalSession.staffId,
+    startedAt: terminalSession.startedAt,
+    endedAt: null,
+    status: 'ACTIVE',
+    totalEarning: 0,
+    totalTablesHandled: 0,
+    staffName: terminalSession.staffName,
+    staffRole: 'CASHIER',
+  }
 }
 
 /**
@@ -359,7 +401,7 @@ export async function endCashierShift(
 
   const updatedShift: CashierShift = {
     shiftId,
-    staffId: activeShift?.staffId ?? (Number(localStorage.getItem(LOCAL_STORAGE_STAFF_ID)) || 0),
+    staffId: activeShift?.staffId ?? (getTerminalSession('CASHIER')?.staffId || 0),
     startedAt: activeShift?.startedAt ?? now,
     endedAt: now,
     status: 'ENDED',
@@ -402,9 +444,8 @@ export async function endCashierShift(
     },
   })
 
-  // 4. Clear cashier operational session from localStorage
-  localStorage.removeItem(LOCAL_STORAGE_SHIFT_ID)
-  localStorage.removeItem(LOCAL_STORAGE_STAFF_ID)
+  // 4. Clear cashier operational session from this terminal
+  clearTerminalSession('CASHIER', updatedShift.staffId)
 
   return updatedShift
 }
@@ -413,9 +454,8 @@ export async function endCashierShift(
  * Increments earnings and tables handled in Cashier_Staff upon settlement.
  */
 export async function recordCashierSettlement(amount = 0): Promise<void> {
-  const staffIdStr = localStorage.getItem(LOCAL_STORAGE_STAFF_ID)
-  if (!staffIdStr) return
-  const staffId = Number(staffIdStr)
+  const terminalSession = getTerminalSession('CASHIER')
+  const staffId = terminalSession?.staffId
   if (!staffId) return
 
   try {

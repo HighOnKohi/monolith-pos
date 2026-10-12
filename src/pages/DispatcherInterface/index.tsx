@@ -25,6 +25,7 @@ import { CancelOrderModal } from '@/components/dispatcher/CancelOrderModal'
 import { DispatcherStaffGate } from '@/components/dispatcher/DispatcherStaffGate'
 import { DispatcherShiftHeaderBar } from '@/components/dispatcher/DispatcherShiftHeaderBar'
 import { getActiveDispatcherShift, type DispatcherShift } from '@/services/dispatcherShiftService'
+import { subscribeToSessionEvents } from '@/services/terminalSessionService'
 
 type TableStage = 'preparing' | 'cooking' | 'done'
 
@@ -81,13 +82,30 @@ export default function DispatcherInterface() {
     void restoreDispatcherSession()
 
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'monolith_dispatcher_shift_id' || e.key === 'monolith_dispatcher_staff_id') {
+      if (
+        e.key === 'monolith_dispatcher_shift_id' ||
+        e.key === 'monolith_dispatcher_staff_id' ||
+        e.key === 'monolith_session_dispatcher'
+      ) {
         void restoreDispatcherSession()
       }
     }
     window.addEventListener('storage', handleStorageChange)
+
+    const unsubscribeSession = subscribeToSessionEvents((ev) => {
+      if (ev.type === 'FORCE_LOGOUT' || ev.type === 'SHIFT_ENDED') {
+        setDispatcherShift((current) => {
+          if (current && current.staffId === ev.staffId) {
+            return null
+          }
+          return current
+        })
+      }
+    })
+
     return () => {
       window.removeEventListener('storage', handleStorageChange)
+      unsubscribeSession()
     }
   }, [restoreDispatcherSession])
 

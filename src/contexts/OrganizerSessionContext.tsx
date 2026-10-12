@@ -1,10 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import type { StaffCodeItem } from '@/types/account'
 import { validateOrganizerStaff, endStaffShiftManually } from '@/services/staffCodeService'
+import {
+  getDeviceId,
+  getDeviceName,
+  getTerminalSession,
+  saveTerminalSession,
+  clearTerminalSession,
+  checkStaffActiveOnOtherTerminal,
+  subscribeToSessionEvents,
+} from '@/services/terminalSessionService'
 import { supabase } from '@/lib/supabase'
-
-const SESSION_STORAGE_ORGANIZER_STAFF_ID = 'monolith_organizer_staff_id'
-const SESSION_STORAGE_ORGANIZER_SHIFT_START = 'monolith_organizer_shift_start'
 
 export interface OrganizerSessionContextValue {
   staff: StaffCodeItem | null
@@ -28,52 +34,67 @@ export function OrganizerSessionProvider({ children }: { children: React.ReactNo
 
   const clearError = useCallback(() => setError(null), [])
 
+  const logout = useCallback(() => {
+    clearTerminalSession('ORGANIZER')
+    setStaff(null)
+    setShiftStart(null)
+    setError(null)
+  }, [])
+
   const restoreSession = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const storedId =
-        sessionStorage.getItem(SESSION_STORAGE_ORGANIZER_STAFF_ID) ||
-        localStorage.getItem(SESSION_STORAGE_ORGANIZER_STAFF_ID)
-      const storedStart =
-        sessionStorage.getItem(SESSION_STORAGE_ORGANIZER_SHIFT_START) ||
-        localStorage.getItem(SESSION_STORAGE_ORGANIZER_SHIFT_START)
+      const activeTermSession = getTerminalSession('ORGANIZER')
+      if (!activeTermSession) {
+        // No session belonging to THIS terminal
+        logout()
+        return
+      }
 
-      if (storedId) {
-        const parsedId = Number(storedId)
-        if (parsedId > 0) {
-          const result = await validateOrganizerStaff(parsedId)
-          if (result.valid && result.staff) {
-            setStaff(result.staff)
-            setShiftStart(storedStart || result.staff.shiftStart || new Date().toISOString())
-          } else {
-            sessionStorage.removeItem(SESSION_STORAGE_ORGANIZER_STAFF_ID)
-            localStorage.removeItem(SESSION_STORAGE_ORGANIZER_STAFF_ID)
-            sessionStorage.removeItem(SESSION_STORAGE_ORGANIZER_SHIFT_START)
-            localStorage.removeItem(SESSION_STORAGE_ORGANIZER_SHIFT_START)
-            setStaff(null)
-            setShiftStart(null)
-          }
+      const result = await validateOrganizerStaff(activeTermSession.staffId)
+      if (result.valid && result.staff) {
+        // Authoritative database check: shift MUST be ONGOING
+        if (result.staff.shiftStatus !== 'ONGOING') {
+          console.info('[OrganizerSessionProvider] Shift was ended in database. Clearing terminal session.')
+          logout()
+          return
         }
+
+        setStaff(result.staff)
+        setShiftStart(activeTermSession.startedAt || result.staff.shiftStart || new Date().toISOString())
       } else {
-        setStaff(null)
-        setShiftStart(null)
+        logout()
       }
     } catch (err) {
       console.warn('[OrganizerSessionProvider] Failed to restore session:', err)
-      sessionStorage.removeItem(SESSION_STORAGE_ORGANIZER_STAFF_ID)
-      localStorage.removeItem(SESSION_STORAGE_ORGANIZER_STAFF_ID)
-      sessionStorage.removeItem(SESSION_STORAGE_ORGANIZER_SHIFT_START)
-      localStorage.removeItem(SESSION_STORAGE_ORGANIZER_SHIFT_START)
-      setStaff(null)
-      setShiftStart(null)
+      logout()
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [logout])
 
   useEffect(() => {
     void restoreSession()
+
+    // Listen for real-time shift ends / force-logouts across network
+    const unsubscribe = subscribeToSessionEvents((ev) => {
+      if (ev.type === 'FORCE_LOGOUT' || ev.type === 'SHIFT_ENDED') {
+        setStaff((currentStaff) => {
+          if (currentStaff && currentStaff.codeId === ev.staffId) {
+            console.info(`[OrganizerSessionProvider] Received ${ev.type} for staff #${ev.staffId}. Logging out.`)
+            clearTerminalSession('ORGANIZER', ev.staffId)
+            setShiftStart(null)
+            return null
+          }
+          return currentStaff
+        })
+      }
+    })
+
+    return () => {
+      unsubscribe()
+    }
   }, [restoreSession])
 
   const authenticate = useCallback(async (staffId: number): Promise<StaffCodeItem> => {
@@ -87,9 +108,18 @@ export function OrganizerSessionProvider({ children }: { children: React.ReactNo
         throw new Error(msg)
       }
 
-      const now = new Date().toISOString()
+      // Check if this staff member is already actively clocked in on another terminal
+      const conflict = await checkStaffActiveOnOtherTerminal(staffId, 'ORGANIZER')
+      if (conflict.isConflict) {
+        const conflictMsg = `Staff #${staffId} (${conflict.staffName}) is already on an active shift on another terminal. Terminal sessions are unique per PC.`
+        setError(conflictMsg)
+        throw new Error(conflictMsg)
+      }
 
-      // Update Staff_Codes shift status to ONGOING
+      const now = new Date().toISOString()
+      const shiftId = Date.now()
+
+      // Update Staff_Codes shift status to ONGOING in Supabase
       try {
         const codePayload = {
           SHIFT_STATUS: 'ONGOING',
@@ -116,12 +146,19 @@ export function OrganizerSessionProvider({ children }: { children: React.ReactNo
         shiftEnd: null,
       }
 
+      // Save terminal-specific session bound to this device
+      saveTerminalSession({
+        staffId: result.staff.codeId,
+        staffName: result.staff.staffName,
+        staffRole: 'ORGANIZER',
+        shiftId,
+        startedAt: now,
+        deviceId: getDeviceId(),
+        deviceName: getDeviceName(),
+      })
+
       setStaff(updatedStaff)
       setShiftStart(now)
-      sessionStorage.setItem(SESSION_STORAGE_ORGANIZER_STAFF_ID, String(result.staff.codeId))
-      localStorage.setItem(SESSION_STORAGE_ORGANIZER_STAFF_ID, String(result.staff.codeId))
-      sessionStorage.setItem(SESSION_STORAGE_ORGANIZER_SHIFT_START, now)
-      localStorage.setItem(SESSION_STORAGE_ORGANIZER_SHIFT_START, now)
       return updatedStaff
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Organizer verification failed.'
@@ -130,16 +167,6 @@ export function OrganizerSessionProvider({ children }: { children: React.ReactNo
     } finally {
       setLoading(false)
     }
-  }, [])
-
-  const logout = useCallback(() => {
-    sessionStorage.removeItem(SESSION_STORAGE_ORGANIZER_STAFF_ID)
-    localStorage.removeItem(SESSION_STORAGE_ORGANIZER_STAFF_ID)
-    sessionStorage.removeItem(SESSION_STORAGE_ORGANIZER_SHIFT_START)
-    localStorage.removeItem(SESSION_STORAGE_ORGANIZER_SHIFT_START)
-    setStaff(null)
-    setShiftStart(null)
-    setError(null)
   }, [])
 
   const endShift = useCallback(async () => {
@@ -156,7 +183,7 @@ export function OrganizerSessionProvider({ children }: { children: React.ReactNo
   const value: OrganizerSessionContextValue = {
     staff,
     shiftStart,
-    isAuthenticated: Boolean(staff),
+    isAuthenticated: Boolean(staff && staff.shiftStatus === 'ONGOING'),
     loading,
     error,
     authenticate,

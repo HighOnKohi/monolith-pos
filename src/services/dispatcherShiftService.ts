@@ -2,10 +2,15 @@ import { supabase } from '@/lib/supabase'
 import type { StaffCodeItem } from '@/types/account'
 import { getActiveBusinessDay } from './businessDayService'
 import { ensureRoleStaffRecord, recordShiftHistoryAndReset } from './shiftHistoryService'
+import {
+  getDeviceId,
+  getDeviceName,
+  getTerminalSession,
+  saveTerminalSession,
+  clearTerminalSession,
+  checkStaffActiveOnOtherTerminal,
+} from './terminalSessionService'
 
-const LOCAL_STORAGE_DISPATCHER_SHIFT_ID = 'monolith_dispatcher_shift_id'
-const LOCAL_STORAGE_DISPATCHER_STAFF_ID = 'monolith_dispatcher_staff_id'
-const LOCAL_STORAGE_DISPATCHER_SHIFT_START = 'monolith_dispatcher_shift_start'
 
 export interface DispatcherShift {
   shiftId: number
@@ -110,7 +115,7 @@ export async function validateDispatcherStaff(staffId: number): Promise<Dispatch
 }
 
 /**
- * Starts a new dispatcher shift.
+ * Starts a new dispatcher shift on this terminal.
  */
 export async function startDispatcherShift(staffId: number): Promise<DispatcherShift> {
   const validation = await validateDispatcherStaff(staffId)
@@ -126,10 +131,18 @@ export async function startDispatcherShift(staffId: number): Promise<DispatcherS
     throw new Error('Cannot start shift: The Business Day is currently closed.')
   }
 
+  // Cross-PC conflict check: Verify that this staff member is not currently active on another terminal
+  const conflict = await checkStaffActiveOnOtherTerminal(staffId, 'DISPATCHER')
+  if (conflict.isConflict) {
+    throw new Error(
+      `Staff #${staffId} (${conflict.staffName}) is already on an active shift on another terminal. Sessions are unique per PC to prevent interference.`,
+    )
+  }
+
   const now = new Date().toISOString()
   const shiftId = Date.now()
 
-  // 1. Update Staff_Codes row
+  // 1. Update Staff_Codes row in Supabase
   try {
     const codePayload = {
       SHIFT_STATUS: 'ONGOING',
@@ -166,9 +179,16 @@ export async function startDispatcherShift(staffId: number): Promise<DispatcherS
     console.warn('[dispatcherShiftService] Failed to reset Dispatcher_Staff record:', err)
   }
 
-  localStorage.setItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID, String(shiftId))
-  localStorage.setItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID, String(staffId))
-  localStorage.setItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START, now)
+  // 3. Save terminal session explicitly bound to THIS PC
+  saveTerminalSession({
+    staffId,
+    staffName: staff.staffName,
+    staffRole: 'DISPATCHER',
+    shiftId,
+    startedAt: now,
+    deviceId: getDeviceId(),
+    deviceName: getDeviceName(),
+  })
 
   return {
     shiftId,
@@ -184,40 +204,30 @@ export async function startDispatcherShift(staffId: number): Promise<DispatcherS
 }
 
 /**
- * Restores the currently active dispatcher shift from localStorage and Supabase.
+ * Restores the currently active dispatcher shift for THIS terminal.
  */
 export async function getActiveDispatcherShift(): Promise<DispatcherShift | null> {
-  const staffIdStr = localStorage.getItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
-  const shiftIdStr = localStorage.getItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID)
-  const shiftStartStr = localStorage.getItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START)
+  const terminalSession = getTerminalSession('DISPATCHER')
+  if (!terminalSession) return null
 
-  if (!staffIdStr) return null
-  const staffId = Number(staffIdStr)
-  if (!staffId || isNaN(staffId)) return null
-
+  const staffId = terminalSession.staffId
   const validation = await validateDispatcherStaff(staffId)
+
   if (!validation.valid || !validation.staff) {
-    localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID)
-    localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
-    localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START)
+    clearTerminalSession('DISPATCHER', staffId)
     return null
   }
 
   const staff = validation.staff
   if (staff.shiftStatus === 'ENDED') {
-    localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID)
-    localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
-    localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START)
+    clearTerminalSession('DISPATCHER', staffId)
     return null
   }
 
-  const effectiveStart = shiftStartStr || staff.shiftStart || new Date().toISOString()
-  if (!shiftStartStr && staff.shiftStart) {
-    localStorage.setItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START, staff.shiftStart)
-  }
+  const effectiveStart = terminalSession.startedAt || staff.shiftStart || new Date().toISOString()
 
   return {
-    shiftId: shiftIdStr ? Number(shiftIdStr) : Date.now(),
+    shiftId: terminalSession.shiftId,
     staffId,
     staffName: staff.staffName,
     staffRole: staff.staffRole,
@@ -230,14 +240,14 @@ export async function getActiveDispatcherShift(): Promise<DispatcherShift | null
 }
 
 /**
- * Ends the active dispatcher shift.
+ * Ends the active dispatcher shift on this terminal.
  */
 export async function endDispatcherShift(): Promise<void> {
-  const staffIdStr = localStorage.getItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
+  const terminalSession = getTerminalSession('DISPATCHER')
+  const staffId = terminalSession?.staffId
   const now = new Date().toISOString()
 
-  if (staffIdStr) {
-    const staffId = Number(staffIdStr)
+  if (staffId) {
     try {
       await recordShiftHistoryAndReset(staffId, {
         staffRole: 'DISPATCHER',
@@ -248,17 +258,14 @@ export async function endDispatcherShift(): Promise<void> {
     }
   }
 
-  localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_ID)
-  localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
-  localStorage.removeItem(LOCAL_STORAGE_DISPATCHER_SHIFT_START)
+  clearTerminalSession('DISPATCHER', staffId || undefined)
 }
 
 // ─── Metric Increments in Dispatcher_Staff ─────────────────────────────────────
 
 async function incrementDispatcherColumn(columnName: 'ORDERS_ACCEPTED' | 'ORDERS_COOKED' | 'ORDERS_CANCELLED' | 'ORDERS_COMPLETED', amount = 1) {
-  const staffIdStr = localStorage.getItem(LOCAL_STORAGE_DISPATCHER_STAFF_ID)
-  if (!staffIdStr) return
-  const staffId = Number(staffIdStr)
+  const terminalSession = getTerminalSession('DISPATCHER')
+  const staffId = terminalSession?.staffId
   if (!staffId) return
 
   try {

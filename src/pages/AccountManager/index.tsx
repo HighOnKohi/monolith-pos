@@ -20,6 +20,11 @@ import {
   deleteStaffCode,
   endStaffShiftManually,
 } from '@/services/staffCodeService'
+import {
+  sanitizeTerminalSessions,
+  subscribeToSessionEvents,
+} from '@/services/terminalSessionService'
+import { supabase } from '@/lib/supabase'
 import { AccountManagerSummaryCards } from './components/AccountManagerSummaryCards'
 import { AccountManagerFilterBar } from './components/AccountManagerFilterBar'
 import { StaffAccountsTable } from './components/StaffAccountsTable'
@@ -116,7 +121,31 @@ export default function AccountManagerPage() {
   }, [filters, currentPage, pageSize, showToast])
 
   useEffect(() => {
-    loadData()
+    // Sanitize any stale local sessions on mount
+    void sanitizeTerminalSessions()
+    void loadData()
+
+    // 1. Listen for cross-terminal session events (SHIFT_STARTED, SHIFT_ENDED, FORCE_LOGOUT)
+    const unsubscribeSessionEvents = subscribeToSessionEvents(() => {
+      void loadData()
+    })
+
+    // 2. Real-time postgres changes subscription on Staff_Codes
+    const channel = supabase
+      .channel('account-manager-staff-codes-sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'staff', table: 'Staff_Codes' },
+        () => {
+          void loadData()
+        },
+      )
+      .subscribe()
+
+    return () => {
+      unsubscribeSessionEvents()
+      void supabase.removeChannel(channel)
+    }
   }, [loadData])
 
   // ── Filter Handlers ──

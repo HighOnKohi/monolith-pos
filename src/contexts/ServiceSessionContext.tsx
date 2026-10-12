@@ -8,6 +8,7 @@ import {
   calculateServiceShiftMetrics,
   validateServiceStaff,
 } from '@/services/serviceShiftService'
+import { subscribeToSessionEvents } from '@/services/terminalSessionService'
 
 export interface ServiceSessionContextValue {
   shift: ServiceShift | null
@@ -64,14 +65,34 @@ export function ServiceSessionProvider({ children }: { children: React.ReactNode
 
     // Synchronize across browser tabs
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'monolith_service_shift_id' || e.key === 'monolith_service_staff_id') {
+      if (
+        e.key === 'monolith_service_shift_id' ||
+        e.key === 'monolith_service_staff_id' ||
+        e.key === 'monolith_session_service'
+      ) {
         void restoreActiveShift()
       }
     }
 
     window.addEventListener('storage', handleStorageChange)
+
+    // Listen for real-time remote shift ends / force-logouts across network
+    const unsubscribeSessionEvents = subscribeToSessionEvents((ev) => {
+      if (ev.type === 'FORCE_LOGOUT' || ev.type === 'SHIFT_ENDED') {
+        setShift((currentShift) => {
+          if (currentShift && currentShift.staffId === ev.staffId) {
+            console.info(`[ServiceSessionProvider] Received ${ev.type} for staff #${ev.staffId}. Logging out.`)
+            setStaff(null)
+            return null
+          }
+          return currentShift
+        })
+      }
+    })
+
     return () => {
       window.removeEventListener('storage', handleStorageChange)
+      unsubscribeSessionEvents()
     }
   }, [restoreActiveShift])
 

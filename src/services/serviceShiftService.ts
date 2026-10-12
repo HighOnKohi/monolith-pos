@@ -9,9 +9,15 @@ import { fetchStaffCodes } from './staffCodeService'
 import { logCashierAction } from './cashierAuditService'
 import { getActiveBusinessDay } from './businessDayService'
 import { ensureRoleStaffRecord, recordShiftHistoryAndReset } from './shiftHistoryService'
+import {
+  getDeviceId,
+  getDeviceName,
+  getTerminalSession,
+  saveTerminalSession,
+  clearTerminalSession,
+  checkStaffActiveOnOtherTerminal,
+} from './terminalSessionService'
 
-const LOCAL_STORAGE_SERVICE_SHIFT_ID = 'monolith_service_shift_id'
-const LOCAL_STORAGE_SERVICE_STAFF_ID = 'monolith_service_staff_id'
 const LOCAL_STORAGE_SERVICE_SHIFTS_FALLBACK = 'monolith_service_shifts_fallback'
 
 // ─── Local Fallback Storage Helpers ──────────────────────────────────────────
@@ -141,7 +147,7 @@ export async function validateServiceStaff(staffId: number): Promise<ServiceStaf
 // ─── Service Shift Operations ────────────────────────────────────────────────
 
 /**
- * Starts a new service shift or restores an active one for the server.
+ * Starts a new service shift or restores an active one for the server on this terminal.
  */
 export async function startServiceShift(staffId: number): Promise<ServiceShift> {
   const validation = await validateServiceStaff(staffId)
@@ -159,11 +165,26 @@ export async function startServiceShift(staffId: number): Promise<ServiceShift> 
     )
   }
 
-  // Check if staff already has an ACTIVE service shift
+  // Cross-PC conflict check: Verify that this staff member is not currently active on another terminal
+  const conflict = await checkStaffActiveOnOtherTerminal(staffId, 'SERVICE')
+  if (conflict.isConflict) {
+    throw new Error(
+      `Staff #${staffId} (${conflict.staffName}) is already on an active shift on another terminal. Sessions are unique per PC to prevent interference.`,
+    )
+  }
+
+  // Check if this terminal already holds an active session for this staff
   const existingActive = await findActiveServiceShiftForStaff(staffId)
   if (existingActive) {
-    localStorage.setItem(LOCAL_STORAGE_SERVICE_SHIFT_ID, String(existingActive.shiftId))
-    localStorage.setItem(LOCAL_STORAGE_SERVICE_STAFF_ID, String(staffId))
+    saveTerminalSession({
+      staffId,
+      staffName: staff.staffName,
+      staffRole: 'SERVICE',
+      shiftId: existingActive.shiftId,
+      startedAt: existingActive.startedAt,
+      deviceId: getDeviceId(),
+      deviceName: getDeviceName(),
+    })
     return {
       ...existingActive,
       businessDayId: activeDay.businessDayId,
@@ -187,7 +208,7 @@ export async function startServiceShift(staffId: number): Promise<ServiceShift> 
     staffRole: staff.staffRole,
   }
 
-  // 1. Update Staff_Codes table
+  // 1. Update Staff_Codes table in Supabase
   try {
     const codePayload = {
       SHIFT_STATUS: 'ONGOING',
@@ -222,8 +243,16 @@ export async function startServiceShift(staffId: number): Promise<ServiceShift> 
     console.warn('[serviceShiftService] Reset Service_Staff error:', err)
   }
 
-  localStorage.setItem(LOCAL_STORAGE_SERVICE_SHIFT_ID, String(newShift.shiftId))
-  localStorage.setItem(LOCAL_STORAGE_SERVICE_STAFF_ID, String(staffId))
+  // 3. Save terminal session explicitly bound to THIS PC
+  saveTerminalSession({
+    staffId,
+    staffName: staff.staffName,
+    staffRole: 'SERVICE',
+    shiftId: newShift.shiftId,
+    startedAt: now,
+    deviceId: getDeviceId(),
+    deviceName: getDeviceName(),
+  })
   saveFallbackServiceShift(newShift)
 
   // Append SERVICE_SHIFT_STARTED audit record
@@ -288,14 +317,16 @@ async function findActiveServiceShiftForStaff(staffId: number): Promise<ServiceS
 }
 
 /**
- * Authoritatively retrieves active service shift.
+ * Authoritatively retrieves active service shift for THIS terminal.
  */
-export async function getActiveServiceShift(shiftId?: number): Promise<ServiceShift | null> {
-  const staffId = Number(localStorage.getItem(LOCAL_STORAGE_SERVICE_STAFF_ID)) || null
-  if (!staffId) return null
+export async function getActiveServiceShift(_shiftId?: number): Promise<ServiceShift | null> {
+  const terminalSession = getTerminalSession('SERVICE')
+  if (!terminalSession) return null
+
+  const staffId = terminalSession.staffId
 
   try {
-    const { data: codeData } = await supabase
+    const { data: codeData, error } = await supabase
       .schema('staff')
       .from('Staff_Codes')
       .select('*')
@@ -303,7 +334,7 @@ export async function getActiveServiceShift(shiftId?: number): Promise<ServiceSh
       .eq('SHIFT_STATUS', 'ONGOING')
       .maybeSingle()
 
-    if (codeData) {
+    if (!error && codeData) {
       const { data: ssData } = await supabase
         .schema('staff')
         .from('Service_Staff')
@@ -313,9 +344,9 @@ export async function getActiveServiceShift(shiftId?: number): Promise<ServiceSh
         .maybeSingle()
 
       return {
-        shiftId: Number(codeData.CODE_ID),
+        shiftId: terminalSession.shiftId || Number(codeData.CODE_ID),
         staffId: Number(codeData.CODE_ID),
-        startedAt: String(codeData.SHIFT_START || new Date().toISOString()),
+        startedAt: terminalSession.startedAt || String(codeData.SHIFT_START || new Date().toISOString()),
         endedAt: null,
         status: 'ACTIVE',
         totalOrdersPunched: Number(ssData?.TOTAL_ORDERS_PUNCHED || 0),
@@ -323,17 +354,26 @@ export async function getActiveServiceShift(shiftId?: number): Promise<ServiceSh
         staffName: String(codeData.STAFF_NAME || 'Server'),
         staffRole: 'SERVICE',
       }
+    } else if (!error && !codeData) {
+      // Shift is ended in Supabase! Immediately purge local terminal session to stay 100% in sync
+      clearTerminalSession('SERVICE', staffId)
+      return null
     }
   } catch {
-    // ignore
+    // Network offline fallback — only return if terminalSession exists
   }
 
-  const targetId = shiftId ?? (Number(localStorage.getItem(LOCAL_STORAGE_SERVICE_SHIFT_ID)) || null)
-  if (!targetId) return null
-
-  const fallbackShifts = getFallbackServiceShifts()
-  const shift = fallbackShifts.find((s) => s.shiftId === targetId && s.status === 'ACTIVE') ?? null
-  return shift
+  return {
+    shiftId: terminalSession.shiftId,
+    staffId: terminalSession.staffId,
+    startedAt: terminalSession.startedAt,
+    endedAt: null,
+    status: 'ACTIVE',
+    totalOrdersPunched: 0,
+    totalTablesServed: 0,
+    staffName: terminalSession.staffName,
+    staffRole: 'SERVICE',
+  }
 }
 
 /**
@@ -363,7 +403,7 @@ export async function endServiceShift(
 
   const updatedShift: ServiceShift = {
     shiftId,
-    staffId: activeShift?.staffId ?? (Number(localStorage.getItem(LOCAL_STORAGE_SERVICE_STAFF_ID)) || 0),
+    staffId: activeShift?.staffId ?? (getTerminalSession('SERVICE')?.staffId || 0),
     startedAt: activeShift?.startedAt ?? now,
     endedAt: now,
     status: 'ENDED',
@@ -408,9 +448,8 @@ export async function endServiceShift(
     },
   })
 
-  // 4. Clear service session references
-  localStorage.removeItem(LOCAL_STORAGE_SERVICE_SHIFT_ID)
-  localStorage.removeItem(LOCAL_STORAGE_SERVICE_STAFF_ID)
+  // 4. Clear service session references on this terminal
+  clearTerminalSession('SERVICE', updatedShift.staffId)
 
   return updatedShift
 }
@@ -419,9 +458,8 @@ export async function endServiceShift(
  * Increments total orders punched and order value in Service_Staff when a server punches an order.
  */
 export async function recordServiceOrderPunched(amount = 1, orderValue = 0): Promise<void> {
-  const staffIdStr = localStorage.getItem(LOCAL_STORAGE_SERVICE_STAFF_ID)
-  if (!staffIdStr) return
-  const staffId = Number(staffIdStr)
+  const terminalSession = getTerminalSession('SERVICE')
+  const staffId = terminalSession?.staffId
   if (!staffId) return
 
   try {

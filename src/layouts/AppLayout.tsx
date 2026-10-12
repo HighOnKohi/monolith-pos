@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Menu } from 'lucide-react'
 import { AppSidebar } from '@/components/layout/AppSidebar'
@@ -6,10 +6,15 @@ import { BusinessDayStatusIndicator } from '@/components/layout/BusinessDayStatu
 import { MenuProvider } from '@/hooks/useMenu'
 import { OrganizerSessionProvider } from '@/contexts/OrganizerSessionContext'
 import { ReceptionistSessionProvider } from '@/contexts/ReceptionistSessionContext'
+import { sanitizeTerminalSessions } from '@/services/terminalSessionService'
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
+
+  useEffect(() => {
+    void sanitizeTerminalSessions()
+  }, [])
 
   const handleSidebarClose = useCallback(() => setSidebarOpen(false), [])
 

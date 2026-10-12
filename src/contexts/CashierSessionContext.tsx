@@ -9,6 +9,7 @@ import {
   calculateShiftSummary,
   validateCashierStaff,
 } from '@/services/cashierShiftService'
+import { subscribeToSessionEvents } from '@/services/terminalSessionService'
 
 export interface CashierSessionContextValue {
   shift: CashierShift | null
@@ -69,14 +70,34 @@ export function CashierSessionProvider({ children }: { children: React.ReactNode
 
     // Synchronize across browser tabs when cashier shift starts/ends
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'monolith_cashier_shift_id' || e.key === 'monolith_cashier_staff_id') {
+      if (
+        e.key === 'monolith_cashier_shift_id' ||
+        e.key === 'monolith_cashier_staff_id' ||
+        e.key === 'monolith_session_cashier'
+      ) {
         void restoreActiveShift()
       }
     }
 
     window.addEventListener('storage', handleStorageChange)
+
+    // Listen for real-time remote shift ends / force-logouts across network
+    const unsubscribeSessionEvents = subscribeToSessionEvents((ev) => {
+      if (ev.type === 'FORCE_LOGOUT' || ev.type === 'SHIFT_ENDED') {
+        setShift((currentShift) => {
+          if (currentShift && currentShift.staffId === ev.staffId) {
+            console.info(`[CashierSessionProvider] Received ${ev.type} for staff #${ev.staffId}. Logging out.`)
+            setStaff(null)
+            return null
+          }
+          return currentShift
+        })
+      }
+    })
+
     return () => {
       window.removeEventListener('storage', handleStorageChange)
+      unsubscribeSessionEvents()
     }
   }, [restoreActiveShift])
 

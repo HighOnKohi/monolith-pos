@@ -4,6 +4,11 @@ import {
   deleteRoleStaffRecord,
   recordShiftHistoryAndReset,
 } from './shiftHistoryService'
+import {
+  getDeviceId,
+  clearTerminalSession,
+  broadcastSessionEvent,
+} from './terminalSessionService'
 import type {
   StaffCodeItem,
   StaffCodeFormData,
@@ -473,28 +478,39 @@ export async function endStaffShiftManually(codeId: number): Promise<StaffCodeIt
       if (pubUpdated) updated = pubUpdated as Record<string, unknown>
     }
 
-    // Clean up local storage if this terminal was running a shift for this code
-    const cashierStaffId = Number(localStorage.getItem('monolith_cashier_staff_id'))
-    if (cashierStaffId === codeId) {
-      localStorage.removeItem('monolith_cashier_shift_id')
-      localStorage.removeItem('monolith_cashier_staff_id')
-    }
-    const serviceStaffId = Number(localStorage.getItem('monolith_service_staff_id'))
-    if (serviceStaffId === codeId) {
-      localStorage.removeItem('monolith_service_shift_id')
-      localStorage.removeItem('monolith_service_staff_id')
-    }
-    const dispatcherStaffId = Number(localStorage.getItem('monolith_dispatcher_staff_id'))
-    if (dispatcherStaffId === codeId) {
-      localStorage.removeItem('monolith_dispatcher_shift_id')
-      localStorage.removeItem('monolith_dispatcher_staff_id')
-    }
+    // Clean up local terminal sessions for any role
+    clearTerminalSession('CASHIER', codeId)
+    clearTerminalSession('SERVICE', codeId)
+    clearTerminalSession('DISPATCHER', codeId)
+    clearTerminalSession('ORGANIZER', codeId)
+    clearTerminalSession('RECEPTIONIST', codeId)
+
+    // Broadcast force logout across the entire restaurant network
+    broadcastSessionEvent({
+      type: 'FORCE_LOGOUT',
+      staffId: codeId,
+      deviceId: getDeviceId(),
+      timestamp: now,
+    })
 
     const codeItem = mapDbRowToStaffCode(updated || { CODE_ID: codeId, ...payload })
     updateFallbackCache(codeItem)
     return codeItem
   } catch (err) {
     console.warn('[staffCodeService] Manual end shift Supabase error, updating fallback:', err)
+    clearTerminalSession('CASHIER', codeId)
+    clearTerminalSession('SERVICE', codeId)
+    clearTerminalSession('DISPATCHER', codeId)
+    clearTerminalSession('ORGANIZER', codeId)
+    clearTerminalSession('RECEPTIONIST', codeId)
+
+    broadcastSessionEvent({
+      type: 'FORCE_LOGOUT',
+      staffId: codeId,
+      deviceId: getDeviceId(),
+      timestamp: now,
+    })
+
     const fallbackAll = getFallbackCodes()
     const item = fallbackAll.find((c) => c.codeId === codeId)
     if (item) {
