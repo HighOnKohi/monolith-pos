@@ -25,9 +25,14 @@ import {
   CheckSquare,
   Square,
   Layers,
+  Tag,
 } from 'lucide-react'
 import { getTableQrUrl } from '@/components/table-qr/tableQrUtils'
 import { getMergeGroupColor } from '@/utils/floorPlan/mergeGroupColors'
+import { TableTypesManager } from './TableTypesManager'
+import { LabelHierarchyManager } from './LabelHierarchyManager'
+
+export type SidebarTab = 'table' | 'types' | 'labels'
 
 interface TableManagerSidebarProps {
   isEditMode: boolean
@@ -53,6 +58,11 @@ interface TableManagerSidebarProps {
   isMergeGroupBlockedFromUnmerge?: boolean
   onDeleteTable: (tableNum: number) => void
   onOpenQrModal?: (table: MergedTableNode) => void
+  activeSidebarTab?: SidebarTab
+  onSidebarTabChange?: (tab: SidebarTab) => void
+  onDeselectTable?: () => void
+  layoutTables?: MergedTableNode[]
+  onTypeConfigChange?: () => void
 }
 
 export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
@@ -78,7 +88,23 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   isMergeGroupBlockedFromUnmerge = false,
   onDeleteTable,
   onOpenQrModal,
+  activeSidebarTab,
+  onSidebarTabChange,
+  onDeselectTable,
+  layoutTables,
+  onTypeConfigChange,
 }) => {
+  const [internalTab, setInternalTab] = useState<SidebarTab>('table')
+  const currentTab = activeSidebarTab ?? internalTab
+
+  const handleTabClick = (tab: SidebarTab) => {
+    if (tab !== 'table') {
+      onDeselectTable?.()
+    }
+    setInternalTab(tab)
+    onSidebarTabChange?.(tab)
+  }
+
   const [copied, setCopied] = useState(false)
   const [isTableDropdownOpen, setIsTableDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -126,7 +152,7 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   // ═══════════════════════════════════════════════════════════════════════════
   if (isQrPrintMode) {
     return (
-      <aside className="table-manager-sidebar w-80 sm:w-88 shrink-0 h-full bg-white border-l border-slate-200 flex flex-col shadow-xs select-none z-20 overflow-hidden">
+      <aside className="table-manager-sidebar w-[420px] max-w-[460px] min-w-[380px] shrink-0 h-full bg-white border-l border-slate-200 flex flex-col shadow-xs select-none z-20 overflow-hidden">
         {/* QR Print Header */}
         <div className="p-4 border-b border-slate-100 bg-slate-50/70 shrink-0">
           <div className="flex items-center justify-between mb-1">
@@ -337,9 +363,65 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   ]
 
   return (
-    <aside className="table-manager-sidebar w-80 sm:w-84 shrink-0 h-full bg-white border-l border-slate-200 flex flex-col shadow-xs select-none z-20 overflow-hidden">
-      {/* ── View Mode Header: Table Selector Dropdown & Table Counter ── */}
-      {!isEditMode && (
+    <aside className="table-manager-sidebar w-[420px] max-w-[460px] min-w-[380px] shrink-0 h-full bg-white border-l border-slate-200 flex flex-col shadow-xs select-none z-20 overflow-hidden">
+      {/* ── 3-Tab Segmented Header: Table | Types | Labels ── */}
+      <div className="p-3 border-b border-slate-100 bg-slate-50/80 shrink-0">
+        <div className="flex items-center gap-1 bg-slate-200/60 p-1 rounded-xl">
+          <button
+            type="button"
+            onClick={() => handleTabClick('table')}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              currentTab === 'table'
+                ? 'bg-white text-[#14274E] shadow-xs'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Square className="w-3.5 h-3.5" />
+            <span>Table</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTabClick('types')}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              currentTab === 'types'
+                ? 'bg-white text-[#14274E] shadow-xs'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Types</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTabClick('labels')}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              currentTab === 'labels'
+                ? 'bg-white text-[#14274E] shadow-xs'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Tag className="w-3.5 h-3.5" />
+            <span>Labels</span>
+          </button>
+        </div>
+      </div>
+
+      {currentTab === 'types' ? (
+        <div className="flex-1 overflow-y-auto">
+          <TableTypesManager
+            layoutTables={layoutTables || allTables}
+            onConfigChange={onTypeConfigChange}
+            isSidebar
+          />
+        </div>
+      ) : currentTab === 'labels' ? (
+        <div className="flex-1 overflow-y-auto">
+          <LabelHierarchyManager isSidebar />
+        </div>
+      ) : (
+        <>
+          {/* ── View Mode Header: Table Selector Dropdown & Table Counter ── */}
+          {!isEditMode && (
         <div className="p-4 border-b border-slate-100 bg-slate-50/50 shrink-0">
           <div className="flex items-center justify-between gap-2.5">
             {/* Table Selector Dropdown */}
@@ -846,6 +928,8 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </aside>
   )

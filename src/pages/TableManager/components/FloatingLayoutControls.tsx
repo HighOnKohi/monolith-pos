@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, memo } from 'react'
-import { Plus, ChevronDown, Sparkles } from 'lucide-react'
+import { Plus, ChevronDown } from 'lucide-react'
 import { TABLE_TYPES, type TableType } from '@/services/tableLayoutService'
 import { TableShapeIcon } from './TableVisual'
 
@@ -12,7 +12,6 @@ interface FloatingLayoutControlsProps {
 
 export const FloatingLayoutControls: React.FC<FloatingLayoutControlsProps> = memo(({
   onAddTable,
-  onOpenAutoAllocate,
   totalCapacity = 0,
   maxVenueCapacity = 50,
 }) => {
@@ -41,19 +40,6 @@ export const FloatingLayoutControls: React.FC<FloatingLayoutControlsProps> = mem
 
   return (
     <div className="flex items-center gap-2 select-none">
-      {/* Auto Allocate Button */}
-      {onOpenAutoAllocate && (
-        <button
-          type="button"
-          onClick={onOpenAutoAllocate}
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-black rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/30 shadow-xs hover:border-[#E9C46A]/60 hover:brightness-110 active:scale-95 transition-all cursor-pointer"
-          title="Automatically distribute tables to fit venue seating capacity"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-[#E9C46A]" />
-          <span>Auto Allocate</span>
-        </button>
-      )}
-
       {/* Add Table Controls */}
       <div className="relative" ref={dropdownRef}>
         <div className={`relative inline-flex items-stretch rounded-xl shadow-xs border transition-opacity ${

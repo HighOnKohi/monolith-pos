@@ -76,7 +76,7 @@ export default function CustomerPage() {
         {
           event: 'UPDATE',
           schema: 'tables',
-          table: 'Restaurant_Tables',
+          table: 'Active_Tables',
           filter: `TABLE_ID=eq.${parsedTableId}`,
         },
         (payload) => {
@@ -94,7 +94,7 @@ export default function CustomerPage() {
       try {
         const { data } = await supabase
           .schema('tables')
-          .from('Restaurant_Tables')
+          .from('Active_Tables')
           .select('STATUS')
           .eq('TABLE_ID', parsedTableId)
           .maybeSingle()

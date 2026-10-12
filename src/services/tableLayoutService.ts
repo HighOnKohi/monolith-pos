@@ -61,17 +61,22 @@ export const TABLE_TYPES: Record<TableType, TableTypeConfig> = {
   },
 }
 
-export const DEFAULT_GRID_WIDTH = 20
-export const DEFAULT_GRID_HEIGHT = 16
+export const DEFAULT_GRID_WIDTH = 16
+export const DEFAULT_GRID_HEIGHT = 11
+export const GRID_MARGIN_BLOCKS = 0.5
+export const TOTAL_GRID_WIDTH_BLOCKS = 17
+export const TOTAL_GRID_HEIGHT_BLOCKS = 12
 
 export interface TableLayoutPreset {
   LAYOUT_PRESET_ID: number
   PRESET_NAME: string
-  PRESET_GRID_WIDTH: number
-  PRESET_GRID_HEIGHT: number
+  PRESET_GRID_WIDTH?: number
+  PRESET_GRID_HEIGHT?: number
   IS_DEFAULT: boolean
+  IS_ACTIVE: boolean
   IS_PROTECTED?: boolean
   MAX_PAX?: number | null
+  TABLE_IDS: number[]
   CREATED_AT?: string
   UPDATED_AT?: string
   CREATED_BY?: string | null
@@ -79,6 +84,7 @@ export interface TableLayoutPreset {
 
 export interface TableLayoutInfo {
   INFO_ID: string
+  TABLE_ID?: number
   LAYOUT_PRESET_ID: number
   TABLE_NUM: number
   MERGE_GROUP_ID: number | null
@@ -86,6 +92,7 @@ export interface TableLayoutInfo {
   X_POS: number
   Y_POS: number
   TABLE_CAPACITY?: number | null
+  SEAT_CAPACITY?: number | null
   LABEL_ID?: number | null
 }
 
@@ -98,22 +105,33 @@ export interface RestaurantTableData {
   RESERVED_SINCE: string | null
   BILL_OUT_REQUESTED: boolean
   MERGE_GROUP_ID: number | null
+  MERGE_PERSISTENCY?: 'TEMPORARY' | 'CONTINOUOUS' | null
+  OCCUPIED_SINCE?: string | null
+  RESERVATION_ID?: number | null
   LABEL_ID?: number | null
+  // Reservation fields joined from Table_Reservations
+  RESERVATION_NAME?: string | null
+  RESERVATION_PAX?: number | null
+  RESERVATION_NOTES?: string | null
+  RESERVATION_TIME_LIMIT?: string | null
 }
 
 export interface MergedTableNode extends TableLayoutInfo {
-  // Live status merged from Restaurant_Tables
+  // Live status merged from Active_Tables
   STATUS?: 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'HAS_REQUEST' | 'UNAVAILABLE'
   CURRENT_GUEST_COUNT?: number
   GUEST_CAPACITY?: number
   BILL_OUT_REQUESTED?: boolean
-  TABLE_ID?: number
+  MERGE_PERSISTENCY?: 'TEMPORARY' | 'CONTINOUOUS' | null
+  OCCUPIED_SINCE?: string | null
+  RESERVATION_ID?: number | null
   LABEL_ID?: number | null
+  RESERVATION_NAME?: string | null
+  RESERVATION_PAX?: number | null
+  RESERVATION_NOTES?: string | null
+  RESERVATION_TIME_LIMIT?: string | null
+  RESERVED_SINCE?: string | null
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Preset Operations
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Preset Operations
@@ -155,6 +173,7 @@ export async function fetchAllLayoutPresets(): Promise<TableLayoutPreset[]> {
     console.error('[tableLayoutService] Error fetching presets:', error)
     return []
   }
+
   return (data ?? []).map((row: Record<string, unknown>) => {
     const id = Number(row.LAYOUT_PRESET_ID)
     const cachedPax = getCachedPresetMaxPax(id)
@@ -162,14 +181,23 @@ export async function fetchAllLayoutPresets(): Promise<TableLayoutPreset[]> {
     if (row.MAX_PAX != null) {
       setCachedPresetMaxPax(id, maxPax)
     }
+
+    const tableIds: number[] = Array.isArray(row.TABLE_IDS)
+      ? (row.TABLE_IDS as unknown[]).map(Number).filter((n) => !isNaN(n))
+      : []
+
+    const isActive = Boolean(row.IS_ACTIVE)
+
     return {
       LAYOUT_PRESET_ID: id,
       PRESET_NAME: String(row.PRESET_NAME || ''),
-      PRESET_GRID_WIDTH: Number(row.PRESET_GRID_WIDTH || 20),
-      PRESET_GRID_HEIGHT: Number(row.PRESET_GRID_HEIGHT || 16),
-      IS_DEFAULT: Boolean(row.IS_DEFAULT),
+      PRESET_GRID_WIDTH: Number((row as Record<string, unknown>).PRESET_GRID_WIDTH || 20),
+      PRESET_GRID_HEIGHT: Number((row as Record<string, unknown>).PRESET_GRID_HEIGHT || 16),
+      IS_DEFAULT: isActive,
+      IS_ACTIVE: isActive,
       IS_PROTECTED: Boolean(row.IS_PROTECTED),
       MAX_PAX: maxPax,
+      TABLE_IDS: tableIds,
       CREATED_AT: row.CREATED_AT != null ? String(row.CREATED_AT) : undefined,
       UPDATED_AT: row.UPDATED_AT != null ? String(row.UPDATED_AT) : undefined,
       CREATED_BY: row.CREATED_BY != null ? String(row.CREATED_BY) : null,
@@ -180,24 +208,23 @@ export async function fetchAllLayoutPresets(): Promise<TableLayoutPreset[]> {
 export async function fetchDefaultOrFirstPreset(): Promise<TableLayoutPreset | null> {
   const presets = await fetchAllLayoutPresets()
   if (presets.length === 0) return null
-  const defaultPreset = presets.find((p) => p.IS_DEFAULT)
-  return defaultPreset ?? presets[0]
+  const activePreset = presets.find((p) => p.IS_ACTIVE)
+  return activePreset ?? presets[0]
 }
 
 export async function createLayoutPreset(
   name: string,
   maxPax: number = 50,
-  gridWidth: number = 20,
-  gridHeight: number = 16,
-  isDefault: boolean = false,
+  _gridWidth: number = 20,
+  _gridHeight: number = 16,
+  isActive: boolean = false,
 ): Promise<TableLayoutPreset> {
-  if (isDefault) {
-    // Clear other default flags first
+  if (isActive) {
     try {
       await supabase
         .schema('tables')
         .from('Table_Layout_Presets')
-        .update({ IS_DEFAULT: false })
+        .update({ IS_ACTIVE: false })
         .neq('LAYOUT_PRESET_ID', 0)
     } catch {
       // Ignore
@@ -206,61 +233,46 @@ export async function createLayoutPreset(
 
   const validMaxPax = Math.max(1, Math.round(maxPax))
 
-  // Try inserting with MAX_PAX
-  try {
-    const { data, error } = await supabase
-      .schema('tables')
-      .from('Table_Layout_Presets')
-      .insert({
-        PRESET_NAME: name,
-        MAX_PAX: validMaxPax,
-        PRESET_GRID_WIDTH: gridWidth,
-        PRESET_GRID_HEIGHT: gridHeight,
-        IS_DEFAULT: isDefault,
-        CREATED_AT: new Date().toISOString(),
-        UPDATED_AT: new Date().toISOString(),
-      })
-      .select('*')
-      .single()
-
-    if (!error && data) {
-      const preset = {
-        ...data,
-        MAX_PAX: data.MAX_PAX != null ? Number(data.MAX_PAX) : validMaxPax,
-      }
-      setCachedPresetMaxPax(Number(preset.LAYOUT_PRESET_ID), preset.MAX_PAX)
-      return preset
-    }
-  } catch (err) {
-    console.warn('[tableLayoutService] Notice when inserting preset with MAX_PAX, trying fallback:', err)
-  }
-
-  // Fallback if MAX_PAX column is not yet migrated in database
   const { data, error } = await supabase
     .schema('tables')
     .from('Table_Layout_Presets')
     .insert({
       PRESET_NAME: name,
-      PRESET_GRID_WIDTH: gridWidth,
-      PRESET_GRID_HEIGHT: gridHeight,
-      IS_DEFAULT: isDefault,
+      MAX_PAX: validMaxPax,
+      IS_ACTIVE: isActive,
+      TABLE_IDS: [],
       CREATED_AT: new Date().toISOString(),
       UPDATED_AT: new Date().toISOString(),
     })
     .select('*')
     .single()
 
-  if (error) {
+  if (error || !data) {
     console.error('[tableLayoutService] Error creating preset:', error)
-    throw error
+    throw error ?? new Error('Failed to create preset.')
   }
 
   const presetId = Number(data.LAYOUT_PRESET_ID)
   setCachedPresetMaxPax(presetId, validMaxPax)
-  return {
-    ...data,
+
+  const createdPreset: TableLayoutPreset = {
+    LAYOUT_PRESET_ID: presetId,
+    PRESET_NAME: String(data.PRESET_NAME || name),
+    PRESET_GRID_WIDTH: 20,
+    PRESET_GRID_HEIGHT: 16,
+    IS_DEFAULT: isActive,
+    IS_ACTIVE: isActive,
     MAX_PAX: validMaxPax,
+    TABLE_IDS: [],
+    CREATED_AT: String(data.CREATED_AT),
+    UPDATED_AT: String(data.UPDATED_AT),
   }
+
+  if (isActive) {
+    await populateActiveTablesForPreset(presetId)
+  }
+
+  return createdPreset
 }
 
 export async function updateLayoutPresetMaxPax(presetId: number, maxPax: number): Promise<void> {
@@ -317,52 +329,137 @@ export async function updateLayoutPresetMaxPax(presetId: number, maxPax: number)
   }
 }
 
-export async function setDefaultLayoutPreset(presetId: number): Promise<void> {
-  // 1. Reset other presets to IS_DEFAULT = false
+/**
+ * Synchronize Active_Tables with the selected preset's TABLE_IDS array.
+ * When a preset is selected / active:
+ * - Table IDs in TABLE_IDS populate Active_Tables.
+ * - Tables not in TABLE_IDS that have no active operational orders/guests are pruned.
+ */
+export async function populateActiveTablesForPreset(presetId: number): Promise<void> {
+  const { data: preset, error: pErr } = await supabase
+    .schema('tables')
+    .from('Table_Layout_Presets')
+    .select('LAYOUT_PRESET_ID, TABLE_IDS, IS_ACTIVE')
+    .eq('LAYOUT_PRESET_ID', presetId)
+    .single()
+
+  if (pErr || !preset) {
+    console.error('[tableLayoutService] Preset not found when populating active tables:', pErr)
+    return
+  }
+
+  const targetTableIds: number[] = Array.isArray(preset.TABLE_IDS)
+    ? (preset.TABLE_IDS as unknown[]).map(Number).filter((n) => !isNaN(n))
+    : []
+
+  const targetIdSet = new Set(targetTableIds)
+
+  // 1. Fetch current Active_Tables
+  const { data: currentActive } = await supabase
+    .schema('tables')
+    .from('Active_Tables')
+    .select('*')
+
+  const activeRows = (currentActive ?? []) as Array<Record<string, unknown>>
+  const activeIdSet = new Set(activeRows.map((r) => Number(r.TABLE_ID)))
+
+  // 2. Fetch active orders from Restaurant_Orders to avoid pruning tables in progress
+  let activeOrderTableIds = new Set<number>()
+  try {
+    const { data: activeOrders } = await supabase
+      .from('Restaurant_Orders')
+      .select('TABLE_ID')
+      .in('ORDER_STATUS', ['REQUESTED', 'VERIFIED', 'PREPARING', 'READY', 'SERVED'])
+    if (activeOrders) {
+      activeOrderTableIds = new Set(activeOrders.map((o) => Number(o.TABLE_ID)))
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  // 3. Remove tables in Active_Tables that are not in target layout
+  for (const row of activeRows) {
+    const tId = Number(row.TABLE_ID)
+    if (!targetIdSet.has(tId)) {
+      const hasGuests = Number(row.SEATED_GUEST_COUNT || 0) > 0
+      const hasOrders = activeOrderTableIds.has(tId)
+      const hasReservation = row.RESERVATION_ID != null
+      const isAvailable = row.STATUS === 'AVAILABLE'
+
+      if (isAvailable && !hasGuests && !hasOrders && !hasReservation) {
+        await supabase
+          .schema('tables')
+          .from('Active_Tables')
+          .delete()
+          .eq('TABLE_ID', tId)
+      } else {
+        console.warn(
+          `[tableLayoutService] Table ID ${tId} is active in operations (guests=${hasGuests}, orders=${hasOrders}, reserved=${hasReservation}) but removed from preset. Kept in Active_Tables until settled.`,
+        )
+      }
+    }
+  }
+
+  // 4. Insert newly activated tables that are not yet in Active_Tables
+  const toAddIds = targetTableIds.filter((id) => !activeIdSet.has(id))
+  if (toAddIds.length > 0) {
+    // Get label information from Table_Info
+    const { data: infoRows } = await supabase
+      .schema('tables')
+      .from('Table_Info')
+      .select('TABLE_ID, LABEL_ID')
+      .in('TABLE_ID', toAddIds)
+
+    const labelMap = new Map((infoRows ?? []).map((r) => [Number(r.TABLE_ID), r.LABEL_ID]))
+
+    const rowsToInsert = toAddIds.map((tId) => ({
+      TABLE_ID: tId,
+      STATUS: 'AVAILABLE',
+      SEATED_GUEST_COUNT: 0,
+      BILL_OUT_REQUESTED: false,
+      MERGE_GROUP_ID: null,
+      LABEL_ID: labelMap.get(tId) != null ? Number(labelMap.get(tId)) : null,
+      MERGE_PERSISTENCY: 'TEMPORARY',
+      OCCUPIED_SINCE: null,
+      RESERVATION_ID: null,
+    }))
+
+    const { error: insErr } = await supabase
+      .schema('tables')
+      .from('Active_Tables')
+      .insert(rowsToInsert)
+
+    if (insErr) {
+      console.warn('[tableLayoutService] Error inserting into Active_Tables:', insErr)
+    }
+  }
+}
+
+export async function setActiveLayoutPreset(presetId: number): Promise<void> {
+  // 1. Reset other presets
   try {
     await supabase
       .schema('tables')
       .from('Table_Layout_Presets')
-      .update({ IS_DEFAULT: false })
+      .update({ IS_ACTIVE: false, UPDATED_AT: new Date().toISOString() })
       .neq('LAYOUT_PRESET_ID', presetId)
   } catch (err) {
-    console.warn('[tableLayoutService] Notice when resetting IS_DEFAULT on Table_Layout_Presets:', err)
+    console.warn('[tableLayoutService] Notice resetting IS_ACTIVE on Table_Layout_Presets:', err)
   }
 
-  // 2. Set chosen preset as default
+  // 2. Set target preset as active
   const { error } = await supabase
     .schema('tables')
     .from('Table_Layout_Presets')
-    .update({ IS_DEFAULT: true, UPDATED_AT: new Date().toISOString() })
+    .update({ IS_ACTIVE: true, UPDATED_AT: new Date().toISOString() })
     .eq('LAYOUT_PRESET_ID', presetId)
 
   if (error) {
-    console.warn('[tableLayoutService] Error setting default layout preset:', error)
+    console.warn('[tableLayoutService] Error setting active layout preset:', error)
   }
 
-  // 3. Synchronize Restaurant_Tables with this preset's tables
-  try {
-    const [layoutTables, liveTables] = await Promise.all([
-      fetchPresetLayout(presetId),
-      fetchLiveRestaurantTables(),
-    ])
-    if (layoutTables.length > 0) {
-      const capacityMap = new Map<number, number>()
-      for (const t of layoutTables) {
-        if (t.TABLE_CAPACITY != null) {
-          capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY)
-        } else {
-          const r = liveTables.find((lt) => lt.TABLE_NUM === t.TABLE_NUM)
-          if (r) {
-            capacityMap.set(t.TABLE_NUM, r.GUEST_CAPACITY)
-          }
-        }
-      }
-      await savePresetLayout(presetId, layoutTables, capacityMap)
-    }
-  } catch (err) {
-    console.warn('[tableLayoutService] Error applying layout tables on setDefaultLayoutPreset:', err)
-  }
+  // 3. Populate Active_Tables with this preset's TABLE_IDS
+  await populateActiveTablesForPreset(presetId)
 
   // 4. Dispatch events & broadcast across tabs and devices
   if (typeof window !== 'undefined') {
@@ -392,6 +489,9 @@ export async function setDefaultLayoutPreset(presetId: number): Promise<void> {
   }
 }
 
+/** Backward compatibility alias for setActiveLayoutPreset */
+export const setDefaultLayoutPreset = setActiveLayoutPreset
+
 export async function updateLayoutPresetName(presetId: number, name: string): Promise<void> {
   const { error } = await supabase
     .schema('tables')
@@ -405,7 +505,7 @@ export async function updateLayoutPresetName(presetId: number, name: string): Pr
 }
 
 export async function deleteLayoutPreset(presetId: number): Promise<void> {
-  // Block deletion of protected presets (Default Layout)
+  // Block deletion of protected presets
   try {
     const { data: preset } = await supabase
       .schema('tables')
@@ -415,22 +515,10 @@ export async function deleteLayoutPreset(presetId: number): Promise<void> {
       .maybeSingle()
 
     if (preset && Boolean(preset.IS_PROTECTED)) {
-      throw new Error('Cannot delete the protected Default Layout. Use admin authorization to modify it instead.')
+      throw new Error('Cannot delete the protected Default Layout.')
     }
   } catch (err) {
     if (err instanceof Error && err.message.includes('Cannot delete')) throw err
-    // If IS_PROTECTED column doesn't exist yet, continue with deletion
-  }
-
-  // First delete associated layout info
-  try {
-    await supabase
-      .schema('tables')
-      .from('Table_Layout_Info')
-      .delete()
-      .eq('LAYOUT_PRESET_ID', presetId)
-  } catch {
-    // Ignore
   }
 
   const { error } = await supabase
@@ -445,40 +533,15 @@ export async function deleteLayoutPreset(presetId: number): Promise<void> {
 }
 
 export async function updateLayoutPresetDimensions(
-  presetId: number,
-  gridWidth: number,
-  gridHeight: number,
+  _presetId: number,
+  _gridWidth: number,
+  _gridHeight: number,
 ): Promise<void> {
-  const { error } = await supabase
-    .schema('tables')
-    .from('Table_Layout_Presets')
-    .update({
-      PRESET_GRID_WIDTH: gridWidth,
-      PRESET_GRID_HEIGHT: gridHeight,
-      UPDATED_AT: new Date().toISOString(),
-    })
-    .eq('LAYOUT_PRESET_ID', presetId)
-
-  if (error) {
-    console.error('[tableLayoutService] Error updating preset dimensions:', error)
-  }
+  // Schema no longer stores grid dimensions in presets table
 }
 
 export async function syncAllLayoutPresetsToDefaultGridSize(): Promise<void> {
-  const { error } = await supabase
-    .schema('tables')
-    .from('Table_Layout_Presets')
-    .update({
-      PRESET_GRID_WIDTH: DEFAULT_GRID_WIDTH,
-      PRESET_GRID_HEIGHT: DEFAULT_GRID_HEIGHT,
-      UPDATED_AT: new Date().toISOString(),
-    })
-    .neq('LAYOUT_PRESET_ID', 0)
-
-  if (error) {
-    console.error('[tableLayoutService] Error syncing preset grid sizes to default:', error)
-    throw error
-  }
+  // No-op for new schema
 }
 
 export async function updateTableCapacity(
@@ -487,12 +550,12 @@ export async function updateTableCapacity(
 ): Promise<void> {
   const { error } = await supabase
     .schema('tables')
-    .from('Restaurant_Tables')
-    .update({ GUEST_CAPACITY: capacity })
+    .from('Table_Info')
+    .update({ SEAT_CAPACITY: capacity })
     .eq('TABLE_NUM', tableNum)
 
   if (error) {
-    console.error('[tableLayoutService] Error updating table capacity:', error)
+    console.error('[tableLayoutService] Error updating table capacity in Table_Info:', error)
     throw error
   }
 }
@@ -501,14 +564,33 @@ export async function updateTableStatus(
   tableNum: number,
   status: RestaurantTableData['STATUS'],
 ): Promise<void> {
+  // Find table_id from Table_Info
+  const { data: tInfo } = await supabase
+    .schema('tables')
+    .from('Table_Info')
+    .select('TABLE_ID')
+    .eq('TABLE_NUM', tableNum)
+    .maybeSingle()
+
+  const tableId = tInfo?.TABLE_ID ?? tableNum
+
+  const payload: Record<string, unknown> = { STATUS: status }
+  if (status === 'OCCUPIED') {
+    payload.OCCUPIED_SINCE = new Date().toISOString()
+  } else if (status === 'AVAILABLE') {
+    payload.OCCUPIED_SINCE = null
+    payload.SEATED_GUEST_COUNT = 0
+    payload.BILL_OUT_REQUESTED = false
+  }
+
   const { error } = await supabase
     .schema('tables')
-    .from('Restaurant_Tables')
-    .update({ STATUS: status })
-    .eq('TABLE_NUM', tableNum)
+    .from('Active_Tables')
+    .update(payload)
+    .eq('TABLE_ID', tableId)
 
   if (error) {
-    console.error('[tableLayoutService] Error updating table status:', error)
+    console.error('[tableLayoutService] Error updating table status in Active_Tables:', error)
     throw error
   }
 }
@@ -517,33 +599,53 @@ export async function updateTableGuestCount(
   tableNum: number,
   guestCount: number,
 ): Promise<void> {
+  // Find table_id from Table_Info
+  const { data: tInfo } = await supabase
+    .schema('tables')
+    .from('Table_Info')
+    .select('TABLE_ID')
+    .eq('TABLE_NUM', tableNum)
+    .maybeSingle()
+
+  const tableId = tInfo?.TABLE_ID ?? tableNum
+
   const { data: current } = await supabase
     .schema('tables')
-    .from('Restaurant_Tables')
-    .select('TABLE_ID, TABLE_NUM, MERGE_GROUP_ID')
-    .eq('TABLE_NUM', tableNum)
+    .from('Active_Tables')
+    .select('TABLE_ID, MERGE_GROUP_ID, STATUS')
+    .eq('TABLE_ID', tableId)
     .maybeSingle()
 
   if (current) {
     const anchorId = current.MERGE_GROUP_ID ?? current.TABLE_ID
     const { data: members } = await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Active_Tables')
       .select('TABLE_ID')
       .or(`TABLE_ID.eq.${anchorId},MERGE_GROUP_ID.eq.${anchorId}`)
 
-    const targetIds = (members && members.length > 0)
+    const targetIds = members && members.length > 0
       ? members.map((m) => Number(m.TABLE_ID))
       : [current.TABLE_ID]
 
+    const updatePayload: Record<string, unknown> = { SEATED_GUEST_COUNT: guestCount }
+    if (guestCount > 0 && (current.STATUS === 'AVAILABLE' || current.STATUS === 'RESERVED')) {
+      updatePayload.STATUS = 'OCCUPIED'
+      updatePayload.OCCUPIED_SINCE = new Date().toISOString()
+    } else if (guestCount === 0 && current.STATUS !== 'AVAILABLE') {
+      updatePayload.STATUS = 'AVAILABLE'
+      updatePayload.OCCUPIED_SINCE = null
+      updatePayload.BILL_OUT_REQUESTED = false
+    }
+
     const { error } = await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
-      .update({ CURRENT_GUEST_COUNT: guestCount })
+      .from('Active_Tables')
+      .update(updatePayload)
       .in('TABLE_ID', targetIds)
 
     if (error) {
-      console.error('[tableLayoutService] Error updating table guest count:', error)
+      console.error('[tableLayoutService] Error updating table guest count in Active_Tables:', error)
       throw error
     }
     return
@@ -551,76 +653,149 @@ export async function updateTableGuestCount(
 
   const { error } = await supabase
     .schema('tables')
-    .from('Restaurant_Tables')
-    .update({ CURRENT_GUEST_COUNT: guestCount })
-    .eq('TABLE_NUM', tableNum)
+    .from('Active_Tables')
+    .update({ SEATED_GUEST_COUNT: guestCount })
+    .eq('TABLE_ID', tableId)
 
   if (error) {
-    console.error('[tableLayoutService] Error updating table guest count:', error)
+    console.error('[tableLayoutService] Error updating table guest count in Active_Tables:', error)
     throw error
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Layout Info & Restaurant Tables Operations
+// Layout Info & Active Tables Operations
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function fetchPresetLayout(presetId: number): Promise<TableLayoutInfo[]> {
-  const { data, error } = await supabase
+  // 1. Fetch preset to get TABLE_IDS
+  const { data: preset, error: pErr } = await supabase
     .schema('tables')
-    .from('Table_Layout_Info')
-    .select('*')
+    .from('Table_Layout_Presets')
+    .select('LAYOUT_PRESET_ID, TABLE_IDS')
     .eq('LAYOUT_PRESET_ID', presetId)
-    .order('TABLE_NUM', { ascending: true })
+    .maybeSingle()
 
-  if (error) {
-    console.error('[tableLayoutService] Error fetching layout info:', error)
+  if (pErr || !preset) {
+    console.error('[tableLayoutService] Error fetching preset for layout:', pErr)
     return []
   }
 
-  const rawTables: TableLayoutInfo[] = (data ?? []).map((row: Record<string, unknown>) => ({
-    INFO_ID: String(row.INFO_ID),
-    LAYOUT_PRESET_ID: Number(row.LAYOUT_PRESET_ID),
-    TABLE_NUM: Number(row.TABLE_NUM),
-    MERGE_GROUP_ID: row.MERGE_GROUP_ID != null ? Number(row.MERGE_GROUP_ID) : null,
-    TABLE_TYPE: Number(row.TABLE_TYPE) as TableType,
-    X_POS: Number(row.X_POS),
-    Y_POS: Number(row.Y_POS),
-    TABLE_CAPACITY: row.TABLE_CAPACITY != null ? Number(row.TABLE_CAPACITY) : null,
-    LABEL_ID: row.LABEL_ID != null ? Number(row.LABEL_ID) : null,
-  }))
+  const tableIds: number[] = Array.isArray(preset.TABLE_IDS)
+    ? (preset.TABLE_IDS as unknown[]).map(Number).filter((n) => !isNaN(n))
+    : []
+
+  if (tableIds.length === 0) {
+    return []
+  }
+
+  // 2. Fetch corresponding Table_Info rows
+  const [{ data: infoRows, error: infoErr }, { data: activeRows }] = await Promise.all([
+    supabase
+      .schema('tables')
+      .from('Table_Info')
+      .select('*')
+      .in('TABLE_ID', tableIds)
+      .order('TABLE_NUM', { ascending: true }),
+    supabase
+      .schema('tables')
+      .from('Active_Tables')
+      .select('TABLE_ID, MERGE_GROUP_ID, LABEL_ID')
+      .in('TABLE_ID', tableIds),
+  ])
+
+  if (infoErr) {
+    console.error('[tableLayoutService] Error fetching Table_Info:', infoErr)
+    return []
+  }
+
+  const activeMap = new Map((activeRows ?? []).map((a) => [Number(a.TABLE_ID), a]))
+
+  const rawTables: TableLayoutInfo[] = (infoRows ?? []).map((row: Record<string, unknown>) => {
+    const tableId = Number(row.TABLE_ID)
+    const active = activeMap.get(tableId)
+    const capacity = row.SEAT_CAPACITY != null ? Number(row.SEAT_CAPACITY) : 4
+
+    return {
+      INFO_ID: String(tableId),
+      TABLE_ID: tableId,
+      LAYOUT_PRESET_ID: presetId,
+      TABLE_NUM: Number(row.TABLE_NUM),
+      MERGE_GROUP_ID: active?.MERGE_GROUP_ID != null ? Number(active.MERGE_GROUP_ID) : null,
+      TABLE_TYPE: (Number(row.TABLE_TYPE) || 1) as TableType,
+      X_POS: Number(row.X_POS ?? 0),
+      Y_POS: Number(row.Y_POS ?? 0),
+      TABLE_CAPACITY: capacity,
+      SEAT_CAPACITY: capacity,
+      LABEL_ID: active?.LABEL_ID != null ? Number(active.LABEL_ID) : (row.LABEL_ID != null ? Number(row.LABEL_ID) : null),
+    }
+  })
 
   return sequentializeLayoutTables(rawTables)
 }
 
 export async function fetchLiveRestaurantTables(): Promise<RestaurantTableData[]> {
-  const { data, error } = await supabase
-    .schema('tables')
-    .from('Restaurant_Tables')
-    .select('*')
-    .order('TABLE_NUM', { ascending: true })
+  const [{ data: activeData, error: activeErr }, { data: allInfo }, { data: reservations }] = await Promise.all([
+    supabase
+      .schema('tables')
+      .from('Active_Tables')
+      .select('*'),
+    supabase
+      .schema('tables')
+      .from('Table_Info')
+      .select('*'),
+    supabase
+      .schema('tables')
+      .from('Table_Reservations')
+      .select('*'),
+  ])
 
-  if (error) {
-    console.error('[tableLayoutService] Error fetching restaurant tables:', error)
+  if (activeErr) {
+    console.error('[tableLayoutService] Error fetching Active_Tables:', activeErr)
     return []
   }
 
-  return (data ?? []).map((row: Record<string, unknown>) => ({
-    TABLE_ID: Number(row.TABLE_ID),
-    TABLE_NUM: Number(row.TABLE_NUM),
-    STATUS: (row.STATUS || 'AVAILABLE') as RestaurantTableData['STATUS'],
-    GUEST_CAPACITY: Number(row.GUEST_CAPACITY || 0),
-    CURRENT_GUEST_COUNT: Number(row.CURRENT_GUEST_COUNT || 0),
-    RESERVED_SINCE: row.RESERVED_SINCE ? String(row.RESERVED_SINCE) : null,
-    BILL_OUT_REQUESTED: Boolean(row.BILL_OUT_REQUESTED),
-    MERGE_GROUP_ID: row.MERGE_GROUP_ID != null ? Number(row.MERGE_GROUP_ID) : null,
-    LABEL_ID: row.LABEL_ID != null ? Number(row.LABEL_ID) : null,
-  }))
+  const infoMap = new Map((allInfo ?? []).map((i) => [Number(i.TABLE_ID), i]))
+  const resMap = new Map((reservations ?? []).map((r) => [Number(r.TABLE_ID), r]))
+
+  const result: RestaurantTableData[] = (activeData ?? []).map((row: Record<string, unknown>) => {
+    const tableId = Number(row.TABLE_ID)
+    const info = infoMap.get(tableId)
+    const res = row.RESERVATION_ID != null
+      ? (reservations ?? []).find((r) => Number(r.RESERVATION_ID) === Number(row.RESERVATION_ID))
+      : resMap.get(tableId)
+
+    const capacity = info?.SEAT_CAPACITY != null ? Number(info.SEAT_CAPACITY) : 4
+    const tableNum = info?.TABLE_NUM != null ? Number(info.TABLE_NUM) : tableId
+
+    return {
+      TABLE_ID: tableId,
+      TABLE_NUM: tableNum,
+      STATUS: (row.STATUS || 'AVAILABLE') as RestaurantTableData['STATUS'],
+      GUEST_CAPACITY: capacity,
+      CURRENT_GUEST_COUNT: Number(row.SEATED_GUEST_COUNT || 0),
+      BILL_OUT_REQUESTED: Boolean(row.BILL_OUT_REQUESTED),
+      MERGE_GROUP_ID: row.MERGE_GROUP_ID != null ? Number(row.MERGE_GROUP_ID) : null,
+      MERGE_PERSISTENCY: (row.MERGE_PERSISTENCY as 'TEMPORARY' | 'CONTINOUOUS') || 'TEMPORARY',
+      OCCUPIED_SINCE: row.OCCUPIED_SINCE ? String(row.OCCUPIED_SINCE) : null,
+      RESERVATION_ID: row.RESERVATION_ID != null ? Number(row.RESERVATION_ID) : null,
+      LABEL_ID: row.LABEL_ID != null ? Number(row.LABEL_ID) : (info?.LABEL_ID != null ? Number(info.LABEL_ID) : null),
+      // Reservation details joined from Table_Reservations
+      RESERVED_SINCE: res?.RESERVED_SINCE ? String(res.RESERVED_SINCE) : (row.STATUS === 'RESERVED' && row.OCCUPIED_SINCE ? String(row.OCCUPIED_SINCE) : null),
+      RESERVATION_NAME: res?.APPOINTED_NAME ? String(res.APPOINTED_NAME) : null,
+      RESERVATION_PAX: res?.EXPECTED_GUEST_COUNT != null ? Number(res.EXPECTED_GUEST_COUNT) : null,
+      RESERVATION_NOTES: res?.RESERVATION_NOTE ? String(res.RESERVATION_NOTE) : null,
+      RESERVATION_TIME_LIMIT: res?.TIME_LIMIT ? String(res.TIME_LIMIT) : null,
+    }
+  })
+
+  return result.sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
 }
 
 /**
- * Saves all layout tables for a preset into Table_Layout_Info
- * and synchronizes corresponding rows in Restaurant_Tables (tables schema).
+ * Saves all layout tables for a preset into Table_Info,
+ * records the TABLE_IDS array in Table_Layout_Presets,
+ * and if the preset is currently active, synchronizes Active_Tables.
  */
 export async function savePresetLayout(
   presetId: number,
@@ -630,287 +805,125 @@ export async function savePresetLayout(
 ): Promise<void> {
   const sanitizedTables = sequentializeLayoutTables(tables)
 
-  // 1. Clear existing layout info for this preset
-  try {
-    await supabase
-      .schema('tables')
-      .from('Table_Layout_Info')
-      .delete()
-      .eq('LAYOUT_PRESET_ID', presetId)
-  } catch {
-    // Ignore
-  }
+  // 1. Fetch existing Table_Info to match existing TABLE_IDs or determine next TABLE_ID
+  const { data: existingAllInfo } = await supabase
+    .schema('tables')
+    .from('Table_Info')
+    .select('TABLE_ID, TABLE_NUM')
 
-  // 2. Insert new layout info if any
-  if (sanitizedTables.length > 0) {
-    const rowsToInsert = sanitizedTables.map((t, idx) => ({
-      INFO_ID: t.INFO_ID || `layout-info-${presetId}-${t.TABLE_NUM}-${Date.now()}-${idx}`,
-      LAYOUT_PRESET_ID: presetId,
+  const existingMap = new Map((existingAllInfo ?? []).map((r) => [Number(r.TABLE_NUM), Number(r.TABLE_ID)]))
+  let highestTableId = (existingAllInfo ?? []).reduce(
+    (max, r) => Math.max(max, Number(r.TABLE_ID || 0)),
+    0,
+  )
+
+  const rowsToUpsert: Array<{
+    TABLE_ID: number
+    TABLE_NUM: number
+    TABLE_TYPE: number
+    X_POS: number
+    Y_POS: number
+    SEAT_CAPACITY: number
+    LABEL_ID: number | null
+  }> = []
+
+  const assignedTableIds: number[] = []
+
+  for (const t of sanitizedTables) {
+    let tableId = t.TABLE_ID
+    if (!tableId || tableId <= 0) {
+      tableId = existingMap.get(t.TABLE_NUM) || ++highestTableId
+    }
+
+    const capacity =
+      t.SEAT_CAPACITY ??
+      t.TABLE_CAPACITY ??
+      tableCapacities?.get(t.TABLE_NUM) ??
+      TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ??
+      4
+
+    rowsToUpsert.push({
+      TABLE_ID: tableId,
       TABLE_NUM: t.TABLE_NUM,
-      MERGE_GROUP_ID: t.MERGE_GROUP_ID ?? null,
       TABLE_TYPE: t.TABLE_TYPE,
       X_POS: t.X_POS,
       Y_POS: t.Y_POS,
-      TABLE_CAPACITY: t.TABLE_CAPACITY ?? tableCapacities?.get(t.TABLE_NUM) ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4,
+      SEAT_CAPACITY: Math.max(1, capacity),
       LABEL_ID: t.LABEL_ID != null ? Number(t.LABEL_ID) : null,
-    }))
+    })
 
-    const { error: insError } = await supabase
+    assignedTableIds.push(tableId)
+  }
+
+  // 2. Upsert into Table_Info
+  if (rowsToUpsert.length > 0) {
+    const { error: upsertErr } = await supabase
       .schema('tables')
-      .from('Table_Layout_Info')
-      .insert(rowsToInsert)
+      .from('Table_Info')
+      .upsert(rowsToUpsert, { onConflict: 'TABLE_ID' })
 
-    if (insError) {
-      console.warn('[tableLayoutService] Notice when inserting Table_Layout_Info with TABLE_CAPACITY, trying fallback:', insError)
-      // Fallback without TABLE_CAPACITY if column does not exist yet
-      const fallbackRows = rowsToInsert.map((row) => {
-        const copy: Record<string, unknown> = { ...row }
-        delete copy.TABLE_CAPACITY
-        return copy
-      })
-      await supabase
-        .schema('tables')
-        .from('Table_Layout_Info')
-        .insert(fallbackRows)
+    if (upsertErr) {
+      console.error('[tableLayoutService] Error upserting into Table_Info:', upsertErr)
+      throw upsertErr
     }
   }
 
-  // 3. Update preset timestamp and MAX_PAX if provided
-  try {
-    const updatePayload: Record<string, unknown> = { UPDATED_AT: new Date().toISOString() }
-    if (maxPax != null && maxPax > 0) {
-      updatePayload.MAX_PAX = Math.round(maxPax)
-    }
-    await supabase
-      .schema('tables')
-      .from('Table_Layout_Presets')
-      .update(updatePayload)
-      .eq('LAYOUT_PRESET_ID', presetId)
-  } catch {
-    // Ignore
+  // 3. Update Table_Layout_Presets with TABLE_IDS array and MAX_PAX
+  const updatePresetPayload: Record<string, unknown> = {
+    TABLE_IDS: assignedTableIds,
+    UPDATED_AT: new Date().toISOString(),
+  }
+  if (maxPax != null && maxPax > 0) {
+    updatePresetPayload.MAX_PAX = Math.round(maxPax)
   }
 
-  // 4. Synchronize Restaurant_Tables in tables schema so Cashier & Service Interface reflect active tables
-  try {
-    const existingRestaurantTables = await fetchLiveRestaurantTables()
-    
-    // Group by TABLE_NUM to find and remove any duplicates
-    const byTableNum = new Map<number, RestaurantTableData[]>()
-    for (const rt of existingRestaurantTables) {
-      const list = byTableNum.get(rt.TABLE_NUM) || []
-      list.push(rt)
-      byTableNum.set(rt.TABLE_NUM, list)
-    }
+  const { error: presetUpdErr } = await supabase
+    .schema('tables')
+    .from('Table_Layout_Presets')
+    .update(updatePresetPayload)
+    .eq('LAYOUT_PRESET_ID', presetId)
 
-    // Clean duplicate rows in DB
-    for (const [tNum, rows] of byTableNum.entries()) {
-      if (rows.length > 1) {
-        for (const duplicateRow of rows.slice(1)) {
-          try {
-            await supabase.schema('tables').from('Restaurant_Tables').delete().eq('TABLE_ID', duplicateRow.TABLE_ID)
-          } catch {
-            // Ignore
-          }
-        }
-        byTableNum.set(tNum, [rows[0]])
-      }
-    }
+  if (presetUpdErr) {
+    console.error('[tableLayoutService] Error updating Table_Layout_Presets TABLE_IDS:', presetUpdErr)
+  }
 
-    const existingByNum = new Map<number, RestaurantTableData>()
-    for (const [tNum, rows] of byTableNum.entries()) {
-      existingByNum.set(tNum, rows[0])
-    }
-    const newTableNums = new Set(sanitizedTables.map((t) => t.TABLE_NUM))
+  // 4. If this preset is active, synchronize Active_Tables
+  const { data: presetData } = await supabase
+    .schema('tables')
+    .from('Table_Layout_Presets')
+    .select('IS_ACTIVE')
+    .eq('LAYOUT_PRESET_ID', presetId)
+    .single()
 
-    // Determine effective venue cap
-    let effectiveVenueCap = maxPax
-    if (!effectiveVenueCap || effectiveVenueCap <= 0) {
-      try {
-        const { data: presetData } = await supabase
-          .schema('tables')
-          .from('Table_Layout_Presets')
-          .select('MAX_PAX')
-          .eq('LAYOUT_PRESET_ID', presetId)
-          .single()
-        if (presetData?.MAX_PAX) {
-          effectiveVenueCap = Number(presetData.MAX_PAX)
-        }
-      } catch {
-        // Ignore
-      }
-    }
-    const VENUE_CAP = effectiveVenueCap && effectiveVenueCap > 0 ? effectiveVenueCap : 50
+  if (presetData && Boolean(presetData.IS_ACTIVE)) {
+    await populateActiveTablesForPreset(presetId)
 
-    // A. Pass 1: Calculate target capacities & clamp strictly to dynamic VENUE_CAP
-    const targetCapacities = new Map<number, number>()
+    // Synchronize merge groups if specified on layout tables
+    const tableNumToIdMap = new Map(rowsToUpsert.map((r) => [r.TABLE_NUM, r.TABLE_ID]))
     for (const t of sanitizedTables) {
-      const typeConfig = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
-      const existing = existingByNum.get(t.TABLE_NUM)
-      const cap = t.TABLE_CAPACITY ?? tableCapacities?.get(t.TABLE_NUM) ?? existing?.GUEST_CAPACITY ?? typeConfig.defaultCapacity
-      targetCapacities.set(t.TABLE_NUM, Math.max(1, cap))
-    }
-
-    // Enforce max venue capacity limit across layout
-    let totalCap = Array.from(targetCapacities.values()).reduce((sum, c) => sum + c, 0)
-    if (totalCap > VENUE_CAP) {
-      const tableNums = Array.from(targetCapacities.keys())
-      for (let i = tableNums.length - 1; i >= 0 && totalCap > VENUE_CAP; i--) {
-        const num = tableNums[i]
-        const currentCap = targetCapacities.get(num)!
-        const canReduce = currentCap - 1
-        const excess = totalCap - VENUE_CAP
-        const reduction = Math.min(excess, canReduce)
-        if (reduction > 0) {
-          targetCapacities.set(num, currentCap - reduction)
-          totalCap -= reduction
-        }
-      }
-    }
-
-    // Upsert / update active tables (capacities & layout coordinates)
-    for (const t of sanitizedTables) {
-      const capacity = targetCapacities.get(t.TABLE_NUM) ?? 4
-      const existing = existingByNum.get(t.TABLE_NUM)
-
-      if (existing) {
-        const { error: updErr } = await supabase
-          .schema('tables')
-          .from('Restaurant_Tables')
-          .update({
-            GUEST_CAPACITY: capacity,
-          })
-          .eq('TABLE_ID', existing.TABLE_ID)
-
-        if (updErr) {
-          console.warn('[tableLayoutService] Error updating table capacity:', existing.TABLE_ID, updErr)
-        }
-      } else {
-        const { error: insErr } = await supabase
-          .schema('tables')
-          .from('Restaurant_Tables')
-          .insert({
-            TABLE_NUM: t.TABLE_NUM,
-            STATUS: 'AVAILABLE',
-            GUEST_CAPACITY: capacity,
-            CURRENT_GUEST_COUNT: 0,
-            BILL_OUT_REQUESTED: false,
-            MERGE_GROUP_ID: null,
-          })
-
-        if (insErr) {
-          console.warn('[tableLayoutService] Error inserting table:', t.TABLE_NUM, insErr)
-        }
-      }
-    }
-
-    // B. Pass 2: Fetch latest live tables to obtain verified TABLE_IDs and persist MERGE_GROUP_ID
-    const updatedLiveTables = await fetchLiveRestaurantTables()
-    const liveByNum = new Map(updatedLiveTables.map((t) => [t.TABLE_NUM, t]))
-
-    for (const t of sanitizedTables) {
-      const liveCurrent = liveByNum.get(t.TABLE_NUM)
-      if (!liveCurrent) continue
+      const liveId = tableNumToIdMap.get(t.TABLE_NUM)
+      if (!liveId) continue
 
       let targetMergeId: number | null = null
       if (t.MERGE_GROUP_ID != null) {
-        const anchor = liveByNum.get(t.MERGE_GROUP_ID)
-        // Secondary tables reference the primary anchor's TABLE_ID.
-        // Primary anchor table sets MERGE_GROUP_ID to null (per migration 007 conventions)
-        if (anchor && anchor.TABLE_NUM !== t.TABLE_NUM) {
-          targetMergeId = anchor.TABLE_ID
-        } else {
-          targetMergeId = null
+        const anchorId = tableNumToIdMap.get(t.MERGE_GROUP_ID) ?? t.MERGE_GROUP_ID
+        if (anchorId !== liveId) {
+          targetMergeId = anchorId
         }
       }
 
-      const { error: mergeErr } = await supabase
+      await supabase
         .schema('tables')
-        .from('Restaurant_Tables')
-        .update({
-          MERGE_GROUP_ID: targetMergeId,
-        })
-        .eq('TABLE_ID', liveCurrent.TABLE_ID)
-
-      if (mergeErr) {
-        console.warn('[tableLayoutService] Error updating MERGE_GROUP_ID for table:', liveCurrent.TABLE_ID, mergeErr)
-      }
+        .from('Active_Tables')
+        .update({ MERGE_GROUP_ID: targetMergeId })
+        .eq('TABLE_ID', liveId)
     }
+  }
 
-    // C. Clean up removed tables that are not in the layout, protecting tables with active reservations or orders
-    let reservedTableIds = new Set<number>()
-    try {
-      const { data: reservations } = await supabase
-        .schema('tables')
-        .from('Table_Reservations')
-        .select('TABLE_ID')
-        .in('STATUS', ['CONFIRMED', 'PENDING'])
-      reservedTableIds = new Set((reservations ?? []).map((r: Record<string, unknown>) => Number(r.TABLE_ID)))
-    } catch {
-      // Ignore
-    }
-
-    let activeOrderTableNums = new Set<number>()
-    try {
-      const { data: activeOrders } = await supabase
-        .from('Orders')
-        .select('TABLE_NUM, ORDER_STATUS')
-        .in('ORDER_STATUS', ['PENDING', 'PREPARING', 'READY', 'SERVED'])
-      if (activeOrders) {
-        activeOrderTableNums = new Set(
-          activeOrders
-            .map((o: Record<string, unknown>) => (o.TABLE_NUM != null ? Number(o.TABLE_NUM) : null))
-            .filter((n: number | null): n is number => n !== null && !isNaN(n)),
-        )
-      }
-    } catch {
-      // Ignore
-    }
-
-    for (const existing of updatedLiveTables) {
-      const isReferencedInLayout = newTableNums.has(existing.TABLE_NUM)
-      const isReserved = reservedTableIds.has(existing.TABLE_ID)
-      const hasActiveGuests = existing.CURRENT_GUEST_COUNT > 0
-      const hasActiveOrders = activeOrderTableNums.has(existing.TABLE_NUM)
-      const isAvailable = existing.STATUS === 'AVAILABLE'
-
-      if (!isReferencedInLayout) {
-        if (isAvailable && !hasActiveGuests && !isReserved && !hasActiveOrders) {
-          try {
-            await supabase
-              .schema('tables')
-              .from('Restaurant_Tables')
-              .delete()
-              .eq('TABLE_ID', existing.TABLE_ID)
-          } catch {
-            // Ignore
-          }
-        } else {
-          console.warn(
-            `[tableLayoutService] Table #${existing.TABLE_NUM} has active operational state (guests=${hasActiveGuests}, reserved=${isReserved}, orders=${hasActiveOrders}) but is not in target layout. Retained for manual resolution.`,
-          )
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('monolith-table-conflict', {
-                detail: {
-                  tableNum: existing.TABLE_NUM,
-                  tableId: existing.TABLE_ID,
-                  hasActiveOrders,
-                  hasActiveGuests,
-                  isReserved,
-                },
-              }),
-            )
-          }
-        }
-      }
-    }
-
-    // D. Dispatch broadcast event for realtime inter-interface sync
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('monolith-order-update', { detail: { type: 'tables_sync', presetId } }))
-    }
-  } catch (err) {
-    console.warn('[tableLayoutService] Notice when syncing Restaurant_Tables:', err)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('monolith-order-update', { detail: { type: 'tables_sync', presetId } }),
+    )
   }
 }
 
@@ -935,7 +948,7 @@ export interface TableSetupBreakdown {
 }
 
 export function computeTableSetupBreakdown(
-  tables: Array<{ TABLE_TYPE?: number; TABLE_CAPACITY?: number | null }>,
+  tables: Array<{ TABLE_TYPE?: number; TABLE_CAPACITY?: number | null; SEAT_CAPACITY?: number | null }>,
   presetName?: string,
   presetId?: number | null,
 ): TableSetupBreakdown {
@@ -945,7 +958,7 @@ export function computeTableSetupBreakdown(
   for (const t of tables) {
     const typeNum = Number(t.TABLE_TYPE || 1) as TableType
     const cfg = TABLE_TYPES[typeNum] || TABLE_TYPES[1]
-    const cap = t.TABLE_CAPACITY ?? cfg.defaultCapacity ?? 4
+    const cap = t.SEAT_CAPACITY ?? t.TABLE_CAPACITY ?? cfg.defaultCapacity ?? 4
     totalSeats += cap
 
     const entry = map.get(typeNum) || { count: 0, totalSeats: 0 }
@@ -977,10 +990,6 @@ export function computeTableSetupBreakdown(
   }
 }
 
-/**
- * Fetch the current operational tables setup with breakdown per table type.
- * Uses the default/active layout preset or live restaurant tables.
- */
 export async function fetchCurrentTableSetup(): Promise<TableSetupBreakdown> {
   try {
     const presets = await fetchAllLayoutPresets()
@@ -994,7 +1003,7 @@ export async function fetchCurrentTableSetup(): Promise<TableSetupBreakdown> {
     }
 
     if (!activePreset) {
-      activePreset = presets.find((p) => p.IS_DEFAULT) || presets[0] || null
+      activePreset = presets.find((p) => p.IS_ACTIVE) || presets[0] || null
     }
 
     if (activePreset) {
@@ -1008,51 +1017,38 @@ export async function fetchCurrentTableSetup(): Promise<TableSetupBreakdown> {
       }
     }
   } catch (err) {
-    console.warn('[tableLayoutService] Could not load default layout preset:', err)
+    console.warn('[tableLayoutService] Could not load active layout preset:', err)
   }
 
-  // Fallback to Table_Layout_Info directly
+  // Fallback to Table_Info
   try {
     const { data: infoRows } = await supabase
       .schema('tables')
-      .from('Table_Layout_Info')
-      .select('TABLE_TYPE, TABLE_CAPACITY')
+      .from('Table_Info')
+      .select('TABLE_TYPE, SEAT_CAPACITY')
       .limit(100)
 
     if (infoRows && infoRows.length > 0) {
       return computeTableSetupBreakdown(
         infoRows.map((r) => ({
           TABLE_TYPE: Number(r.TABLE_TYPE) as TableType,
-          TABLE_CAPACITY: r.TABLE_CAPACITY != null ? Number(r.TABLE_CAPACITY) : 4,
+          SEAT_CAPACITY: r.SEAT_CAPACITY != null ? Number(r.SEAT_CAPACITY) : 4,
         })),
         'Active Setup',
         null,
       )
     }
   } catch (err) {
-    console.warn('[tableLayoutService] Could not query Table_Layout_Info fallback:', err)
+    console.warn('[tableLayoutService] Could not query Table_Info fallback:', err)
   }
 
-  // Fallback to live restaurant tables
-  try {
-    const liveTables = await fetchLiveRestaurantTables()
-    const mapped = liveTables.map((t) => ({
-      TABLE_TYPE: 1 as TableType,
-      TABLE_CAPACITY: t.GUEST_CAPACITY || 4,
-    }))
-    return computeTableSetupBreakdown(mapped, 'Default Setup', null)
-  } catch {
-    return {
-      totalTables: 0,
-      totalSeats: 0,
-      byType: [],
-    }
+  return {
+    totalTables: 0,
+    totalSeats: 0,
+    byType: [],
   }
 }
 
-/**
- * Fetch table setup breakdown for a specific preset ID.
- */
 export async function fetchPresetTableSetup(
   presetId: number,
   presetName?: string,

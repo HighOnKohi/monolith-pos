@@ -251,7 +251,7 @@ export default function DispatcherInterface() {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
+        { event: '*', schema: 'tables', table: 'Active_Tables' },
         debouncedLoadOrders,
       )
       .on(

@@ -1,4 +1,4 @@
-import React from 'react'
+import { useLocation } from 'react-router-dom'
 import { useOrganizerSession } from '@/contexts/OrganizerSessionContext'
 import { OrganizerStaffGate } from './OrganizerStaffGate'
 import { OrganizerShiftHeaderBar } from './OrganizerShiftHeaderBar'
@@ -18,6 +18,7 @@ interface OrganizerRouteGuardProps {
  */
 export function OrganizerRouteGuard({ children }: OrganizerRouteGuardProps) {
   const { isAuthenticated, loading } = useOrganizerSession()
+  const location = useLocation()
 
   if (loading) {
     return <PageLoader />
@@ -25,6 +26,11 @@ export function OrganizerRouteGuard({ children }: OrganizerRouteGuardProps) {
 
   if (!isAuthenticated) {
     return <OrganizerStaffGate />
+  }
+
+  // When on /tables (Layout Manager), the shift header is docked inside inner-table-manager-container
+  if (location.pathname.startsWith('/tables')) {
+    return <>{children}</>
   }
 
   return (

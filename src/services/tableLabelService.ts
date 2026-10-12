@@ -144,22 +144,22 @@ export async function updateLabel(
  * Delete a label. First unsets LABEL_ID on all tables referencing this label.
  */
 export async function deleteLabel(labelId: number): Promise<void> {
-  // Unset LABEL_ID on Restaurant_Tables
+  // Unset LABEL_ID on Active_Tables
   try {
     await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Active_Tables')
       .update({ LABEL_ID: null })
       .eq('LABEL_ID', labelId)
   } catch {
     // Non-critical — continue with deletion
   }
 
-  // Unset LABEL_ID on Table_Layout_Info
+  // Unset LABEL_ID on Table_Info
   try {
     await supabase
       .schema('tables')
-      .from('Table_Layout_Info')
+      .from('Table_Info')
       .update({ LABEL_ID: null })
       .eq('LABEL_ID', labelId)
   } catch {
@@ -212,70 +212,56 @@ export async function assignLabelToTable(
   tableId: number,
   labelId: number | null,
 ): Promise<void> {
-  // Query target table to find MERGE_GROUP_ID and TABLE_NUM
-  const { data: rtData } = await supabase
+  // Query target table to find MERGE_GROUP_ID
+  const { data: atData } = await supabase
     .schema('tables')
-    .from('Restaurant_Tables')
-    .select('TABLE_ID, TABLE_NUM, MERGE_GROUP_ID')
-    .or(`TABLE_ID.eq.${tableId},TABLE_NUM.eq.${tableId}`)
+    .from('Active_Tables')
+    .select('TABLE_ID, MERGE_GROUP_ID')
+    .eq('TABLE_ID', tableId)
     .maybeSingle()
 
-  let mergeGroupId = rtData?.MERGE_GROUP_ID ?? null
-  const resolvedTableNum = rtData?.TABLE_NUM != null ? Number(rtData.TABLE_NUM) : tableId
-  const resolvedTableId = rtData?.TABLE_ID != null ? Number(rtData.TABLE_ID) : tableId
-
-  if (mergeGroupId == null) {
-    const { data: layoutData } = await supabase
-      .schema('tables')
-      .from('Table_Layout_Info')
-      .select('MERGE_GROUP_ID')
-      .eq('TABLE_NUM', resolvedTableNum)
-      .not('MERGE_GROUP_ID', 'is', null)
-      .maybeSingle()
-    if (layoutData?.MERGE_GROUP_ID != null) {
-      mergeGroupId = layoutData.MERGE_GROUP_ID
-    }
-  }
+  const mergeGroupId = atData?.MERGE_GROUP_ID ?? null
 
   if (mergeGroupId != null) {
-    // Merged table: Share label across all merged tables in Restaurant_Tables & Table_Layout_Info
+    // Merged table: Share label across all merged tables in Active_Tables & Table_Info
     await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Active_Tables')
       .update({ LABEL_ID: labelId })
-      .or(`MERGE_GROUP_ID.eq.${mergeGroupId},TABLE_ID.eq.${mergeGroupId},TABLE_ID.eq.${resolvedTableId}`)
+      .or(`MERGE_GROUP_ID.eq.${mergeGroupId},TABLE_ID.eq.${mergeGroupId},TABLE_ID.eq.${tableId}`)
 
-    try {
-      await supabase
-        .schema('tables')
-        .from('Table_Layout_Info')
-        .update({ LABEL_ID: labelId })
-        .eq('MERGE_GROUP_ID', mergeGroupId)
-    } catch {
-      // Non-critical
+    const { data: groupTables } = await supabase
+      .schema('tables')
+      .from('Active_Tables')
+      .select('TABLE_ID')
+      .or(`MERGE_GROUP_ID.eq.${mergeGroupId},TABLE_ID.eq.${mergeGroupId},TABLE_ID.eq.${tableId}`)
+
+    const groupTableIds = (groupTables || []).map((t) => t.TABLE_ID)
+    if (groupTableIds.length > 0) {
+      try {
+        await supabase
+          .schema('tables')
+          .from('Table_Info')
+          .update({ LABEL_ID: labelId })
+          .in('TABLE_ID', groupTableIds)
+      } catch {
+        // Non-critical
+      }
     }
   } else {
     // Single table update
-    const { error } = await supabase
+    await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Active_Tables')
       .update({ LABEL_ID: labelId })
-      .eq('TABLE_ID', resolvedTableId)
-
-    if (error) {
-      await supabase
-        .schema('tables')
-        .from('Restaurant_Tables')
-        .update({ LABEL_ID: labelId })
-        .eq('TABLE_NUM', resolvedTableNum)
-    }
+      .eq('TABLE_ID', tableId)
 
     try {
       await supabase
         .schema('tables')
-        .from('Table_Layout_Info')
+        .from('Table_Info')
         .update({ LABEL_ID: labelId })
-        .eq('TABLE_NUM', resolvedTableNum)
+        .eq('TABLE_ID', tableId)
     } catch {
       // Non-critical
     }

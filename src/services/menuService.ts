@@ -976,7 +976,7 @@ export async function deleteCategory(id: string): Promise<void> {
 export async function fetchTableByNumber(tableNum: string | number): Promise<{ id: number; label: string } | null> {
   const { data, error } = await supabase
     .schema('tables')
-    .from('Restaurant_Tables')
+    .from('Table_Info')
     .select('TABLE_ID, TABLE_NUM')
     .eq('TABLE_NUM', Number(tableNum))
     .single()

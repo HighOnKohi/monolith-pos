@@ -38,11 +38,13 @@ const COLOR_PRESETS = [
 export interface LabelHierarchyManagerProps {
   isModal?: boolean
   onClose?: () => void
+  isSidebar?: boolean
 }
 
 export const LabelHierarchyManager: React.FC<LabelHierarchyManagerProps> = ({
   isModal = false,
   onClose,
+  isSidebar = false,
 }) => {
   const [labels, setLabels] = useState<TableLabel[]>([])
   const [loading, setLoading] = useState(true)
@@ -220,44 +222,46 @@ export const LabelHierarchyManager: React.FC<LabelHierarchyManagerProps> = ({
   }
 
   return (
-    <div className={`max-w-4xl mx-auto space-y-6 ${isModal ? 'p-6 sm:p-8' : 'p-6'}`}>
+    <div className={isSidebar ? 'p-3.5 space-y-3.5 select-none' : isModal ? 'max-w-4xl mx-auto space-y-6 p-6 sm:p-8' : 'max-w-4xl mx-auto space-y-6 p-6'}>
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-2">
         <div>
-          <div className="flex items-center gap-2">
-            <Tag className="w-4 h-4 text-[#14274E]" />
-            <h2 className="text-base font-black text-[#14274E]">Table Hierarchy & Label Management</h2>
+          <div className="flex items-center gap-1.5">
+            <Tag className="w-3.5 h-3.5 text-[#14274E]" />
+            <h3 className={`${isSidebar ? 'text-xs' : 'text-base'} font-black text-[#14274E]`}>
+              {isSidebar ? 'Labels & Priorities' : 'Table Hierarchy & Label Management'}
+            </h3>
           </div>
-          <p className="text-xs font-semibold text-slate-500 mt-0.5">
-            Orders from higher-priority tables jump ahead in Kitchen and Dispatcher queues.
+          <p className="text-[11px] font-semibold text-slate-400 mt-0.5">
+            {isSidebar ? 'Drag rows to adjust kitchen & bar order priority' : 'Orders from higher-priority tables jump ahead in Kitchen and Dispatcher queues.'}
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
             onClick={() => void loadLabels()}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-600 transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-600 transition-colors cursor-pointer"
+            title="Refresh"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
           </button>
           <button
             type="button"
             onClick={() => setIsAdding((v) => !v)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#14274E] text-white text-xs font-black hover:bg-[#0f1f40] transition-colors shadow-xs cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#14274E] text-white text-xs font-black hover:bg-[#0f1f40] transition-colors shadow-xs cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Label</span>
+            <Plus className="w-3 h-3" />
+            <span>Add</span>
           </button>
           {isModal && onClose && (
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer ml-1"
+              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
               title="Close dialog"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           )}
         </div>

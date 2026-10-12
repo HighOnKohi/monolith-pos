@@ -20,30 +20,33 @@ export interface TableTypeConfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetch all table type configs, ordered by TABLE_TYPE ascending.
+ * Fetch all table type configs, ordered by TABLE_TYPE_ID ascending.
  */
 export async function fetchAllTypeConfigs(): Promise<TableTypeConfig[]> {
   const { data, error } = await supabase
     .schema('tables')
-    .from('Table_Type_Configs')
+    .from('Table_Types')
     .select('*')
-    .order('TABLE_TYPE', { ascending: true })
+    .order('TABLE_TYPE_ID', { ascending: true })
 
   if (error) {
-    console.error('[tableTypeConfigService] Error fetching type configs:', error)
+    console.error('[tableTypeConfigService] Error fetching type configs from Table_Types:', error)
     return []
   }
 
-  return (data ?? []).map((row: Record<string, unknown>) => ({
-    TYPE_CONFIG_ID: Number(row.TYPE_CONFIG_ID),
-    TABLE_TYPE: Number(row.TABLE_TYPE),
-    NAME: String(row.NAME ?? ''),
-    CAPACITY: Number(row.CAPACITY ?? 4),
-    MAX_COUNT: row.MAX_COUNT != null ? Number(row.MAX_COUNT) : null,
-    IS_ACTIVE: Boolean(row.IS_ACTIVE),
-    CREATED_AT: row.CREATED_AT != null ? String(row.CREATED_AT) : undefined,
-    UPDATED_AT: row.UPDATED_AT != null ? String(row.UPDATED_AT) : undefined,
-  }))
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const id = Number(row.TABLE_TYPE_ID)
+    return {
+      TYPE_CONFIG_ID: id,
+      TABLE_TYPE: id,
+      NAME: String(row.NAME ?? ''),
+      CAPACITY: Number(row.DEFAULT_SEAT_CAPACITY ?? 4),
+      MAX_COUNT: row.TABLES_IN_STOCK != null ? Number(row.TABLES_IN_STOCK) : null,
+      IS_ACTIVE: Boolean(row.IS_ACTIVE),
+      CREATED_AT: row.CREATED_AT != null ? String(row.CREATED_AT) : undefined,
+      UPDATED_AT: row.UPDATED_AT != null ? String(row.UPDATED_AT) : undefined,
+    }
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,30 +62,31 @@ export async function updateTypeConfig(
   if (fields.name !== undefined) payload.NAME = fields.name.trim()
   if (fields.capacity !== undefined) {
     if (fields.capacity < 1) throw new Error('Capacity must be at least 1.')
-    payload.CAPACITY = fields.capacity
+    payload.DEFAULT_SEAT_CAPACITY = fields.capacity
   }
   if (fields.maxCount !== undefined) {
     if (fields.maxCount !== null && fields.maxCount < 0) throw new Error('Max count cannot be negative.')
-    payload.MAX_COUNT = fields.maxCount
+    payload.TABLES_IN_STOCK = fields.maxCount
   }
   if (fields.isActive !== undefined) payload.IS_ACTIVE = fields.isActive
 
   const { data, error } = await supabase
     .schema('tables')
-    .from('Table_Type_Configs')
+    .from('Table_Types')
     .update(payload)
-    .eq('TYPE_CONFIG_ID', typeConfigId)
+    .eq('TABLE_TYPE_ID', typeConfigId)
     .select()
     .single()
 
-  if (error || !data) throw error ?? new Error('Failed to update type config.')
+  if (error || !data) throw error ?? new Error('Failed to update type config in Table_Types.')
 
+  const id = Number(data.TABLE_TYPE_ID)
   return {
-    TYPE_CONFIG_ID: Number(data.TYPE_CONFIG_ID),
-    TABLE_TYPE: Number(data.TABLE_TYPE),
+    TYPE_CONFIG_ID: id,
+    TABLE_TYPE: id,
     NAME: String(data.NAME),
-    CAPACITY: Number(data.CAPACITY),
-    MAX_COUNT: data.MAX_COUNT != null ? Number(data.MAX_COUNT) : null,
+    CAPACITY: Number(data.DEFAULT_SEAT_CAPACITY ?? 4),
+    MAX_COUNT: data.TABLES_IN_STOCK != null ? Number(data.TABLES_IN_STOCK) : null,
     IS_ACTIVE: Boolean(data.IS_ACTIVE),
     CREATED_AT: String(data.CREATED_AT),
     UPDATED_AT: String(data.UPDATED_AT),
@@ -119,15 +123,15 @@ export async function validateTableTypeCount(
     return { allowed: true, currentCount: 0, maxCount: null }
   }
 
-  // Count current tables of this type from layout or live tables
+  // Count current tables of this type from layout or Table_Info
   let currentCount = 0
   if (layoutTables) {
     currentCount = layoutTables.filter((t) => t.TABLE_TYPE === tableType).length
   } else {
     const { data } = await supabase
       .schema('tables')
-      .from('Table_Layout_Info')
-      .select('TABLE_NUM')
+      .from('Table_Info')
+      .select('TABLE_ID')
       .eq('TABLE_TYPE', tableType)
 
     currentCount = (data ?? []).length

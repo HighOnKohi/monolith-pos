@@ -16,6 +16,9 @@ import {
   TABLE_TYPES,
   DEFAULT_GRID_WIDTH,
   DEFAULT_GRID_HEIGHT,
+  GRID_MARGIN_BLOCKS,
+  TOTAL_GRID_WIDTH_BLOCKS,
+  TOTAL_GRID_HEIGHT_BLOCKS,
   type TableLayoutPreset,
   type TableLayoutInfo,
   type RestaurantTableData,
@@ -25,7 +28,8 @@ import {
 import { TableVisual, TableShapeIcon } from './components/TableVisual'
 import { TableManagerHeader } from './components/TableManagerHeader'
 import { FloatingLayoutControls } from './components/FloatingLayoutControls'
-import { TableManagerSidebar } from './components/TableManagerSidebar'
+import { TableManagerSidebar, type SidebarTab } from './components/TableManagerSidebar'
+import { OrganizerShiftHeaderBar } from '@/components/organizer/OrganizerShiftHeaderBar'
 import { NewPresetModal } from './components/NewPresetModal'
 import { ConfirmModal } from './components/ConfirmModal'
 import { RenamePresetModal } from './components/RenamePresetModal'
@@ -35,20 +39,15 @@ import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
 import { useActiveEvent } from '@/hooks/useActiveEvent'
 import { useBusinessDay } from '@/hooks/useBusinessDay'
 import { getActiveBusinessDay } from '@/services/businessDayService'
-import { GitMerge } from 'lucide-react'
-import { TableTypesManager } from './components/TableTypesManager'
-import { LabelHierarchyManager } from './components/LabelHierarchyManager'
+import { GitMerge, HelpCircle } from 'lucide-react'
 import { LabelManagementModal } from './components/LabelManagementModal'
 import { RemoveAllTablesModal } from './components/RemoveAllTablesModal'
 import { AdminAuthModal } from './components/AdminAuthModal'
 import { AutomaticAllocationModal } from './components/AutomaticAllocationModal'
-import { TableListView } from './components/TableListView'
-import { PresetsManagerView } from './components/PresetsManagerView'
-import type { TableManagerAdminTab } from './components/TableManagerHeader'
 import { validateTableTypeCount } from '@/services/tableTypeConfigService'
 import { removeAllTables } from '@/services/tableService'
 import { logTableAction } from '@/services/tableAuditService'
-import { fetchActiveLabels, assignLabelToTable, type TableLabel } from '@/services/tableLabelService'
+import { fetchActiveLabels, type TableLabel } from '@/services/tableLabelService'
 
 interface DragState {
   tableNum: number
@@ -262,6 +261,7 @@ export default function TableManager() {
 
   // Dragging & Container Dimension State
   const [dragState, setDragState] = useState<DragState | null>(null)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerDimensions, setContainerDimensions] = useState({ width: 800, height: 600 })
 
@@ -300,8 +300,8 @@ export default function TableManager() {
   })
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
 
-  // Admin Interface Tabs & Modals
-  const [activeAdminTab, setActiveAdminTab] = useState<TableManagerAdminTab>('layout')
+  // Sidebar Navigation Tabs ('table' | 'types' | 'labels')
+  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('table')
   const [removeAllModalOpen, setRemoveAllModalOpen] = useState(false)
   const [autoAllocModalOpen, setAutoAllocModalOpen] = useState(false)
   const [adminAuthModalOpen, setAdminAuthModalOpen] = useState(false)
@@ -401,22 +401,23 @@ export default function TableManager() {
     }
   }, [])
 
-  // Compute dynamic cell size and dimensions (~30% reduced grid count for venue capacity 50)
+  // ── Fixed Grid Dimensions & Proportional Scaling ──
+  const gridWidth = DEFAULT_GRID_WIDTH
+  const gridHeight = DEFAULT_GRID_HEIGHT
+
+  // Dynamic cell size: scales to fit BOTH container width and height (17 blocks wide x 12 blocks high)
   const cellSize = useMemo(() => {
-    if (containerDimensions.height <= 0) return 48
-    // 13 vertical divisions ensures generous, clear table sizes and minimal unused grid space
-    return Math.max(24, Math.floor(containerDimensions.height / 13))
-  }, [containerDimensions.height])
+    if (containerDimensions.width <= 0 || containerDimensions.height <= 0) return 48
+    const maxW = (containerDimensions.width - 24) / TOTAL_GRID_WIDTH_BLOCKS
+    const maxH = (containerDimensions.height - 24) / TOTAL_GRID_HEIGHT_BLOCKS
+    return Math.max(28, Math.floor(Math.min(maxW, maxH)))
+  }, [containerDimensions.width, containerDimensions.height])
 
-  const gridWidth = useMemo(() => {
-    if (containerDimensions.width <= 0) return 24
-    return Math.max(8, Math.floor(containerDimensions.width / cellSize))
-  }, [containerDimensions.width, cellSize])
-
-  const gridHeight = useMemo(() => {
-    if (containerDimensions.height <= 0) return 13
-    return Math.max(6, Math.floor(containerDimensions.height / cellSize))
-  }, [containerDimensions.height, cellSize])
+  const halfCellMarginPx = Math.round(GRID_MARGIN_BLOCKS * cellSize)
+  const playableWidthPx = gridWidth * cellSize
+  const playableHeightPx = gridHeight * cellSize
+  const totalFloorWidthPx = playableWidthPx + halfCellMarginPx * 2
+  const totalFloorHeightPx = playableHeightPx + halfCellMarginPx * 2
 
   // Dynamic Active Preset & Maximum Pax
   const activePreset = useMemo(
@@ -549,9 +550,9 @@ export default function TableManager() {
     return mapped
   }, [])
 
-  // Track container resize to keep 100% fit without scrollbars
+  // Track workspace container resize to keep 100% fit without scrollbars
   useEffect(() => {
-    if (!containerRef.current) return
+    if (!workspaceRef.current) return
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const { width, height } = entry.contentRect
@@ -560,7 +561,7 @@ export default function TableManager() {
         }
       }
     })
-    ro.observe(containerRef.current)
+    ro.observe(workspaceRef.current)
     return () => ro.disconnect()
   }, [])
 
@@ -650,7 +651,7 @@ export default function TableManager() {
       .channel('table-manager-live-sync')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
+        { event: '*', schema: 'tables', table: 'Active_Tables' },
         async () => {
           // If we recently performed a local optimistic mutation or are actively dragging/selecting, skip override
           if (
@@ -666,6 +667,25 @@ export default function TableManager() {
             void refreshActiveOrders()
           } catch (err) {
             console.error('Error in live tables realtime sync:', err)
+          }
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'tables', table: 'Table_Info' },
+        async () => {
+          if (
+            Date.now() - lastMutationTimeRef.current < 4000 ||
+            dragStateRef.current !== null ||
+            isMarqueeActiveRef.current
+          ) {
+            return
+          }
+          try {
+            const updated = await fetchLiveRestaurantTables()
+            setRestaurantTables(updated)
+          } catch (err) {
+            console.error('Error in Table_Info realtime sync:', err)
           }
         },
       )
@@ -1329,7 +1349,16 @@ export default function TableManager() {
       : [tableNum]
 
     setRestaurantTables((prev) =>
-      prev.map((r) => (targetNums.includes(r.TABLE_NUM) ? { ...r, CURRENT_GUEST_COUNT: count } : r)),
+      prev.map((r) => {
+        if (!targetNums.includes(r.TABLE_NUM)) return r
+        let nextStatus = r.STATUS
+        if (count > 0 && (r.STATUS === 'AVAILABLE' || r.STATUS === 'RESERVED')) {
+          nextStatus = 'OCCUPIED'
+        } else if (count === 0 && r.STATUS !== 'AVAILABLE') {
+          nextStatus = 'AVAILABLE'
+        }
+        return { ...r, CURRENT_GUEST_COUNT: count, STATUS: nextStatus }
+      }),
     )
     try {
       await updateTableGuestCount(tableNum, count)
@@ -1453,66 +1482,7 @@ export default function TableManager() {
     }
   }
 
-  // ── 11e. Set Default Layout Preset (Protected Admin Operation) ──
-  const handleSetDefaultPreset = async (presetId: number) => {
-    // Guard: Do not allow setting default preset during an active business day
-    const activeDay = await getActiveBusinessDay()
-    if (activeDay && activeDay.status === 'OPEN') {
-      showToast(
-        `Cannot change default layout preset while Business Day #${activeDay.businessDayId} is active. Please end the business day in Cashier first.`,
-        'error',
-      )
-      return
-    }
 
-    const targetPreset = presets.find((p) => p.LAYOUT_PRESET_ID === presetId)
-    setPendingAdminAction(() => async () => {
-      try {
-        await setDefaultLayoutPreset(presetId)
-        await loadInitialData()
-        void logTableAction('DEFAULT_LAYOUT_MODIFIED', `Set preset "${targetPreset?.PRESET_NAME}" as default layout.`)
-        showToast(`Preset "${targetPreset?.PRESET_NAME}" set as default.`, 'success')
-      } catch {
-        showToast('Failed to set default preset.', 'error')
-      }
-    })
-    setAdminAuthModalOpen(true)
-  }
-
-  // ── 11f. Label Assignment on Directory ──
-  const handleLabelAssigned = async (tableNum: number, labelId: number | null) => {
-    const target = layoutTables.find((t) => t.TABLE_NUM === tableNum)
-    const liveTarget = restaurantTables.find((r) => r.TABLE_NUM === tableNum)
-    let mergeGroupId: number | string | null = target?.MERGE_GROUP_ID ?? liveTarget?.MERGE_GROUP_ID ?? null
-    if (mergeGroupId == null && liveTarget?.TABLE_ID != null) {
-      const isCaptain = restaurantTables.some((rt) => rt.MERGE_GROUP_ID === liveTarget.TABLE_ID)
-      if (isCaptain) mergeGroupId = liveTarget.TABLE_ID
-    }
-
-    setLayoutTables((prev) =>
-      prev.map((t) =>
-        t.TABLE_NUM === tableNum || (mergeGroupId != null && (t.MERGE_GROUP_ID === mergeGroupId || t.TABLE_NUM === Number(mergeGroupId)))
-          ? { ...t, LABEL_ID: labelId }
-          : t,
-      ),
-    )
-    setRestaurantTables((prev) =>
-      prev.map((r) =>
-        r.TABLE_NUM === tableNum || (mergeGroupId != null && (r.MERGE_GROUP_ID === mergeGroupId || r.TABLE_ID === Number(mergeGroupId)))
-          ? { ...r, LABEL_ID: labelId }
-          : r,
-      ),
-    )
-
-    const targetTableId = liveTarget?.TABLE_ID ?? tableNum
-    try {
-      await assignLabelToTable(targetTableId, labelId)
-      setIsDirty(false)
-    } catch (err) {
-      console.error('Failed to persist label assignment:', err)
-      setIsDirty(true)
-    }
-  }
 
   // ── 12. Update Table Number ──
   const handleUpdateTableNum = (oldNum: number, newNum: number) => {
@@ -1750,9 +1720,11 @@ export default function TableManager() {
         }
         return next
       })
+      setActiveSidebarTab('table')
     } else {
       setSelectedTableNum(tableNum)
       setSelectedTableNums(new Set([tableNum]))
+      setActiveSidebarTab('table')
     }
   }
 
@@ -1840,8 +1812,8 @@ export default function TableManager() {
 
           for (const t of layoutTables) {
             const cfg = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
-            const tLeft = cRect.left + t.X_POS * cellSize
-            const tTop = cRect.top + t.Y_POS * cellSize
+            const tLeft = cRect.left + halfCellMarginPx + t.X_POS * cellSize
+            const tTop = cRect.top + halfCellMarginPx + t.Y_POS * cellSize
             const tRight = tLeft + cfg.width * cellSize
             const tBottom = tTop + cfg.height * cellSize
 
@@ -1984,8 +1956,8 @@ export default function TableManager() {
         const y = isDraggingThis ? dragState.currentY : m.Y_POS
         const width = cfg.width
         const height = cfg.height
-        const cx = (x + width / 2) * cellSize
-        const cy = (y + height / 2) * cellSize
+        const cx = halfCellMarginPx + (x + width / 2) * cellSize
+        const cy = halfCellMarginPx + (y + height / 2) * cellSize
         return {
           tableNum: m.TABLE_NUM,
           x,
@@ -2232,201 +2204,169 @@ export default function TableManager() {
 
       {/* ── Left Div: inner-table-manager-container ── */}
       <div className="inner-table-manager-container flex-1 min-w-0 h-full flex flex-col overflow-hidden">
+        {/* Organizer Shift Header Bar (Inside inner container at the side of the sidebar) */}
+        <div className="px-5 pt-3 pb-1 shrink-0">
+          <OrganizerShiftHeaderBar />
+        </div>
+
         {/* Top: table-manager-header (Preset Dropdown on left & Save Layout / Discard Changes / Edit Layout on right) */}
-        <TableManagerHeader
-          presets={presets}
-          activePresetId={activePresetId}
-          isEventActive={isEventActive}
-          activeEventTitle={activeEvent?.title}
-          isBusinessDayOpen={isBusinessDayOpen}
-          totalCapacity={totalAllocatedCapacity}
-          maxVenueCapacity={activePresetMaxPax}
-          isDirty={isDirty}
-          onSelectPreset={handleSelectPreset}
-          onRenamePreset={handleRenamePreset}
-          onDeletePreset={handleDeletePreset}
-          onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
-          activeTab={activeAdminTab}
-          onTabChange={(tab) => {
-            if (isDirty) {
-              setConfirmModal({
-                isOpen: true,
-                title: 'Unsaved Layout Changes',
-                message: 'You have unsaved floor layout changes. Discard changes to switch tabs?',
-                confirmLabel: 'Discard & Switch',
-                variant: 'warning',
-                onConfirm: () => {
-                  setConfirmModal((prev) => ({ ...prev, isOpen: false }))
-                  setIsDirty(false)
-                  setActiveAdminTab(tab)
-                },
-              })
-              return
-            }
-            setActiveAdminTab(tab)
-          }}
-          onOpenRemoveAll={() => setRemoveAllModalOpen(true)}
-          onOpenLabelsModal={() => setLabelsModalOpen(true)}
-          onOpenNewPresetModal={() => {
-            if (isBusinessDayOpen) {
-              showToast(
-                'Cannot create or switch layout presets while Business Day is active. Please end the business day in Cashier first.',
-                'error',
-              )
-              return
-            }
-            if (isEventActive) {
-              showToast(
-                `Cannot create or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
-                'error',
-              )
-              return
-            }
-            if (isDirty) {
-              setConfirmModal({
-                isOpen: true,
-                title: 'Unsaved Changes',
-                message: 'You have unsaved changes on the current layout. Discard changes and create a new preset?',
-                confirmLabel: 'Discard & Create',
-                variant: 'warning',
-                onConfirm: () => {
-                  setConfirmModal((prev) => ({ ...prev, isOpen: false }))
-                  setIsDirty(false)
-                  setNewPresetModalOpen(true)
-                },
-              })
-              return
-            }
-            setNewPresetModalOpen(true)
-          }}
-          isEditMode={true}
-          isSaving={isSaving}
-          isQrPrintMode={isQrPrintMode}
-          selectedPrintCount={selectedForPrintTableNums.size}
-          onToggleQrPrintMode={handleToggleQrPrintMode}
-          onCancelQrPrint={handleCancelQrPrint}
-          onPrintSelectedQrs={handlePrintSelectedQrs}
-          isPrintingBulk={isPrintingBulk}
-          hasTables={mergedNodes.length > 0}
-        />
+        <div className="px-5 pb-1 shrink-0">
+          <TableManagerHeader
+            presets={presets}
+            activePresetId={activePresetId}
+            isEventActive={isEventActive}
+            activeEventTitle={activeEvent?.title}
+            isBusinessDayOpen={isBusinessDayOpen}
+            totalCapacity={totalAllocatedCapacity}
+            maxVenueCapacity={activePresetMaxPax}
+            isDirty={isDirty}
+            onSelectPreset={handleSelectPreset}
+            onRenamePreset={handleRenamePreset}
+            onDeletePreset={handleDeletePreset}
+            onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
+            onOpenNewPresetModal={() => {
+              if (isBusinessDayOpen) {
+                showToast(
+                  'Cannot create or switch layout presets while Business Day is active. Please end the business day in Cashier first.',
+                  'error',
+                )
+                return
+              }
+              if (isEventActive) {
+                showToast(
+                  `Cannot create or switch layout preset while event "${activeEvent?.title ?? 'Active Event'}" is active.`,
+                  'error',
+                )
+                return
+              }
+              if (isDirty) {
+                setConfirmModal({
+                  isOpen: true,
+                  title: 'Unsaved Changes',
+                  message: 'You have unsaved changes on the current layout. Discard changes and create a new preset?',
+                  confirmLabel: 'Discard & Create',
+                  variant: 'warning',
+                  onConfirm: () => {
+                    setConfirmModal((prev) => ({ ...prev, isOpen: false }))
+                    setIsDirty(false)
+                    setNewPresetModalOpen(true)
+                  },
+                })
+                return
+              }
+              setNewPresetModalOpen(true)
+            }}
+            isEditMode={true}
+            isSaving={isSaving}
+            isQrPrintMode={isQrPrintMode}
+            selectedPrintCount={selectedForPrintTableNums.size}
+            onToggleQrPrintMode={handleToggleQrPrintMode}
+            onCancelQrPrint={handleCancelQrPrint}
+            onPrintSelectedQrs={handlePrintSelectedQrs}
+            isPrintingBulk={isPrintingBulk}
+            hasTables={mergedNodes.length > 0}
+          />
+        </div>
 
-        {/* Tab 1: Tables Directory & CRUD */}
-        {activeAdminTab === 'tables' && (
-          <div className="flex-1 overflow-y-auto">
-            <TableListView
-              tables={mergedNodes}
-              onAddTable={(type) => void handleAddTable(type)}
-              onDeleteTable={handleDeleteTable}
-              onUpdateSeatCount={handleUpdateSeatCount}
-              onOpenQrModal={handleOpenQrModal}
-              onOpenRemoveAll={() => setRemoveAllModalOpen(true)}
-              onLabelAssigned={handleLabelAssigned}
-            />
-          </div>
-        )}
-
-        {/* Tab 2: Layout Presets */}
-        {activeAdminTab === 'presets' && (
-          <div className="flex-1 overflow-y-auto">
-            <PresetsManagerView
-              presets={presets}
-              activePresetId={activePresetId}
-              isEventActive={isEventActive}
-              activeEventTitle={activeEvent?.title}
-              isBusinessDayOpen={isBusinessDayOpen}
-              onSelectPreset={handleSelectPreset}
-              onSetDefaultPreset={handleSetDefaultPreset}
-              onRenamePreset={handleRenamePreset}
-              onDeletePreset={handleDeletePreset}
-              onOpenNewPresetModal={() => {
-                if (isBusinessDayOpen) {
-                  showToast(
-                    'Cannot create layout presets while Business Day is active. Please end the business day in Cashier first.',
-                    'error',
-                  )
-                  return
-                }
-                setNewPresetModalOpen(true)
-              }}
-              onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
-            />
-          </div>
-        )}
-
-        {/* Tab 3: Table Types Limits */}
-        {activeAdminTab === 'types' && (
-          <div className="flex-1 overflow-y-auto">
-            <TableTypesManager
-              layoutTables={mergedNodes}
-              onConfigChange={() => void loadInitialData()}
-            />
-          </div>
-        )}
-
-        {/* Tab 4: Labels & Hierarchy Management */}
-        {activeAdminTab === 'labels' && (
-          <div className="flex-1 overflow-y-auto">
-            <LabelHierarchyManager />
-          </div>
-        )}
-
-        {/* Tab 5: Floor Layout Canvas (Admin Editor) */}
-        {activeAdminTab === 'layout' && (
-          <div className="layout-container flex-1 min-h-0 mx-5 mb-5 mt-1 rounded-2xl bg-white border border-slate-200/90 shadow-xs relative overflow-hidden flex flex-col">
-          {/* Add Table button in upper right corner (Edit Mode only, non-obtrusive) */}
-          {isEditMode && (
-            <div className="absolute top-3.5 right-3.5 z-30">
-              <FloatingLayoutControls
-                onAddTable={handleAddTable}
-                onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
-                totalCapacity={totalAllocatedCapacity}
-                maxVenueCapacity={activePresetMaxPax}
-              />
-            </div>
-          )}
-
-          {/* Floating Merge Tables button in upper right corner (When >= 2 tables selected) */}
-          {!isQrPrintMode && selectedTableNums.size >= 2 && (
-            <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150">
-              <button
-                type="button"
-                onClick={handleMergeSelectedTables}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-xl hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-105 active:scale-95 transition-all font-bold text-xs cursor-pointer"
-              >
-                <GitMerge className="w-4 h-4 text-[#E9C46A]" />
-                <span>Merge Tables ({selectedTableNums.size})</span>
-              </button>
-            </div>
-          )}
-
-          {/* Grid View Canvas Container - Dynamic edge-to-edge grid container */}
+        {/* Floor Layout Canvas (Admin Editor) */}
+        <div
+          ref={workspaceRef}
+          className="layout-workspace-wrapper flex-1 min-h-0 w-full h-full flex items-center justify-center p-3 sm:p-4 overflow-hidden relative select-none"
+        >
+          {/* Grid View Canvas Container (Tight card wrapping grid) */}
           <div
             ref={containerRef}
-            className="floor-grid-canvas flex-1 h-full w-full overflow-hidden relative bg-white select-none p-0 cursor-default"
+            className="layout-container relative bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden select-none cursor-default shrink-0"
+            style={{
+              width: `${totalFloorWidthPx}px`,
+              height: `${totalFloorHeightPx}px`,
+            }}
             onMouseDown={handleCanvasMouseDown}
           >
-            {/* Floor Grid: Covers 100% of w-full h-full with zero padding or margin (grid lines only visible in edit mode) */}
-            <div
-              className="w-full h-full relative select-none"
-              style={{
-                backgroundImage: isEditMode
-                  ? `
-                    linear-gradient(to right, rgba(20, 39, 78, 0.08) 1px, transparent 1px),
-                    linear-gradient(to bottom, rgba(20, 39, 78, 0.08) 1px, transparent 1px)
-                  `
-                  : 'none',
-                backgroundSize: `${cellSize}px ${cellSize}px`,
-                backgroundPosition: '0 0',
-              }}
-            >
+            {/* Question Mark icon in upper left corner with hover tooltip */}
+            <div className="absolute top-3.5 left-3.5 z-30 group">
+              <button
+                type="button"
+                aria-label="Grid instructions and shortcuts"
+                className="w-8 h-8 rounded-xl bg-white/90 hover:bg-white text-slate-500 hover:text-[#14274E] border border-slate-200/80 shadow-xs hover:shadow-md flex items-center justify-center transition-all cursor-help focus:outline-none"
+              >
+                <HelpCircle className="w-4 h-4 stroke-[2.2]" />
+              </button>
+
+              {/* Tooltip Content on Hover */}
+              <div className="pointer-events-none opacity-0 group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 ease-out translate-y-1 group-hover:translate-y-0 absolute top-10 left-0 w-72 p-3.5 rounded-2xl bg-[#14274E] text-white shadow-2xl border border-white/10 z-50">
+                <div className="flex items-center gap-1.5 pb-2 mb-2 border-b border-white/10">
+                  <HelpCircle className="w-3.5 h-3.5 text-[#E9C46A]" />
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-200">Grid Guide & Controls</span>
+                </div>
+                <ul className="space-y-2 text-[11px] text-slate-300 leading-relaxed font-medium">
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
+                    <span><strong className="text-white font-bold">Purpose of the Grid:</strong> Visual interactive floor plan to map tables and spatial seating arrangements.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
+                    <span><strong className="text-white font-bold">Multi-Select Tables:</strong> Hold <kbd className="px-1 py-0.5 rounded bg-white/15 text-[10px] font-mono text-white">Ctrl</kbd> (or <kbd className="px-1 py-0.5 rounded bg-white/15 text-[10px] font-mono text-white">⌘</kbd>) while clicking tables, or drag a selection box.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
+                    <span><strong className="text-white font-bold">Move Tables:</strong> Drag any selected table across the grid to freely position it.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
+                    <span><strong className="text-white font-bold">Table Configuration:</strong> Click any table to view and edit its info and capacity in the sidebar.</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+              {/* Add Table button in upper right corner (Edit Mode only, non-obtrusive) */}
+              {isEditMode && (
+                <div className="absolute top-3.5 right-3.5 z-30">
+                  <FloatingLayoutControls
+                    onAddTable={handleAddTable}
+                    onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
+                    totalCapacity={totalAllocatedCapacity}
+                    maxVenueCapacity={activePresetMaxPax}
+                  />
+                </div>
+              )}
+
+              {/* Floating Merge Tables button in upper right corner (When >= 2 tables selected) */}
+              {!isQrPrintMode && selectedTableNums.size >= 2 && (
+                <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150">
+                  <button
+                    type="button"
+                    onClick={handleMergeSelectedTables}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-xl hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-105 active:scale-95 transition-all font-bold text-xs cursor-pointer"
+                  >
+                    <GitMerge className="w-4 h-4 text-[#E9C46A]" />
+                    <span>Merge Tables ({selectedTableNums.size})</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Floor Grid: 17x12 blocks with half-cell extension on all 4 sides */}
+              <div
+                className="w-full h-full relative select-none bg-white"
+                style={{
+                  backgroundImage: isEditMode
+                    ? `
+                      linear-gradient(to right, rgba(20, 39, 78, 0.08) 1px, transparent 1px),
+                      linear-gradient(to bottom, rgba(20, 39, 78, 0.08) 1px, transparent 1px)
+                    `
+                    : 'none',
+                  backgroundSize: `${cellSize}px ${cellSize}px`,
+                  backgroundPosition: `${halfCellMarginPx}px ${halfCellMarginPx}px`,
+                }}
+              >
               {/* Dynamic Merge Group Indicators (Box or Broken Chain Link Lines) */}
               {mergeGroupVisuals.map((visual) => {
                 const theme = getMergeGroupColor(visual.groupId)
 
                 if (visual.type === 'box') {
                   const padding = Math.max(6, Math.round(cellSize * 0.12))
-                  const left = visual.minX * cellSize - padding
-                  const top = visual.minY * cellSize - padding
+                  const left = halfCellMarginPx + visual.minX * cellSize - padding
+                  const top = halfCellMarginPx + visual.minY * cellSize - padding
                   const width = (visual.maxX - visual.minX) * cellSize + padding * 2
                   const height = (visual.maxY - visual.minY) * cellSize + padding * 2
 
@@ -2502,27 +2442,6 @@ export default function TableManager() {
                 return null
               })}
 
-              {/* Marquee Selection Rectangle Box */}
-              {marqueeBox && containerRef.current && (() => {
-                const cRect = containerRef.current.getBoundingClientRect()
-                const boxLeft = Math.min(marqueeBox.startX, marqueeBox.currentX) - cRect.left
-                const boxTop = Math.min(marqueeBox.startY, marqueeBox.currentY) - cRect.top
-                const boxWidth = Math.abs(marqueeBox.currentX - marqueeBox.startX)
-                const boxHeight = Math.abs(marqueeBox.currentY - marqueeBox.startY)
-
-                return (
-                  <div
-                    className="absolute pointer-events-none rounded-lg border-2 border-dashed border-indigo-500 bg-indigo-500/20 z-50 backdrop-blur-[0.5px]"
-                    style={{
-                      left: `${boxLeft}px`,
-                      top: `${boxTop}px`,
-                      width: `${boxWidth}px`,
-                      height: `${boxHeight}px`,
-                    }}
-                  />
-                )
-              })()}
-
               {/* Render Tables */}
               {mergedNodes.map((node) => {
                 const isDraggingThis = dragState?.tableNum === node.TABLE_NUM
@@ -2555,93 +2474,119 @@ export default function TableManager() {
                       isDraggingThis ? 'z-40 scale-105 opacity-90' : 'z-20'
                     }`}
                     style={{
-                      left: `${posX * cellSize}px`,
-                      top: `${posY * cellSize}px`,
+                      left: `${halfCellMarginPx + posX * cellSize}px`,
+                      top: `${halfCellMarginPx + posY * cellSize}px`,
                     }}
                   >
-                        <TableVisual
-                          tableType={node.TABLE_TYPE}
-                          tableNum={node.TABLE_NUM}
-                          cellSize={cellSize}
-                          status={node.STATUS}
-                          guestCount={displayPax}
-                          capacity={displayCapacity}
-                          labelName={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.NAME : undefined}
-                          labelColor={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.COLOR : undefined}
-                          isMerged={isMerged}
-                          mergeGroupId={node.MERGE_GROUP_ID}
-                          isSelected={isSelected}
-                          isEditMode={isEditMode}
-                          isQrPrintMode={isQrPrintMode}
-                          isPrintSelected={selectedForPrintTableNums.has(node.TABLE_NUM)}
-                          onTogglePrintSelect={() => handleTogglePrintSelectTable(node.TABLE_NUM)}
-                          onRotate={() => handleRotateTable(node.TABLE_NUM)}
-                          hideChairs={suppress}
-                        />
-                      </div>
-                    )
+                    <TableVisual
+                      tableType={node.TABLE_TYPE}
+                      tableNum={node.TABLE_NUM}
+                      cellSize={cellSize}
+                      status={node.STATUS}
+                      guestCount={displayPax}
+                      capacity={displayCapacity}
+                      labelName={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.NAME : undefined}
+                      labelColor={node.LABEL_ID ? activeLabelMap.get(node.LABEL_ID)?.COLOR : undefined}
+                      isMerged={isMerged}
+                      mergeGroupId={node.MERGE_GROUP_ID}
+                      isSelected={isSelected}
+                      isEditMode={isEditMode}
+                      isQrPrintMode={isQrPrintMode}
+                      isPrintSelected={selectedForPrintTableNums.has(node.TABLE_NUM)}
+                      onTogglePrintSelect={() => handleTogglePrintSelectTable(node.TABLE_NUM)}
+                      onRotate={() => handleRotateTable(node.TABLE_NUM)}
+                      hideChairs={suppress}
+                    />
+                  </div>
+                )
               })}
-
-              {/* Loading State */}
-              {isLoading && (
-                <div className="absolute inset-0 bg-white/70 backdrop-blur-xs flex items-center justify-center z-50">
-                  <div className="flex items-center gap-2 text-xs font-black text-[#14274E]">
-                    <div className="w-4 h-4 rounded-full border-2 border-[#14274E] border-t-transparent animate-spin" />
-                    <span>Loading Floor Plan...</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Empty State */}
-              {!isLoading && mergedNodes.length === 0 && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center pointer-events-none">
-                  <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center mb-3 shadow-xs">
-                    <TableShapeIcon tableType={1} size={32} />
-                  </div>
-                  <h3 className="text-sm font-extrabold text-[#14274E]">
-                    Floor Plan is Empty
-                  </h3>
-                  <p className="text-xs text-slate-400 font-medium max-w-xs mt-1">
-                    {isEditMode
-                      ? 'Click "+ Add Table" in the top bar to spawn tables onto the grid.'
-                      : 'Click "Edit Layout" at the top right to start adding tables.'}
-                  </p>
-                </div>
-              )}
             </div>
+
+            {/* Marquee Selection Rectangle Box */}
+            {marqueeBox && containerRef.current && (() => {
+              const cRect = containerRef.current.getBoundingClientRect()
+              const boxLeft = Math.min(marqueeBox.startX, marqueeBox.currentX) - cRect.left
+              const boxTop = Math.min(marqueeBox.startY, marqueeBox.currentY) - cRect.top
+              const boxWidth = Math.abs(marqueeBox.currentX - marqueeBox.startX)
+              const boxHeight = Math.abs(marqueeBox.currentY - marqueeBox.startY)
+
+              return (
+                <div
+                  className="absolute pointer-events-none rounded-lg border-2 border-dashed border-indigo-500 bg-indigo-500/20 z-50 backdrop-blur-[0.5px]"
+                  style={{
+                    left: `${boxLeft}px`,
+                    top: `${boxTop}px`,
+                    width: `${boxWidth}px`,
+                    height: `${boxHeight}px`,
+                  }}
+                />
+              )
+            })()}
+
+            {/* Loading State */}
+            {isLoading && (
+              <div className="absolute inset-0 bg-white/70 backdrop-blur-xs flex items-center justify-center z-50">
+                <div className="flex items-center gap-2 text-xs font-black text-[#14274E]">
+                  <div className="w-4 h-4 rounded-full border-2 border-[#14274E] border-t-transparent animate-spin" />
+                  <span>Loading Floor Plan...</span>
+                </div>
+              </div>
+            )}
+
+            {/* Empty State */}
+            {!isLoading && mergedNodes.length === 0 && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center pointer-events-none">
+                <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center mb-3 shadow-xs">
+                  <TableShapeIcon tableType={1} size={32} />
+                </div>
+                <h3 className="text-sm font-extrabold text-[#14274E]">
+                  Floor Plan is Empty
+                </h3>
+                <p className="text-xs text-slate-400 font-medium max-w-xs mt-1">
+                  {isEditMode
+                    ? 'Click "+ Add Table" in the top bar to spawn tables onto the grid.'
+                    : 'Click "Edit Layout" at the top right to start adding tables.'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
-        )}
       </div>
 
-      {/* ── Right Div: table-manager-sidebar (Visible in Layout tab) ── */}
-      {activeAdminTab === 'layout' && (
-        <TableManagerSidebar
-          isEditMode={isEditMode}
-          isQrPrintMode={isQrPrintMode}
-          selectedTable={selectedNode}
-          allTables={mergedNodes}
-          remainingVenueCapacity={activePresetMaxPax - totalAllocatedCapacity}
-          maxVenueCapacity={activePresetMaxPax}
-          onSelectTableNum={(num) => setSelectedTableNum(num)}
-          selectedForPrintTableNums={selectedForPrintTableNums}
-          onTogglePrintSelectTable={handleTogglePrintSelectTable}
-          onToggleSelectAllPrint={handleToggleSelectAllPrint}
-          onDownloadQrPdf={handleDownloadQrPdf}
-          isGeneratingPdf={isGeneratingPdf}
-          onPrintSelectedQrs={handlePrintSelectedQrs}
-          isPrintingBulk={isPrintingBulk}
-          onUpdateTableNum={handleUpdateTableNum}
-          onChangeTableType={handleChangeTableType}
-          onUpdateSeatCount={handleUpdateSeatCount}
-          onUpdateGuestCount={handleUpdateGuestCount}
-          onUpdateStatus={handleUpdateStatus}
-          onUnmergeTable={handleUnmergeTable}
-          isMergeGroupBlockedFromUnmerge={isSelectedMergeGroupBlockedFromUnmerge}
-          onDeleteTable={handleDeleteTable}
-          onOpenQrModal={handleOpenQrModal}
-        />
-      )}
+      {/* ── Right Div: table-manager-sidebar (With Table, Types, Labels tabs) ── */}
+      <TableManagerSidebar
+        activeSidebarTab={activeSidebarTab}
+        onSidebarTabChange={setActiveSidebarTab}
+        onDeselectTable={() => {
+          setSelectedTableNum(null)
+          setSelectedTableNums(new Set())
+        }}
+        layoutTables={layoutTables}
+        onTypeConfigChange={() => void loadInitialData()}
+        isEditMode={isEditMode}
+        isQrPrintMode={isQrPrintMode}
+        selectedTable={selectedNode}
+        allTables={mergedNodes}
+        remainingVenueCapacity={activePresetMaxPax - totalAllocatedCapacity}
+        maxVenueCapacity={activePresetMaxPax}
+        onSelectTableNum={(num) => setSelectedTableNum(num)}
+        selectedForPrintTableNums={selectedForPrintTableNums}
+        onTogglePrintSelectTable={handleTogglePrintSelectTable}
+        onToggleSelectAllPrint={handleToggleSelectAllPrint}
+        onDownloadQrPdf={handleDownloadQrPdf}
+        isGeneratingPdf={isGeneratingPdf}
+        onPrintSelectedQrs={handlePrintSelectedQrs}
+        isPrintingBulk={isPrintingBulk}
+        onUpdateTableNum={handleUpdateTableNum}
+        onChangeTableType={handleChangeTableType}
+        onUpdateSeatCount={handleUpdateSeatCount}
+        onUpdateGuestCount={handleUpdateGuestCount}
+        onUpdateStatus={handleUpdateStatus}
+        onUnmergeTable={handleUnmergeTable}
+        isMergeGroupBlockedFromUnmerge={isSelectedMergeGroupBlockedFromUnmerge}
+        onDeleteTable={handleDeleteTable}
+        onOpenQrModal={handleOpenQrModal}
+      />
 
       {/* Remove All Tables Modal */}
       <RemoveAllTablesModal

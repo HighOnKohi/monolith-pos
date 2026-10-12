@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { TableData, TableStatus } from '@/services/tableService'
+import { fetchAllTables, type TableData, type TableStatus } from '@/services/tableService'
 import { fetchActiveLabels, type TableLabel } from '@/services/tableLabelService'
 
 export interface TableGroupInfo {
@@ -193,16 +193,12 @@ export function resolveTableGroupByList(
  * Ideal for Customer interface entry point and external hooks.
  */
 export async function resolveTableGroup(targetTableId: number): Promise<TableGroupInfo> {
-  const [{ data: allTablesData, error: allErr }, activeLabels] = await Promise.all([
-    supabase
-      .schema('tables')
-      .from('Restaurant_Tables')
-      .select('*')
-      .order('TABLE_NUM'),
+  const [allTablesData, activeLabels] = await Promise.all([
+    fetchAllTables().catch(() => []),
     fetchActiveLabels().catch(() => []),
   ])
 
-  if (allErr || !allTablesData || allTablesData.length === 0) {
+  if (!allTablesData || allTablesData.length === 0) {
     return {
       groupId: targetTableId,
       anchorTableId: targetTableId,
@@ -223,7 +219,7 @@ export async function resolveTableGroup(targetTableId: number): Promise<TableGro
     }
   }
 
-  return resolveTableGroupByList(targetTableId, allTablesData as TableData[], activeLabels)
+  return resolveTableGroupByList(targetTableId, allTablesData, activeLabels)
 }
 
 /**
@@ -279,12 +275,12 @@ export function useTableGroup(tableId: number | null) {
 
     if (!tableId) return
 
-    // Realtime subscription for changes to Restaurant_Tables
+    // Realtime subscription for changes to Active_Tables
     const channel = supabase
       .channel(`table-group-sync-${tableId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
+        { event: '*', schema: 'tables', table: 'Active_Tables' },
         () => {
           loadGroup()
         },

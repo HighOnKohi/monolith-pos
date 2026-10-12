@@ -5,20 +5,10 @@ import {
   Pencil,
   ChevronDown,
   Printer,
-  Lock,
   X,
-  LayoutGrid,
-  List,
-  Layers,
-  Sliders,
-  Check,
   RefreshCw,
-  Tag,
-  Sparkles,
 } from 'lucide-react'
 import type { TableLayoutPreset } from '@/services/tableLayoutService'
-
-export type TableManagerAdminTab = 'layout' | 'tables' | 'presets' | 'types' | 'labels'
 
 interface TableManagerHeaderProps {
   presets: TableLayoutPreset[]
@@ -43,10 +33,6 @@ interface TableManagerHeaderProps {
   onPrintSelectedQrs?: () => void
   isPrintingBulk?: boolean
   hasTables?: boolean
-  activeTab?: TableManagerAdminTab
-  onTabChange?: (tab: TableManagerAdminTab) => void
-  onOpenRemoveAll?: () => void
-  onOpenLabelsModal?: () => void
 }
 
 export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
@@ -62,7 +48,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   onRenamePreset,
   onDeletePreset,
   onOpenNewPresetModal,
-  onOpenAutoAllocate,
+  onOpenAutoAllocate: _onOpenAutoAllocate,
   isEditMode = true,
   isSaving = false,
   isQrPrintMode = false,
@@ -72,10 +58,6 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   onPrintSelectedQrs,
   isPrintingBulk = false,
   hasTables = false,
-  activeTab = 'layout',
-  onTabChange,
-  onOpenRemoveAll,
-  onOpenLabelsModal,
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -98,52 +80,40 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   }, [isDropdownOpen])
 
   return (
-    <div className="table-manager-header flex flex-col shrink-0 px-5 pt-3.5 pb-2.5 bg-white border-b border-slate-200 select-none">
-      {/* Top Row: Presets & Controls */}
-      <div className="flex items-center justify-between w-full">
-        {/* Left side: Preset dropdown & Venue Capacity Counter */}
-        <div className="flex items-center gap-3">
+    <div className="table-manager-header flex items-center justify-between gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/90 shadow-2xs shrink-0 select-none relative z-20">
+      {/* Left side: Preset dropdown & Venue Capacity Counter */}
+      <div className="flex items-center gap-3">
         {/* (a) Preset dropdown */}
         <div className="relative min-w-[220px] z-30" ref={dropdownRef}>
           <button
             type="button"
             onClick={() => {
-              if (isQrPrintMode) return
+              if (isQrPrintMode || isEventActive || isBusinessDayOpen) return
               setIsDropdownOpen((prev) => !prev)
             }}
             aria-expanded={isDropdownOpen}
             title={
               isEventActive
-                ? `Locked: Event "${activeEventTitle ?? 'Active Event'}" is active`
+                ? `Locked: Preset cannot be switched while event "${activeEventTitle ?? 'Active Event'}" is active`
                 : isBusinessDayOpen
-                ? 'Preset switching locked while Business Day is active'
+                ? 'Locked: Preset cannot be switched while Business Day is in progress'
                 : undefined
             }
-            className={`w-full min-w-[220px] px-3.5 py-2.5 bg-white border text-xs font-bold text-[#14274E] flex items-center justify-between gap-2 shadow-xs transition-colors ${
+            className={`w-full min-w-[220px] px-3.5 py-2.5 bg-white border border-slate-300 text-xs font-bold text-[#14274E] flex items-center justify-between gap-2 shadow-xs transition-opacity ${
               isEventActive || isBusinessDayOpen || isQrPrintMode
-                ? 'opacity-85 border-amber-300 cursor-pointer'
-                : 'hover:bg-slate-50 border-slate-300 cursor-pointer'
+                ? 'opacity-50 cursor-not-allowed'
+                : 'hover:bg-slate-50 cursor-pointer'
             } ${
               isDropdownOpen ? 'rounded-t-xl rounded-b-none border-b-0 shadow-none' : 'rounded-xl'
             }`}
           >
             <div className="flex items-center gap-1.5 truncate">
-              {(isEventActive || isBusinessDayOpen) && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
               <span className="text-slate-400 font-semibold">Preset:</span>
               <span className="font-black text-[#14274E] truncate">
                 {activePreset?.PRESET_NAME ?? 'Select Preset'}
               </span>
-              {isEventActive ? (
-                <span className="ml-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                  Event Active
-                </span>
-              ) : isBusinessDayOpen ? (
-                <span className="ml-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                  Day Active
-                </span>
-              ) : null}
             </div>
-            {!isQrPrintMode && (
+            {!isQrPrintMode && !isEventActive && !isBusinessDayOpen && (
               <ChevronDown
                 className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${
                   isDropdownOpen ? 'rotate-180' : ''
@@ -338,116 +308,9 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
                 <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                 <span>Unsaved changes</span>
               </div>
-            ) : (
-              <div
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-xl text-xs font-black shadow-2xs select-none"
-                title="All floor changes automatically saved to database"
-              >
-                <Check className="w-3.5 h-3.5 text-emerald-600" />
-                <span>All changes saved</span>
-              </div>
-            )}
+            ) : null}
           </div>
         )}
-      </div>
-    </div>
-
-      {/* Bottom Row: Tab Navigation & Quick Actions */}
-      <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
-        <div className="flex items-center gap-1 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => onTabChange?.('layout')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeTab === 'layout'
-                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <LayoutGrid className="w-3.5 h-3.5" />
-            <span>Floor Layout</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onTabChange?.('tables')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeTab === 'tables'
-                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <List className="w-3.5 h-3.5" />
-            <span>Tables</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onTabChange?.('presets')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeTab === 'presets'
-                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Presets</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onTabChange?.('types')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeTab === 'types'
-                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>Table Types</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (onOpenLabelsModal) {
-                onOpenLabelsModal()
-              } else {
-                onTabChange?.('labels')
-              }
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeTab === 'labels'
-                ? 'bg-[#14274E] text-[#E9C46A] shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <Tag className="w-3.5 h-3.5" />
-            <span>Labels & Priority</span>
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {onOpenAutoAllocate && activeTab === 'layout' && (
-            <button
-              type="button"
-              onClick={onOpenAutoAllocate}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-black transition-all shadow-2xs cursor-pointer"
-              title="Automatically distribute and place tables to fill venue layout"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-              <span>Auto Allocate</span>
-            </button>
-          )}
-
-          {onOpenRemoveAll && (
-            <button
-              type="button"
-              onClick={onOpenRemoveAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100/70 text-rose-700 text-xs font-bold transition-all shadow-2xs cursor-pointer"
-              title="Remove all tables from current layout"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-              <span>Remove All</span>
-            </button>
-          )}
-        </div>
       </div>
     </div>
   )

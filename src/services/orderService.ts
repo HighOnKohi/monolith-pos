@@ -831,12 +831,12 @@ export async function voidOrderItems(
   if (!remainingOrders || remainingOrders.length === 0) {
     await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Active_Tables')
       .update({
         STATUS: 'AVAILABLE',
         BILL_OUT_REQUESTED: false,
-        CURRENT_GUEST_COUNT: 0,
-        RESERVED_SINCE: null,
+        SEATED_GUEST_COUNT: 0,
+        OCCUPIED_SINCE: null,
       })
       .in('TABLE_ID', targetIds)
 
@@ -1094,18 +1094,45 @@ export async function settleTableOrders(
 
   // Reset table status to AVAILABLE and clear guest count & bill request
   try {
-    await supabase
+    const { data: tableRows } = await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
-      .update({
-        STATUS: 'AVAILABLE',
-        BILL_OUT_REQUESTED: false,
-        CURRENT_GUEST_COUNT: 0,
-        RESERVED_SINCE: null,
-      })
+      .from('Active_Tables')
+      .select('TABLE_ID, MERGE_GROUP_ID, MERGE_PERSISTENCY')
       .in('TABLE_ID', targetIds)
+
+    const isContinuous = (tableRows ?? []).some(
+      (t) => t.MERGE_PERSISTENCY === 'CONTINOUOUS' || t.MERGE_PERSISTENCY === 'CONTINUOUS',
+    )
+
+    if (isContinuous) {
+      // CONTINOUOUS: Still marks available, but the merge group stays
+      await supabase
+        .schema('tables')
+        .from('Active_Tables')
+        .update({
+          STATUS: 'AVAILABLE',
+          BILL_OUT_REQUESTED: false,
+          SEATED_GUEST_COUNT: 0,
+          OCCUPIED_SINCE: null,
+        })
+        .in('TABLE_ID', targetIds)
+    } else {
+      // TEMPORARY: Marks available and removes the merge group
+      await supabase
+        .schema('tables')
+        .from('Active_Tables')
+        .update({
+          STATUS: 'AVAILABLE',
+          BILL_OUT_REQUESTED: false,
+          SEATED_GUEST_COUNT: 0,
+          OCCUPIED_SINCE: null,
+          MERGE_GROUP_ID: null,
+          MERGE_PERSISTENCY: null,
+        })
+        .in('TABLE_ID', targetIds)
+    }
   } catch (tableErr) {
-    console.warn('[orderService] Table reset warning:', tableErr)
+    console.warn('[orderService] Active_Tables reset warning:', tableErr)
   }
 
   broadcastOrderUpdate({ type: 'all' })

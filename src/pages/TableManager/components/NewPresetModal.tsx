@@ -41,8 +41,8 @@ const DEFAULT_WEIGHTS: Record<TableType, number> = {
 
 export const NewPresetModal: React.FC<NewPresetModalProps> = ({
   isOpen,
-  gridWidth = 20,
-  gridHeight = 16,
+  gridWidth = 16,
+  gridHeight = 11,
   onClose,
   onCreate,
 }) => {

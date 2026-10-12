@@ -95,7 +95,7 @@ export default function OrderLogsPage() {
   useEffect(() => {
     supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Table_Info')
       .select('TABLE_ID, TABLE_NUM')
       .order('TABLE_NUM', { ascending: true })
       .then(({ data: tables }) => {

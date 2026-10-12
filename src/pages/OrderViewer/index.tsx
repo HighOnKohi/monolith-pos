@@ -54,7 +54,7 @@ export default function OrderViewer() {
       .channel('order-viewer-table-sync')
       .on('postgres_changes', { event: '*', schema: 'orders', table: 'Restaurant_Orders' }, () => void loadData())
       .on('postgres_changes', { event: '*', schema: 'orders', table: 'Order_Items' }, () => void loadData())
-      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => void loadData())
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Active_Tables' }, () => void loadData())
       .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Labels' }, () => void loadData())
       .subscribe()
 

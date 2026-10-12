@@ -13,11 +13,13 @@ import { Save, AlertCircle, RefreshCw, Check, AlertTriangle } from 'lucide-react
 interface TableTypesManagerProps {
   layoutTables: MergedTableNode[]
   onConfigChange?: () => void
+  isSidebar?: boolean
 }
 
 export const TableTypesManager: React.FC<TableTypesManagerProps> = ({
   layoutTables,
   onConfigChange,
+  isSidebar = false,
 }) => {
   const [configs, setConfigs] = useState<TableTypeConfig[]>([])
   const [loading, setLoading] = useState(true)
@@ -110,23 +112,26 @@ export const TableTypesManager: React.FC<TableTypesManagerProps> = ({
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className={isSidebar ? 'p-3.5 space-y-3.5 select-none' : 'p-6 max-w-5xl mx-auto space-y-6'}>
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <div>
-          <h2 className="text-base font-black text-[#14274E]">Table Type Configuration & Limits</h2>
-          <p className="text-xs font-semibold text-slate-500">
-            Define seating capacities and maximum placement limits per table type.
+          <h3 className={`${isSidebar ? 'text-xs' : 'text-base'} font-black text-[#14274E]`}>
+            {isSidebar ? 'Table Types' : 'Table Type Configuration & Limits'}
+          </h3>
+          <p className="text-[11px] font-semibold text-slate-400">
+            {isSidebar ? 'Click any table type to configure details & limits' : 'Define seating capacities and maximum placement limits per table type.'}
           </p>
         </div>
         <button
           type="button"
           onClick={() => void loadConfigs()}
           disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-600 transition-colors cursor-pointer"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-600 transition-colors cursor-pointer shrink-0"
+          title="Refresh"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          <span>Refresh</span>
+          {!isSidebar && <span>Refresh</span>}
         </button>
       </div>
 
@@ -146,7 +151,7 @@ export const TableTypesManager: React.FC<TableTypesManagerProps> = ({
       )}
 
       {/* Table Types Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className={isSidebar ? 'flex flex-col gap-2.5' : 'grid grid-cols-1 md:grid-cols-2 gap-4'}>
         {configs.map((cfg) => {
           const tableType = cfg.TABLE_TYPE as TableType
           const placedCount = currentTypeCounts.get(cfg.TABLE_TYPE) || 0
@@ -157,12 +162,19 @@ export const TableTypesManager: React.FC<TableTypesManagerProps> = ({
           return (
             <div
               key={cfg.TYPE_CONFIG_ID}
-              className={`bg-white rounded-2xl border p-4.5 transition-all shadow-xs ${
+              onClick={() => {
+                if (!isEditing) {
+                  startEdit(cfg)
+                }
+              }}
+              className={`bg-white rounded-2xl border p-4 transition-all shadow-xs ${
+                !isEditing ? 'cursor-pointer hover:border-slate-300 hover:shadow-sm' : ''
+              } ${
                 isOverLimit
                   ? 'border-rose-300 bg-rose-50/20'
                   : isEditing
-                    ? 'border-[#14274E]/40 ring-2 ring-[#14274E]/10'
-                    : 'border-slate-200 hover:border-slate-300'
+                    ? 'border-[#14274E] ring-2 ring-[#14274E]/10'
+                    : 'border-slate-200'
               }`}
             >
               <div className="flex items-start justify-between gap-3 mb-3">

@@ -43,7 +43,7 @@ export async function getMergeGroupMemberIds(tableId: number): Promise<number[]>
   try {
     const { data: target } = await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Active_Tables')
       .select('TABLE_ID, MERGE_GROUP_ID')
       .eq('TABLE_ID', tableId)
       .maybeSingle()
@@ -53,7 +53,7 @@ export async function getMergeGroupMemberIds(tableId: number): Promise<number[]>
     const anchorId = target.MERGE_GROUP_ID ?? target.TABLE_ID
     const { data: secondaries } = await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Active_Tables')
       .select('TABLE_ID')
       .eq('MERGE_GROUP_ID', anchorId)
 
@@ -100,7 +100,7 @@ export async function sendAssistanceRequest(
 
     await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Active_Tables')
       .update(updatePayload)
       .in('TABLE_ID', targetIds)
   } catch (err) {
@@ -176,7 +176,7 @@ export async function resolveTableAssistance(tableId: number): Promise<number[]>
   try {
     await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Active_Tables')
       .update({
         STATUS: 'OCCUPIED',
         BILL_OUT_REQUESTED: false,

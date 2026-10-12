@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import type { Order, OrderItem, OrderStatus } from '@/types/order'
 import { resolveTableGroupByList } from '@/services/tableGroupService'
-import type { TableData } from '@/services/tableService'
+import { fetchAllTables, type TableData } from '@/services/tableService'
 import { fetchActiveLabels, type TableLabel } from '@/services/tableLabelService'
 import { logOrderEvent } from '@/services/orderLogsService'
 import { broadcastMenuItemStatus } from '@/hooks/useRealtimeMenu'
@@ -133,11 +133,10 @@ export async function fetchDispatcherOrders(): Promise<DispatcherOrder[]> {
   })
 
   // Fetch tables and active labels to resolve merged display labels & priority tiers
-  const [{ data: tablesData }, activeLabels] = await Promise.all([
-    supabase.schema('tables').from('Restaurant_Tables').select('*'),
+  const [allTables, activeLabels] = await Promise.all([
+    fetchAllTables().catch(() => []),
     fetchActiveLabels().catch(() => []),
   ])
-  const allTables = (tablesData as TableData[]) ?? []
   const labelMap = new Map<number, TableLabel>(activeLabels.map((l) => [l.LABEL_ID, l]))
 
   return orders

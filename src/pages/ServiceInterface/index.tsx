@@ -326,7 +326,7 @@ export default function CashierPage() {
       .channel('service-tables-sync')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'tables', table: 'Restaurant_Tables' },
+        { event: '*', schema: 'tables', table: 'Active_Tables' },
         () => {
           loadTables()
         }
@@ -341,7 +341,7 @@ export default function CashierPage() {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'tables', table: 'Table_Layout_Info' },
+        { event: '*', schema: 'tables', table: 'Table_Info' },
         () => {
           loadTables()
           loadInitialData()
@@ -518,15 +518,30 @@ export default function CashierPage() {
         prev.filter((r) => !selectedGroup.memberTableIds.includes(r.tableId)),
       )
 
-      // 3. Clear table bill-out requested and mark all member tables AVAILABLE
+      // 3. Clear table bill-out requested and mark all member tables AVAILABLE (respecting MERGE_PERSISTENCY)
+      const { data: atRows } = await supabase
+        .schema('tables')
+        .from('Active_Tables')
+        .select('TABLE_ID, MERGE_PERSISTENCY')
+        .in('TABLE_ID', selectedGroup.memberTableIds)
+
+      const isContinuous = atRows?.some((r) => r.MERGE_PERSISTENCY === 'CONTINOUOUS')
+
+      const updatePayload: Record<string, unknown> = {
+        BILL_OUT_REQUESTED: false,
+        STATUS: 'AVAILABLE',
+        SEATED_GUEST_COUNT: 0,
+        OCCUPIED_SINCE: null,
+      }
+      if (!isContinuous) {
+        updatePayload.MERGE_GROUP_ID = null
+        updatePayload.MERGE_PERSISTENCY = null
+      }
+
       await supabase
         .schema('tables')
-        .from('Restaurant_Tables')
-        .update({
-          BILL_OUT_REQUESTED: false,
-          STATUS: 'AVAILABLE',
-          CURRENT_GUEST_COUNT: 0,
-        })
+        .from('Active_Tables')
+        .update(updatePayload)
         .in('TABLE_ID', selectedGroup.memberTableIds)
 
       // ── STEP 3: Clear active cashier state ONLY after DB operations succeed ──

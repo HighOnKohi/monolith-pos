@@ -202,12 +202,12 @@ export default function CashierInterface() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Bill_Requests' }, () => scheduleLoad())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Discounts' }, () => scheduleLoad())
       // Tables schema for restaurant tables and layout presets
-      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Active_Tables' }, () => scheduleLoad())
       .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Presets' }, () => scheduleLoad())
-      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Layout_Info' }, () => scheduleLoad())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Restaurant_Tables' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Info' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Active_Tables' }, () => scheduleLoad())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'Table_Layout_Presets' }, () => scheduleLoad())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'Table_Layout_Info' }, () => scheduleLoad())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Table_Info' }, () => scheduleLoad())
       // Supabase realtime broadcast events
       .on('broadcast', { event: 'order_update' }, () => scheduleLoad())
       .on('broadcast', { event: 'order_updated' }, () => scheduleLoad())

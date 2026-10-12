@@ -5,6 +5,11 @@ import {
   fetchPresetLayout,
   fetchLiveRestaurantTables,
   TABLE_TYPES,
+  DEFAULT_GRID_WIDTH,
+  DEFAULT_GRID_HEIGHT,
+  GRID_MARGIN_BLOCKS,
+  TOTAL_GRID_WIDTH_BLOCKS,
+  TOTAL_GRID_HEIGHT_BLOCKS,
   type TableLayoutPreset,
   type MergedTableNode,
   type TableLayoutInfo,
@@ -16,6 +21,9 @@ import {
   updateSeatedPax,
   unmergeTables,
   saveTableMerge,
+  reserveTable,
+  cancelReservation,
+  setTableMergePersistency,
   type TableData,
   type TableStatus,
 } from '@/services/tableService'
@@ -38,6 +46,12 @@ import {
   Check,
   Tag,
   Receipt,
+  LayoutGrid,
+  CalendarClock,
+  Calendar,
+  Phone,
+  UserCheck,
+  ShoppingBag,
 } from 'lucide-react'
 import {
   getActiveAdvanceOrderByTable,
@@ -88,6 +102,38 @@ export default function ReceptionistInterface() {
   const [advanceOrderForSelectedTable, setAdvanceOrderForSelectedTable] = useState<AdvanceOrder | null>(null)
   const [keepAdvanceOrder, setKeepAdvanceOrder] = useState<boolean>(true)
 
+  // ── Sidebar Tabs State ──
+  type SidebarTab = 'table' | 'reservation' | 'advanced_orders'
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('table')
+
+  // ── Reservation Form State ──
+  interface TableReservation {
+    tableNum: number
+    customerName: string
+    phoneNumber: string
+    partySize: number
+    reservationTime: string
+    notes: string
+    createdAt: string
+  }
+  const [reservations, setReservations] = useState<Record<number, TableReservation>>(() => {
+    try {
+      const saved = localStorage.getItem('monolith_table_reservations')
+      return saved ? JSON.parse(saved) : {}
+    } catch {
+      return {}
+    }
+  })
+  const [resCustomerName, setResCustomerName] = useState('')
+  const [resPhone, setResPhone] = useState('')
+  const [resPartySize, setResPartySize] = useState<number>(2)
+  const [resTime, setResTime] = useState('')
+  const [resNotes, setResNotes] = useState('')
+
+  // ── Merge Modal State ──
+  const [mergeModalOpen, setMergeModalOpen] = useState(false)
+  const [mergePersistencyChoice, setMergePersistencyChoice] = useState<'TEMPORARY' | 'CONTINOUOUS'>('TEMPORARY')
+
   // ── Drag & Drop State ──
   interface DragState {
     tableNum: number
@@ -133,36 +179,23 @@ export default function ReceptionistInterface() {
     return () => ro.disconnect()
   }, [])
 
-  // ── Calculate cellSize to fit 13 rows and ensure rightmost tables never overflow ──
+  // ── Fixed Grid Dimensions & Proportional Scaling ──
+  const gridWidth = DEFAULT_GRID_WIDTH
+  const gridHeight = DEFAULT_GRID_HEIGHT
+
+  // Dynamic cell size: scales to fit BOTH container width and height (17 blocks wide x 12 blocks high)
   const cellSize = useMemo(() => {
-    if (containerDimensions.height <= 0 || containerDimensions.width <= 0) return 48
+    if (containerDimensions.width <= 0 || containerDimensions.height <= 0) return 48
+    const maxW = (containerDimensions.width - 24) / TOTAL_GRID_WIDTH_BLOCKS
+    const maxH = (containerDimensions.height - 24) / TOTAL_GRID_HEIGHT_BLOCKS
+    return Math.max(28, Math.floor(Math.min(maxW, maxH)))
+  }, [containerDimensions.width, containerDimensions.height])
 
-    let maxCols = 1
-    for (const t of layoutTables) {
-      const cfg = TABLE_TYPES[t.TABLE_TYPE] || TABLE_TYPES[1]
-      const right = (t.X_POS ?? 0) + (cfg.width ?? 1)
-      if (right > maxCols) maxCols = right
-    }
-
-    // Add 0.6 margin for chairs on the rightmost table
-    const requiredWidth = maxCols + 0.6
-    const cellByHeight = containerDimensions.height / 13
-    const cellByWidth = containerDimensions.width / requiredWidth
-
-    const scale = Math.floor(Math.min(cellByHeight, cellByWidth))
-    return Math.max(20, scale)
-  }, [containerDimensions.height, containerDimensions.width, layoutTables])
-
-  // ── Grid Dimensions ──
-  const gridWidth = useMemo(() => {
-    if (containerDimensions.width <= 0) return 24
-    return Math.max(8, Math.floor(containerDimensions.width / cellSize))
-  }, [containerDimensions.width, cellSize])
-
-  const gridHeight = useMemo(() => {
-    if (containerDimensions.height <= 0) return 13
-    return Math.max(6, Math.floor(containerDimensions.height / cellSize))
-  }, [containerDimensions.height, cellSize])
+  const halfCellMarginPx = Math.round(GRID_MARGIN_BLOCKS * cellSize)
+  const playableWidthPx = gridWidth * cellSize
+  const playableHeightPx = gridHeight * cellSize
+  const totalFloorWidthPx = playableWidthPx + halfCellMarginPx * 2
+  const totalFloorHeightPx = playableHeightPx + halfCellMarginPx * 2
 
   // ── Effective Layout Tables taking active drag into account ──
   const effectiveLayoutTables = useMemo(() => {
@@ -258,6 +291,14 @@ export default function ReceptionistInterface() {
             BILL_OUT_REQUESTED: live?.BILL_OUT_REQUESTED ?? false,
             TABLE_ID: live?.TABLE_ID ?? lt.TABLE_NUM,
             LABEL_ID: resolvedLabel,
+            MERGE_PERSISTENCY: live?.MERGE_PERSISTENCY ?? null,
+            OCCUPIED_SINCE: live?.OCCUPIED_SINCE ?? null,
+            RESERVATION_ID: live?.RESERVATION_ID ?? null,
+            RESERVATION_NAME: live?.RESERVATION_NAME ?? null,
+            RESERVATION_PAX: live?.RESERVATION_PAX ?? null,
+            RESERVATION_NOTES: live?.RESERVATION_NOTES ?? null,
+            RESERVATION_TIME_LIMIT: live?.RESERVATION_TIME_LIMIT ?? null,
+            RESERVED_SINCE: live?.RESERVED_SINCE ?? null,
           }
         })
         setLayoutTables(mergedNodes)
@@ -297,11 +338,38 @@ export default function ReceptionistInterface() {
             BILL_OUT_REQUESTED: rt.BILL_OUT_REQUESTED,
             TABLE_ID: rt.TABLE_ID,
             LABEL_ID: resolvedLabel,
+            MERGE_PERSISTENCY: rt.MERGE_PERSISTENCY ?? null,
+            OCCUPIED_SINCE: rt.OCCUPIED_SINCE ?? null,
+            RESERVATION_ID: rt.RESERVATION_ID ?? null,
+            RESERVATION_NAME: rt.RESERVATION_NAME ?? null,
+            RESERVATION_PAX: rt.RESERVATION_PAX ?? null,
+            RESERVATION_NOTES: rt.RESERVATION_NOTES ?? null,
+            RESERVATION_TIME_LIMIT: rt.RESERVATION_TIME_LIMIT ?? null,
+            RESERVED_SINCE: rt.RESERVED_SINCE ?? null,
           }
         })
         setLayoutTables(fallbackNodes)
       } else {
         setLayoutTables([])
+      }
+
+      // Sync active reservations from Table_Reservations joined on liveTables
+      const dbReservations: Record<number, TableReservation> = {}
+      for (const rt of liveTables) {
+        if (rt.STATUS === 'RESERVED' && rt.RESERVATION_NAME) {
+          dbReservations[rt.TABLE_NUM] = {
+            tableNum: rt.TABLE_NUM,
+            customerName: rt.RESERVATION_NAME,
+            phoneNumber: '',
+            partySize: rt.RESERVATION_PAX || rt.CURRENT_GUEST_COUNT || 1,
+            reservationTime: rt.RESERVATION_TIME_LIMIT || 'Later today',
+            notes: rt.RESERVATION_NOTES || '',
+            createdAt: rt.RESERVED_SINCE || new Date().toISOString(),
+          }
+        }
+      }
+      if (Object.keys(dbReservations).length > 0) {
+        setReservations((prev) => ({ ...prev, ...dbReservations }))
       }
     } catch (err) {
       console.error('[ReceptionistInterface] Error loading data:', err)
@@ -317,7 +385,17 @@ export default function ReceptionistInterface() {
     // Realtime subscriptions with local mutation debouncing
     const channel = supabase
       .channel('receptionist-live-sync')
-      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Restaurant_Tables' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Active_Tables' }, () => {
+        if (Date.now() - lastMutationTimeRef.current >= 2500) {
+          void loadData(true)
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Info' }, () => {
+        if (Date.now() - lastMutationTimeRef.current >= 2500) {
+          void loadData(true)
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'tables', table: 'Table_Reservations' }, () => {
         if (Date.now() - lastMutationTimeRef.current >= 2500) {
           void loadData(true)
         }
@@ -491,8 +569,8 @@ export default function ReceptionistInterface() {
         const y = m.Y_POS
         const width = cfg.width
         const height = cfg.height
-        const cx = (x + width / 2) * cellSize
-        const cy = (y + height / 2) * cellSize
+        const cx = halfCellMarginPx + (x + width / 2) * cellSize
+        const cy = halfCellMarginPx + (y + height / 2) * cellSize
         return {
           tableNum: m.TABLE_NUM,
           x,
@@ -812,27 +890,17 @@ export default function ReceptionistInterface() {
           setLayoutTables(updatedLayout)
 
           try {
-            const presetId = activePresetRef.current?.LAYOUT_PRESET_ID
-            if (presetId) {
-              const { error } = await supabase
-                .schema('tables')
-                .from('Table_Layout_Info')
-                .update({ X_POS: currentX, Y_POS: currentY })
-                .eq('LAYOUT_PRESET_ID', presetId)
-                .eq('TABLE_NUM', tableNum)
+            const movedTable = updatedLayout.find((t) => t.TABLE_NUM === tableNum)
+            const resolvedTableId = movedTable?.TABLE_ID ?? tableNum
+            await supabase
+              .schema('tables')
+              .from('Table_Info')
+              .update({ X_POS: currentX, Y_POS: currentY })
+              .eq('TABLE_ID', resolvedTableId)
 
-              if (error) {
-                await supabase
-                  .from('Table_Layout_Info')
-                  .update({ X_POS: currentX, Y_POS: currentY })
-                  .eq('LAYOUT_PRESET_ID', presetId)
-                  .eq('TABLE_NUM', tableNum)
-              }
-            }
             void logTableAction('LAYOUT_CHANGED', `Moved Table ${tableNum} to (${currentX}, ${currentY}) from Receptionist.`)
 
             // ── Auto-Merge on Drop: Check adjacency with other tables ──
-            const movedTable = updatedLayout.find((t) => t.TABLE_NUM === tableNum)
             if (movedTable) {
               const adjacentTables = updatedLayout.filter(
                 (t) => t.TABLE_NUM !== tableNum && areTablesAdjacent(movedTable, t)
@@ -916,11 +984,17 @@ export default function ReceptionistInterface() {
       prev.map((t) => {
         const isTarget = t.TABLE_ID === tableId || t.TABLE_NUM === selectedTable?.TABLE_NUM
         const isMergedWithTarget = targetMergeGroupId != null && t.MERGE_GROUP_ID === targetMergeGroupId
+        let nextStatus = t.STATUS
+        if (pax > 0 && (t.STATUS === 'AVAILABLE' || t.STATUS === 'RESERVED')) {
+          nextStatus = 'OCCUPIED'
+        } else if (pax === 0 && t.STATUS !== 'AVAILABLE') {
+          nextStatus = 'AVAILABLE'
+        }
         return isTarget || isMergedWithTarget
           ? {
               ...t,
               CURRENT_GUEST_COUNT: pax,
-              STATUS: (pax > 0 && t.STATUS === 'AVAILABLE') ? 'OCCUPIED' : t.STATUS,
+              STATUS: nextStatus,
             }
           : t
       }),
@@ -933,8 +1007,10 @@ export default function ReceptionistInterface() {
         targetId: String(tableId),
         newState: { seatedPax: pax },
       })
-      if (pax > 0 && selectedTable?.STATUS === 'AVAILABLE') {
+      if (pax > 0 && (selectedTable?.STATUS === 'AVAILABLE' || selectedTable?.STATUS === 'RESERVED')) {
         await setTableStatus(tableId, 'OCCUPIED')
+      } else if (pax === 0 && selectedTable?.STATUS !== 'AVAILABLE') {
+        await setTableStatus(tableId, 'AVAILABLE')
       }
     } catch (err) {
       showToast((err as Error).message, 'error')
@@ -1031,6 +1107,148 @@ export default function ReceptionistInterface() {
     }
   }
 
+  // ── Sync Active Reservation Fields on Table Select ──
+  useEffect(() => {
+    if (selectedTable) {
+      const activeRes = reservations[selectedTable.TABLE_NUM]
+      if (activeRes) {
+        setResCustomerName(activeRes.customerName)
+        setResPhone(activeRes.phoneNumber)
+        setResPartySize(activeRes.partySize)
+        setResTime(activeRes.reservationTime)
+        setResNotes(activeRes.notes || '')
+      } else {
+        setResCustomerName('')
+        setResPhone('')
+        setResPartySize(Math.min(2, selectedEffectiveCapacity))
+        const d = new Date(Date.now() + 30 * 60000)
+        const hh = String(d.getHours()).padStart(2, '0')
+        const mm = String(d.getMinutes()).padStart(2, '0')
+        setResTime(`${hh}:${mm}`)
+        setResNotes('')
+      }
+    }
+  }, [selectedTableNum, selectedEffectiveCapacity, reservations])
+
+  // ── Reservation Action Handlers ──
+  async function handleRegisterReservation(e?: React.FormEvent) {
+    if (e) e.preventDefault()
+    if (!selectedTable) return
+    if (!resCustomerName.trim()) {
+      showToast('Please enter customer name for reservation.', 'error')
+      return
+    }
+
+    const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
+    const now = new Date().toISOString()
+    const newRes: TableReservation = {
+      tableNum: selectedTable.TABLE_NUM,
+      customerName: resCustomerName.trim(),
+      phoneNumber: resPhone.trim(),
+      partySize: Math.max(1, Math.min(selectedEffectiveCapacity, resPartySize || 1)),
+      reservationTime: resTime || 'Later today',
+      notes: resNotes.trim(),
+      createdAt: now,
+    }
+
+    const updated = { ...reservations, [selectedTable.TABLE_NUM]: newRes }
+    setReservations(updated)
+    try {
+      localStorage.setItem('monolith_table_reservations', JSON.stringify(updated))
+    } catch {
+      // quota
+    }
+
+    try {
+      await reserveTable(tableId, {
+        name: resCustomerName.trim(),
+        pax: newRes.partySize,
+        timeLimit: resTime || 'Later today',
+        notes: resNotes.trim(),
+      })
+      showToast(`Reservation registered for Table ${selectedTable.TABLE_NUM}!`, 'success')
+      await loadData(true)
+    } catch (err) {
+      showToast((err as Error).message || 'Failed to save reservation', 'error')
+    }
+  }
+
+  async function handleCancelReservation(tableNum: number) {
+    if (!selectedTable) return
+    const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
+    const updated = { ...reservations }
+    delete updated[tableNum]
+    setReservations(updated)
+    try {
+      localStorage.setItem('monolith_table_reservations', JSON.stringify(updated))
+    } catch {
+      // quota
+    }
+
+    try {
+      await cancelReservation(tableId)
+      showToast(`Reservation cancelled for Table ${tableNum}.`, 'info')
+      await loadData(true)
+    } catch (err) {
+      showToast((err as Error).message || 'Failed to cancel reservation', 'error')
+    }
+  }
+
+  async function handleSeatReservation(tableNum: number) {
+    if (!selectedTable) return
+    const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
+    const res = reservations[tableNum]
+    const pax = res?.partySize || selectedCurrentPax || 1
+
+    const updated = { ...reservations }
+    delete updated[tableNum]
+    setReservations(updated)
+    try {
+      localStorage.setItem('monolith_table_reservations', JSON.stringify(updated))
+    } catch {
+      // quota
+    }
+
+    try {
+      await cancelReservation(tableId)
+      await handleStatusChange(tableId, 'OCCUPIED')
+      await handleSeatedPaxChange(tableId, pax)
+      setSidebarTab('table')
+      showToast(`Table ${tableNum} seated with ${pax} guests!`, 'success')
+      await loadData(true)
+    } catch (err) {
+      showToast((err as Error).message || 'Failed to seat reservation', 'error')
+    }
+  }
+
+  // ── Footer Toggle Handlers (Table Tab) ──
+  async function handleOccupiedToggle() {
+    if (!selectedTable) return
+    const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
+    if (selectedTable.STATUS === 'OCCUPIED') {
+      await handleClearTable(tableId)
+    } else {
+      await handleStatusChange(tableId, 'OCCUPIED')
+      if (selectedCurrentPax === 0) {
+        await handleSeatedPaxChange(tableId, 1)
+      }
+    }
+  }
+
+  async function handleUnavailableToggle() {
+    if (!selectedTable) return
+    const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
+    if (selectedTable.STATUS === 'UNAVAILABLE') {
+      await handleStatusChange(tableId, 'AVAILABLE')
+    } else {
+      if (selectedTable.STATUS === 'OCCUPIED') {
+        showToast('Cannot mark table as Unavailable while it is Occupied.', 'error')
+        return
+      }
+      await handleStatusChange(tableId, 'UNAVAILABLE')
+    }
+  }
+
   function handleTableClick(node: MergedTableNode, e?: React.MouseEvent) {
     if (e && (e.ctrlKey || e.metaKey)) {
       // Multi-selection via Ctrl/Cmd+Click
@@ -1061,7 +1279,13 @@ export default function ReceptionistInterface() {
   }
 
   // ── Merge Multi-Selected Tables ──
-  async function handleMergeSelectedTables() {
+  function handleMergeSelectedTables() {
+    if (selectedTableNums.size < 2) return
+    setMergePersistencyChoice('TEMPORARY')
+    setMergeModalOpen(true)
+  }
+
+  async function handleConfirmMerge() {
     if (selectedTableNums.size < 2) return
     lastMutationTimeRef.current = Date.now()
 
@@ -1069,6 +1293,7 @@ export default function ReceptionistInterface() {
     const selectedTables = layoutTables.filter((t) => selectedTableNums.has(t.TABLE_NUM))
     if (selectedTables.length < 2) {
       showToast('Select at least 2 tables to merge', 'error')
+      setMergeModalOpen(false)
       return
     }
 
@@ -1078,15 +1303,16 @@ export default function ReceptionistInterface() {
     const memberIds = sorted.slice(1).map((t) => t.TABLE_ID ?? t.TABLE_NUM)
 
     try {
-      await saveTableMerge(captainId, memberIds)
-      void logTableAction('TABLES_MERGED', `Merged tables ${Array.from(selectedTableNums).sort().join(', ')} from Receptionist.`, {
+      await saveTableMerge(captainId, memberIds, mergePersistencyChoice)
+      void logTableAction('TABLES_MERGED', `Merged tables ${Array.from(selectedTableNums).sort().join(', ')} (${mergePersistencyChoice}) from Receptionist.`, {
         targetEntity: 'TABLE_GROUP',
         targetId: String(captainId),
-        newState: { memberTableNums: Array.from(selectedTableNums) },
+        newState: { memberTableNums: Array.from(selectedTableNums), persistency: mergePersistencyChoice },
       })
-      showToast(`Merged ${selectedTableNums.size} tables into Group #${sorted[0].TABLE_NUM}`, 'success')
+      showToast(`Merged ${selectedTableNums.size} tables into Group #${sorted[0].TABLE_NUM} (${mergePersistencyChoice.toLowerCase()})`, 'success')
       setSelectedTableNums(new Set())
       setSelectedTableNum(null)
+      setMergeModalOpen(false)
       await loadData(true)
     } catch (err) {
       showToast((err as Error).message || 'Failed to merge tables', 'error')
@@ -1094,6 +1320,17 @@ export default function ReceptionistInterface() {
   }
 
   const selectedLabel = selectedTable?.LABEL_ID ? labelMap.get(selectedTable.LABEL_ID) : null
+
+  const occupiedDuration = useMemo(() => {
+    if (!selectedTable?.OCCUPIED_SINCE) return null
+    const startTime = new Date(selectedTable.OCCUPIED_SINCE).getTime()
+    if (isNaN(startTime)) return null
+    const diffMinutes = Math.max(0, Math.floor((Date.now() - startTime) / 60000))
+    if (diffMinutes < 60) return `${diffMinutes}m`
+    const hours = Math.floor(diffMinutes / 60)
+    const mins = diffMinutes % 60
+    return `${hours}h ${mins}m`
+  }, [selectedTable?.OCCUPIED_SINCE])
 
   return (
     <div className="receptionist-interface-page staff-page select-none">
@@ -1177,11 +1414,13 @@ export default function ReceptionistInterface() {
             </div>
           </div>
 
-        {/* Floor Plan Canvas Container */}
-        <div className="layout-container flex-1 min-h-0 relative flex overflow-hidden">
-          {/* Dynamic edge-to-edge grid container */}
+        {/* Floor Plan Workspace Wrapper (Centers tight card) */}
+        <div
+          ref={containerRef}
+          className="layout-workspace-wrapper flex-1 min-h-0 w-full h-full flex items-center justify-center p-2 sm:p-3 overflow-hidden relative select-none"
+        >
+          {/* Tight Card Container (Fits grid exactly) */}
           <div
-            ref={containerRef}
             onClick={(e) => {
               // Click background deselects table
               const target = e.target as HTMLElement
@@ -1192,229 +1431,218 @@ export default function ReceptionistInterface() {
                 }
               }
             }}
-            className="floor-grid-canvas flex-1 h-full w-full overflow-hidden relative bg-white select-none p-0 cursor-default"
+            className="layout-container relative bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden select-none cursor-default shrink-0"
+            style={{
+              width: `${totalFloorWidthPx}px`,
+              height: `${totalFloorHeightPx}px`,
+            }}
           >
+            {/* Floating Merge Tables Button (When >= 2 tables are multi-selected) */}
+            {selectedTableNums.size >= 2 && (
+              <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150">
+                <button
+                  type="button"
+                  onClick={handleMergeSelectedTables}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-xl hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-105 active:scale-95 transition-all font-bold text-xs cursor-pointer"
+                >
+                  <GitMerge className="w-4 h-4 text-[#E9C46A]" />
+                  <span>Merge Tables ({selectedTableNums.size})</span>
+                </button>
+              </div>
+            )}
+
+            {/* Floor Canvas (17x12 blocks: 16x11 playable with half-cell extension on all 4 sides) */}
             <div className="w-full h-full relative select-none bg-white">
-                {/* Floating Merge Tables Button (When >= 2 tables are multi-selected) */}
-                {selectedTableNums.size >= 2 && (
-                  <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150">
-                    <button
-                      type="button"
-                      onClick={handleMergeSelectedTables}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-xl hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-105 active:scale-95 transition-all font-bold text-xs cursor-pointer"
-                    >
-                      <GitMerge className="w-4 h-4 text-[#E9C46A]" />
-                      <span>Merge Tables ({selectedTableNums.size})</span>
-                    </button>
-                  </div>
-                )}
-
-                {/* Dynamic Merge Group Indicators (Only shown when a table under that merge group is selected) */}
-                {mergeGroupVisuals
-                  .filter((visual) => visual.isSelected)
-                  .map((visual) => {
-                  if (visual.type === 'box') {
-                    const padding = Math.max(6, Math.round(cellSize * 0.12))
-                    const left = visual.minX * cellSize - padding
-                    const top = visual.minY * cellSize - padding
-                    const width = (visual.maxX - visual.minX) * cellSize + padding * 2
-                    const height = (visual.maxY - visual.minY) * cellSize + padding * 2
-
-                    return (
-                      <div
-                        key={`merge-group-box-${visual.groupId}`}
-                        className={`absolute pointer-events-none rounded-2xl border-2 border-dashed transition-all duration-150 z-10 ${
-                          visual.isSelected
-                            ? 'border-indigo-600 bg-indigo-500/10 shadow-md ring-2 ring-indigo-300'
-                            : 'border-indigo-400/80 bg-indigo-500/5 shadow-xs'
-                        }`}
-                        style={{
-                          left: `${left}px`,
-                          top: `${top}px`,
-                          width: `${width}px`,
-                          height: `${height}px`,
-                        }}
-                      />
-                    )
-                  }
-
-                  if (visual.type === 'chain') {
-                    return (
-                      <svg
-                        key={`merge-group-chain-${visual.groupId}`}
-                        className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible"
-                      >
-                        {/* Broken Chain Link Lines */}
-                        {visual.links.map((link, idx) => (
-                          <g key={`link-${visual.groupId}-${link.fromTable}-${link.toTable}-${idx}`}>
-                            <line
-                              x1={link.x1}
-                              y1={link.y1}
-                              x2={link.x2}
-                              y2={link.y2}
-                              stroke="#818CF8"
-                              strokeWidth={visual.isSelected ? 8 : 5}
-                              strokeOpacity={visual.isSelected ? 0.5 : 0.3}
-                              strokeDasharray="10 6"
-                              strokeLinecap="round"
-                            />
-                            <line
-                              x1={link.x1}
-                              y1={link.y1}
-                              x2={link.x2}
-                              y2={link.y2}
-                              stroke="#4F46E5"
-                              strokeWidth={visual.isSelected ? 3.5 : 2.5}
-                              strokeDasharray="8 5"
-                              strokeLinecap="round"
-                            />
-                          </g>
-                        ))}
-
-                        {/* Chain Node Dots at Table Centers */}
-                        {visual.nodes.map((node) => (
-                          <g key={`node-${visual.groupId}-${node.tableNum}`}>
-                            <circle
-                              cx={node.cx}
-                              cy={node.cy}
-                              r={visual.isSelected ? 7 : 5.5}
-                              fill="#4F46E5"
-                              stroke="#FFFFFF"
-                              strokeWidth={2}
-                            />
-                            <circle cx={node.cx} cy={node.cy} r={2.5} fill="#FFFFFF" />
-                          </g>
-                        ))}
-                      </svg>
-                    )
-                  }
-
-                  return null
-                })}
-
-                {/* Render Table Nodes with TableVisual */}
-                {effectiveLayoutTables.map((node) => {
-                  const isSelected = selectedTableNum === node.TABLE_NUM || selectedTableNums.has(node.TABLE_NUM)
-                  const suppress = chairSuppressionMap.get(node.TABLE_NUM)
-                  const label = node.LABEL_ID ? labelMap.get(node.LABEL_ID) : undefined
-
-                  // Dim tables that don't match the current status filter (preserving floor layout spatial context)
-                  const matchesFilter = statusFilter === 'ALL' || node.STATUS === statusFilter
-
-                  // Compute combined pax and capacity if merged
-                  const isMerged = node.MERGE_GROUP_ID != null
-                  const groupMembers = isMerged
-                    ? effectiveLayoutTables.filter((t) => t.MERGE_GROUP_ID === node.MERGE_GROUP_ID)
-                    : [node]
-                  const displayCapacity = isMerged
-                    ? groupMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY ?? 4), 0)
-                    : (node.GUEST_CAPACITY ?? 4)
-                  const displayPax = isMerged
-                    ? Math.max(...groupMembers.map((m) => m.CURRENT_GUEST_COUNT ?? 0), 0)
-                    : (node.CURRENT_GUEST_COUNT ?? 0)
+              {/* Dynamic Merge Group Indicators (Only shown when a table under that merge group is selected) */}
+              {mergeGroupVisuals
+                .filter((visual) => visual.isSelected)
+                .map((visual) => {
+                if (visual.type === 'box') {
+                  const padding = Math.max(6, Math.round(cellSize * 0.12))
+                  const left = halfCellMarginPx + visual.minX * cellSize - padding
+                  const top = halfCellMarginPx + visual.minY * cellSize - padding
+                  const width = (visual.maxX - visual.minX) * cellSize + padding * 2
+                  const height = (visual.maxY - visual.minY) * cellSize + padding * 2
 
                   return (
                     <div
-                      key={node.TABLE_NUM}
-                      draggable={false}
-                      onMouseDown={(e) => handleTableMouseDown(node, e)}
-                      onClick={(e) => handleTableClick(node, e)}
-                      className={`table-node-item absolute select-none cursor-grab active:cursor-grabbing ${
-                        dragState?.tableNum === node.TABLE_NUM
-                          ? 'transition-none z-50 scale-105 opacity-90'
-                          : 'transition-all'
-                      } ${
-                        isSelected || selectedTableNums.has(node.TABLE_NUM)
-                          ? 'z-40 scale-105 filter drop-shadow-md'
-                          : matchesFilter
-                            ? 'z-20 hover:scale-103'
-                            : 'z-10 opacity-30 hover:opacity-80'
+                      key={`merge-group-box-${visual.groupId}`}
+                      className={`absolute pointer-events-none rounded-2xl border-2 border-dashed transition-all duration-150 z-10 ${
+                        visual.isSelected
+                          ? 'border-indigo-600 bg-indigo-500/10 shadow-md ring-2 ring-indigo-300'
+                          : 'border-indigo-400/80 bg-indigo-500/5 shadow-xs'
                       }`}
                       style={{
-                        left: `${node.X_POS * cellSize}px`,
-                        top: `${node.Y_POS * cellSize}px`,
+                        left: `${left}px`,
+                        top: `${top}px`,
+                        width: `${width}px`,
+                        height: `${height}px`,
                       }}
-                    >
-                      <TableVisual
-                        tableType={node.TABLE_TYPE}
-                        tableNum={node.TABLE_NUM}
-                        cellSize={cellSize}
-                        status={node.STATUS}
-                        guestCount={displayPax}
-                        capacity={displayCapacity}
-                        labelName={label?.NAME}
-                        labelColor={label?.COLOR}
-                        isMerged={isMerged}
-                        mergeGroupId={node.MERGE_GROUP_ID}
-                        isSelected={isSelected}
-                        hideChairs={suppress}
-                      />
-                    </div>
+                    />
                   )
-                })}
+                }
 
-                {/* Loading Indicator */}
-                {isLoading && (
-                  <div className="absolute inset-0 bg-white/70 backdrop-blur-xs flex items-center justify-center z-50">
-                    <div className="flex items-center gap-2 text-xs font-black text-[#14274E]">
-                      <div className="w-4 h-4 rounded-full border-2 border-[#14274E] border-t-transparent animate-spin" />
-                      <span>Syncing floor plan...</span>
-                    </div>
-                  </div>
-                )}
+                if (visual.type === 'chain') {
+                  return (
+                    <svg
+                      key={`merge-group-chain-${visual.groupId}`}
+                      className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible"
+                    >
+                      {/* Broken Chain Link Lines */}
+                      {visual.links.map((link, idx) => (
+                        <g key={`link-${visual.groupId}-${link.fromTable}-${link.toTable}-${idx}`}>
+                          <line
+                            x1={link.x1}
+                            y1={link.y1}
+                            x2={link.x2}
+                            y2={link.y2}
+                            stroke="#818CF8"
+                            strokeWidth={visual.isSelected ? 8 : 5}
+                            strokeOpacity={visual.isSelected ? 0.5 : 0.3}
+                            strokeDasharray="10 6"
+                            strokeLinecap="round"
+                          />
+                          <line
+                            x1={link.x1}
+                            y1={link.y1}
+                            x2={link.x2}
+                            y2={link.y2}
+                            stroke="#4F46E5"
+                            strokeWidth={visual.isSelected ? 3.5 : 2.5}
+                            strokeDasharray="8 5"
+                            strokeLinecap="round"
+                          />
+                        </g>
+                      ))}
 
-                {/* Empty State */}
-                {!isLoading && layoutTables.length === 0 && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center pointer-events-none">
-                    <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center mb-3 shadow-xs">
-                      <TableShapeIcon tableType={1} size={32} />
-                    </div>
-                    <h3 className="text-sm font-extrabold text-[#14274E]">Floor Plan is Empty</h3>
-                    <p className="text-xs text-slate-400 font-medium max-w-xs mt-1">
-                      No tables found in this preset. Configure floor plans in the Layout Manager.
-                    </p>
+                      {/* Chain Node Dots at Table Centers */}
+                      {visual.nodes.map((node) => (
+                        <g key={`node-${visual.groupId}-${node.tableNum}`}>
+                          <circle
+                            cx={node.cx}
+                            cy={node.cy}
+                            r={visual.isSelected ? 7 : 5.5}
+                            fill="#4F46E5"
+                            stroke="#FFFFFF"
+                            strokeWidth={2}
+                          />
+                          <circle cx={node.cx} cy={node.cy} r={2.5} fill="#FFFFFF" />
+                        </g>
+                      ))}
+                    </svg>
+                  )
+                }
+
+                return null
+              })}
+
+              {/* Render Table Nodes with TableVisual */}
+              {effectiveLayoutTables.map((node) => {
+                const isSelected = selectedTableNum === node.TABLE_NUM || selectedTableNums.has(node.TABLE_NUM)
+                const suppress = chairSuppressionMap.get(node.TABLE_NUM)
+                const label = node.LABEL_ID ? labelMap.get(node.LABEL_ID) : undefined
+
+                // Dim tables that don't match the current status filter (preserving floor layout spatial context)
+                const matchesFilter = statusFilter === 'ALL' || node.STATUS === statusFilter
+
+                // Compute combined pax and capacity if merged
+                const isMerged = node.MERGE_GROUP_ID != null
+                const groupMembers = isMerged
+                  ? effectiveLayoutTables.filter((t) => t.MERGE_GROUP_ID === node.MERGE_GROUP_ID)
+                  : [node]
+                const displayCapacity = isMerged
+                  ? groupMembers.reduce((sum, m) => sum + (m.GUEST_CAPACITY ?? 4), 0)
+                  : (node.GUEST_CAPACITY ?? 4)
+                const displayPax = isMerged
+                  ? Math.max(...groupMembers.map((m) => m.CURRENT_GUEST_COUNT ?? 0), 0)
+                  : (node.CURRENT_GUEST_COUNT ?? 0)
+
+                return (
+                  <div
+                    key={node.TABLE_NUM}
+                    draggable={false}
+                    onMouseDown={(e) => handleTableMouseDown(node, e)}
+                    onClick={(e) => handleTableClick(node, e)}
+                    className={`table-node-item absolute select-none cursor-grab active:cursor-grabbing ${
+                      dragState?.tableNum === node.TABLE_NUM
+                        ? 'transition-none z-50 scale-105 opacity-90'
+                        : 'transition-all'
+                    } ${
+                      isSelected || selectedTableNums.has(node.TABLE_NUM)
+                        ? 'z-40 scale-105 filter drop-shadow-md'
+                        : matchesFilter
+                          ? 'z-20 hover:scale-103'
+                          : 'z-10 opacity-30 hover:opacity-80'
+                    }`}
+                    style={{
+                      left: `${halfCellMarginPx + node.X_POS * cellSize}px`,
+                      top: `${halfCellMarginPx + node.Y_POS * cellSize}px`,
+                    }}
+                  >
+                    <TableVisual
+                      tableType={node.TABLE_TYPE}
+                      tableNum={node.TABLE_NUM}
+                      cellSize={cellSize}
+                      status={node.STATUS}
+                      guestCount={displayPax}
+                      capacity={displayCapacity}
+                      labelName={label?.NAME}
+                      labelColor={label?.COLOR}
+                      isMerged={isMerged}
+                      mergeGroupId={node.MERGE_GROUP_ID}
+                      isSelected={isSelected}
+                      hideChairs={suppress}
+                    />
                   </div>
-                )}
-              </div>
+                )
+              })}
             </div>
+
+            {/* Loading Indicator */}
+            {isLoading && (
+              <div className="absolute inset-0 bg-white/70 backdrop-blur-xs flex items-center justify-center z-50">
+                <div className="flex items-center gap-2 text-xs font-black text-[#14274E]">
+                  <div className="w-4 h-4 rounded-full border-2 border-[#14274E] border-t-transparent animate-spin" />
+                  <span>Syncing floor plan...</span>
+                </div>
+              </div>
+            )}
+
+            {/* Empty State */}
+            {!isLoading && layoutTables.length === 0 && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center pointer-events-none">
+                <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center mb-3 shadow-xs">
+                  <TableShapeIcon tableType={1} size={32} />
+                </div>
+                <h3 className="text-sm font-extrabold text-[#14274E]">Floor Plan is Empty</h3>
+                <p className="text-xs text-slate-400 font-medium max-w-xs mt-1">
+                  No tables found in this preset. Configure floor plans in the Layout Manager.
+                </p>
+              </div>
+            )}
+          </div>
           </div>
         </div>
 
         {/* ── Right Div: receptionist-sidebar (Docked with gap and rounded corners) ── */}
-        {/* ── Right Div: receptionist-sidebar (Docked with gap and rounded corners) ── */}
         <aside className="receptionist-sidebar">
           <div className="h-full overflow-y-auto flex flex-col">
             {selectedTable ? (
-              <div className="p-4 flex flex-col gap-3.5">
-                {/* Header: Table Title & Shape */}
+              <div className="p-4 flex flex-col gap-3.5 flex-1 min-h-0">
+                {/* Header: Table Title & Active Label (No number icon, No description below title) */}
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-2xl bg-[#14274E] text-[#E9C46A] flex items-center justify-center font-black text-base shadow-xs shrink-0">
-                      {selectedTable.TABLE_NUM}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <h2 className="text-base font-black text-[#14274E] leading-tight">
-                          Table {selectedTable.TABLE_NUM}
-                        </h2>
-                        {selectedLabel && (
-                          <span
-                            className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase text-white shadow-2xs truncate max-w-[120px]"
-                            style={{ backgroundColor: selectedLabel.COLOR }}
-                          >
-                            {selectedLabel.NAME}
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-xs text-slate-500 font-medium block truncate">
-                        {TABLE_TYPES[selectedTable.TABLE_TYPE]?.name ?? 'Table'} •{' '}
-                        {isSelectedMerged ? (
-                          <span className="text-indigo-600 font-bold">Max {selectedEffectiveCapacity} Pax (Combined)</span>
-                        ) : (
-                          `Max ${selectedEffectiveCapacity} Pax`
-                        )}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <h2 className="text-lg font-black text-[#14274E] leading-tight">
+                      Table {selectedTable.TABLE_NUM}
+                    </h2>
+                    {selectedLabel && (
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase text-white shadow-2xs truncate max-w-[120px]"
+                        style={{ backgroundColor: selectedLabel.COLOR }}
+                      >
+                        {selectedLabel.NAME}
                       </span>
-                    </div>
+                    )}
                   </div>
 
                   {/* Close Inspector */}
@@ -1428,335 +1656,606 @@ export default function ReceptionistInterface() {
                   </button>
                 </div>
 
-                {/* Merged Group Banner (if merged) */}
-                {selectedGroup?.isMerged && (
-                  <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-1.5 text-indigo-900 font-bold truncate">
-                      <GitMerge className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                      <span className="truncate">Merged Group #{selectedGroup.anchorTableId}</span>
+                {/* 3 Tabs: Table | Reservation | Advanced Orders */}
+                <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200/80">
+                  <button
+                    type="button"
+                    onClick={() => setSidebarTab('table')}
+                    className={`py-1.5 px-2 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      sidebarTab === 'table'
+                        ? 'bg-white text-[#14274E] shadow-xs'
+                        : 'text-slate-600 hover:text-[#14274E] hover:bg-white/50'
+                    }`}
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span>Table</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSidebarTab('reservation')}
+                    className={`py-1.5 px-2 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer relative ${
+                      sidebarTab === 'reservation'
+                        ? 'bg-white text-[#14274E] shadow-xs'
+                        : 'text-slate-600 hover:text-[#14274E] hover:bg-white/50'
+                    }`}
+                  >
+                    <CalendarClock className="w-3.5 h-3.5" />
+                    <span>Reservation</span>
+                    {selectedTable.STATUS === 'RESERVED' && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 absolute top-1.5 right-1.5 animate-pulse" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSidebarTab('advanced_orders')}
+                    className={`py-1.5 px-2 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer relative ${
+                      sidebarTab === 'advanced_orders'
+                        ? 'bg-white text-[#14274E] shadow-xs'
+                        : 'text-slate-600 hover:text-[#14274E] hover:bg-white/50'
+                    }`}
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                    <span className="truncate">Adv. Orders</span>
+                    {advanceOrderForSelectedTable && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 absolute top-1.5 right-1.5 animate-pulse" />
+                    )}
+                  </button>
+                </div>
+
+                {/* ── TAB 1: TABLE CONFIGURATIONS ── */}
+                {sidebarTab === 'table' && (
+                  <div className="flex flex-col gap-3.5 flex-1">
+                    {/* 1. Table Label Config (Moved to TOP of configs, not inside a container) */}
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-[#14274E] tracking-tight">Table Label</span>
+                        <button
+                          type="button"
+                          onClick={() => setLabelsModalOpen(true)}
+                          className="flex items-center gap-1 text-[11px] font-bold text-[#14274E] hover:text-[#1e3a6d] cursor-pointer"
+                        >
+                          <Tag className="w-3 h-3" />
+                          <span>Manage</span>
+                        </button>
+                      </div>
+                      <LabelSelector
+                        tableId={selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM}
+                        currentLabelId={selectedTable.LABEL_ID ?? null}
+                        labels={labels}
+                        onLabelChanged={(labelId) =>
+                          handleLabelChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, labelId)
+                        }
+                      />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleUnmerge(selectedGroup.anchorTableId)}
-                      className="px-2 py-1 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shrink-0"
-                    >
-                      <Unlink className="w-3 h-3" />
-                      <span>Unmerge</span>
-                    </button>
+
+                    {/* 2. Table Status Config Container (Status badge next to title removed, 4 grid buttons removed) */}
+                    <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-black text-[#14274E] tracking-tight">Table Status</span>
+                      </div>
+
+                      <div
+                        className={`p-2.5 rounded-xl border flex items-center gap-3 transition-colors ${
+                          selectedTable.STATUS === 'AVAILABLE'
+                            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                            : selectedTable.STATUS === 'OCCUPIED'
+                            ? 'bg-blue-50/70 border-blue-200 text-blue-900'
+                            : selectedTable.STATUS === 'RESERVED'
+                            ? 'bg-amber-50/70 border-amber-200 text-amber-900'
+                            : selectedTable.STATUS === 'HAS_REQUEST'
+                            ? 'bg-rose-50/70 border-rose-200 text-rose-900'
+                            : 'bg-slate-100 border-slate-300 text-slate-800'
+                        }`}
+                      >
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs ${
+                            selectedTable.STATUS === 'AVAILABLE'
+                              ? 'bg-emerald-500 text-white'
+                              : selectedTable.STATUS === 'OCCUPIED'
+                              ? 'bg-blue-500 text-white'
+                              : selectedTable.STATUS === 'RESERVED'
+                              ? 'bg-amber-500 text-white'
+                              : selectedTable.STATUS === 'HAS_REQUEST'
+                              ? 'bg-rose-500 text-white'
+                              : 'bg-slate-500 text-white'
+                          }`}
+                        >
+                          {selectedTable.STATUS === 'AVAILABLE' && <CheckCircle2 className="w-4 h-4" />}
+                          {selectedTable.STATUS === 'OCCUPIED' && <Users className="w-4 h-4" />}
+                          {selectedTable.STATUS === 'RESERVED' && <Clock className="w-4 h-4" />}
+                          {selectedTable.STATUS === 'HAS_REQUEST' && <Receipt className="w-4 h-4" />}
+                          {selectedTable.STATUS === 'UNAVAILABLE' && <Ban className="w-4 h-4" />}
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-xs font-black block leading-tight">
+                            {selectedTable.STATUS?.replace('_', ' ') ?? 'AVAILABLE'}
+                          </span>
+                          <span className="text-[11px] text-slate-500 font-medium block truncate">
+                            {selectedTable.STATUS === 'AVAILABLE'
+                              ? 'Available for seating'
+                              : selectedTable.STATUS === 'OCCUPIED'
+                              ? `${selectedCurrentPax} / ${selectedEffectiveCapacity} seated${occupiedDuration ? ` · Occupied for ${occupiedDuration}` : ''}`
+                              : selectedTable.STATUS === 'RESERVED'
+                              ? 'Reserved for customer'
+                              : selectedTable.STATUS === 'HAS_REQUEST'
+                              ? 'Bill out requested'
+                              : 'Out of service'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 3. Seated Guests Config (No 'Guests' below number, no 'P' on quick buttons, 'Empty' button added) */}
+                    <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-black text-[#14274E] tracking-tight">Seated Guests</span>
+                        <span className="text-[11px] font-semibold text-slate-500">
+                          Capacity: {selectedEffectiveCapacity} Pax
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between bg-white rounded-xl p-2 border border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSeatedPaxChange(
+                              selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
+                              Math.max(0, selectedCurrentPax - 1),
+                            )
+                          }
+                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-black cursor-pointer transition-colors active:scale-95"
+                          title="Decrease seated guests"
+                        >
+                          <Minus className="w-3.5 h-3.5 stroke-[3]" />
+                        </button>
+
+                        <div className="flex flex-col items-center">
+                          <span className="text-2xl font-black text-[#14274E] leading-none">
+                            {selectedCurrentPax}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSeatedPaxChange(
+                              selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
+                              Math.min(
+                                selectedEffectiveCapacity,
+                                selectedCurrentPax + 1,
+                              ),
+                            )
+                          }
+                          className="w-9 h-9 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] text-[#E9C46A] flex items-center justify-center font-black cursor-pointer transition-colors active:scale-95"
+                          title="Increase seated guests"
+                        >
+                          <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                        </button>
+                      </div>
+
+                      {/* Quick Pax Shortcuts: Empty, numeric buttons without P, Full */}
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSeatedPaxChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, 0)
+                          }
+                          className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                            selectedCurrentPax === 0
+                              ? 'bg-[#14274E] text-[#E9C46A] border-[#14274E]'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          Empty
+                        </button>
+                        {quickPaxOptions.map((pax) => (
+                          <button
+                            key={pax}
+                            type="button"
+                            onClick={() =>
+                              handleSeatedPaxChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, pax)
+                            }
+                            className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                              selectedCurrentPax === pax
+                                ? 'bg-[#14274E] text-[#E9C46A] border-[#14274E]'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            {pax}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSeatedPaxChange(
+                              selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
+                              selectedEffectiveCapacity,
+                            )
+                          }
+                          className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                            selectedCurrentPax === selectedEffectiveCapacity && selectedEffectiveCapacity > 0
+                              ? 'bg-[#14274E] text-[#E9C46A] border-[#14274E]'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          Full
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Merged Group Banner (if merged) */}
+                    {selectedGroup?.isMerged && (
+                      <div className="p-3 rounded-2xl bg-indigo-50/90 border border-indigo-200 flex flex-col gap-2.5 text-xs shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-indigo-950 font-bold truncate">
+                            <GitMerge className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            <span className="truncate">Merged Group #{selectedGroup.anchorTableId}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleUnmerge(selectedGroup.anchorTableId)}
+                            className="px-2 py-0.5 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shrink-0"
+                          >
+                            <Unlink className="w-3 h-3" />
+                            <span>Unmerge</span>
+                          </button>
+                        </div>
+
+                        {/* Persistency indicator & switcher */}
+                        <div className="flex items-center justify-between bg-white rounded-xl p-2 border border-indigo-100">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-slate-500 font-medium">Persistency:</span>
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
+                              selectedTable.MERGE_PERSISTENCY === 'CONTINOUOUS'
+                                ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                                : 'bg-blue-100 text-blue-700 border border-blue-200'
+                            }`}>
+                              {selectedTable.MERGE_PERSISTENCY === 'CONTINOUOUS' ? 'Continuous' : 'Temporary'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const newPersistency = selectedTable.MERGE_PERSISTENCY === 'CONTINOUOUS' ? 'TEMPORARY' : 'CONTINOUOUS'
+                              const targetId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
+                              await setTableMergePersistency(targetId, newPersistency)
+                              showToast(`Merge set to ${newPersistency.toLowerCase()}`, 'success')
+                              void loadData(true)
+                            }}
+                            className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
+                          >
+                            Switch to {selectedTable.MERGE_PERSISTENCY === 'CONTINOUOUS' ? 'Temporary' : 'Continuous'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 4. Footer Buttons: Mark as Occupied/Available & Mark as Unavailable */}
+                    <div className="pt-3 border-t border-slate-200 flex flex-col gap-2 mt-auto">
+                      {/* Button A: Mark as Occupied (Shows Mark as Available if occupied) */}
+                      <button
+                        type="button"
+                        disabled={selectedTable.STATUS === 'UNAVAILABLE'}
+                        onClick={handleOccupiedToggle}
+                        className={`w-full py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 text-xs font-black transition-all shadow-xs ${
+                          selectedTable.STATUS === 'UNAVAILABLE'
+                            ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
+                            : selectedTable.STATUS === 'OCCUPIED'
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98'
+                            : 'bg-[#14274E] hover:bg-[#1e3a6d] text-[#E9C46A] cursor-pointer active:scale-98'
+                        }`}
+                      >
+                        {selectedTable.STATUS === 'OCCUPIED' ? (
+                          <>
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Mark as Available</span>
+                          </>
+                        ) : (
+                          <>
+                            <Users className="w-4 h-4" />
+                            <span>Mark as Occupied</span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* Button B: Mark as Unavailable (Disables Mark as Occupied/Available, disabled if Occupied) */}
+                      <button
+                        type="button"
+                        disabled={selectedTable.STATUS === 'OCCUPIED'}
+                        onClick={handleUnavailableToggle}
+                        className={`w-full py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all ${
+                          selectedTable.STATUS === 'OCCUPIED'
+                            ? 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed'
+                            : selectedTable.STATUS === 'UNAVAILABLE'
+                            ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 cursor-pointer active:scale-98'
+                            : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 cursor-pointer active:scale-98'
+                        }`}
+                        title={selectedTable.STATUS === 'OCCUPIED' ? 'Cannot mark as Unavailable while occupied' : undefined}
+                      >
+                        {selectedTable.STATUS === 'UNAVAILABLE' ? (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Mark as Available</span>
+                          </>
+                        ) : (
+                          <>
+                            <Ban className="w-3.5 h-3.5" />
+                            <span>Mark as Unavailable</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                {/* ── A: Table Status (4 Statuses: Available, Occupied, Reserved, Unavailable) ── */}
-                <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black text-[#14274E] tracking-tight">Table Status</span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide ${
-                        selectedTable.STATUS === 'AVAILABLE'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : selectedTable.STATUS === 'OCCUPIED'
-                            ? 'bg-blue-100 text-blue-800'
-                            : selectedTable.STATUS === 'RESERVED'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      {selectedTable.STATUS?.replace('_', ' ') ?? 'AVAILABLE'}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(
-                      [
-                        {
-                          status: 'AVAILABLE',
-                          label: 'Available',
-                          icon: CheckCircle2,
-                          color: '#10B981',
-                          bg: '#ECFDF5',
-                          border: '#A7F3D0',
-                        },
-                        {
-                          status: 'OCCUPIED',
-                          label: 'Occupied',
-                          icon: Users,
-                          color: '#3B82F6',
-                          bg: '#EFF6FF',
-                          border: '#BFDBFE',
-                        },
-                        {
-                          status: 'RESERVED',
-                          label: 'Reserved',
-                          icon: Clock,
-                          color: '#F59E0B',
-                          bg: '#FFFBEB',
-                          border: '#FDE68A',
-                        },
-                        {
-                          status: 'UNAVAILABLE',
-                          label: 'Unavailable',
-                          icon: Ban,
-                          color: '#64748B',
-                          bg: '#F8FAFC',
-                          border: '#E2E8F0',
-                        },
-                      ] as const
-                    ).map((btn) => {
-                      const isActive = selectedTable.STATUS === btn.status
-                      const IconComponent = btn.icon
-
-                      return (
-                        <button
-                          key={btn.status}
-                          type="button"
-                          onClick={() =>
-                            handleStatusChange(
-                              selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
-                              btn.status as TableStatus,
-                            )
-                          }
-                          className={`flex items-center gap-2 p-2 rounded-xl text-left font-bold text-xs transition-all cursor-pointer border ${
-                            isActive
-                              ? 'ring-2 ring-offset-1 shadow-xs'
-                              : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-700'
-                          }`}
-                          style={
-                            isActive
-                              ? {
-                                  backgroundColor: btn.bg,
-                                  borderColor: btn.color,
-                                  color: btn.color,
-                                  boxShadow: `0 0 0 2px ${btn.color}30`,
-                                }
-                              : {}
-                          }
-                        >
-                          <IconComponent
-                            className="w-3.5 h-3.5 shrink-0"
-                            style={{ color: isActive ? btn.color : '#94A3B8' }}
-                          />
-                          <span className="truncate">{btn.label}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* ── B: Table Label / Hierarchy ── */}
-                <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black text-[#14274E] tracking-tight">Table Label / Tier</span>
-                    <button
-                      type="button"
-                      onClick={() => setLabelsModalOpen(true)}
-                      className="flex items-center gap-1 text-[11px] font-bold text-[#14274E] hover:text-[#1e3a6d] cursor-pointer"
-                    >
-                      <Tag className="w-3 h-3" />
-                      <span>Manage</span>
-                    </button>
-                  </div>
-
-                  <div className="bg-white rounded-xl p-1 border border-slate-200">
-                    <LabelSelector
-                      tableId={selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM}
-                      currentLabelId={selectedTable.LABEL_ID ?? null}
-                      labels={labels}
-                      onLabelChanged={(labelId) =>
-                        handleLabelChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, labelId)
-                      }
-                    />
-                  </div>
-                </div>
-
-                {/* ── C: Seated Guests ── */}
-                <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black text-[#14274E] tracking-tight">Seated Guests</span>
-                    <span className="text-[11px] font-semibold text-slate-500">
-                      Capacity: {selectedEffectiveCapacity} Pax
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between bg-white rounded-xl p-2 border border-slate-200">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleSeatedPaxChange(
-                          selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
-                          Math.max(0, selectedCurrentPax - 1),
-                        )
-                      }
-                      className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-black cursor-pointer transition-colors active:scale-95"
-                      title="Decrease seated guests"
-                    >
-                      <Minus className="w-3.5 h-3.5 stroke-[3]" />
-                    </button>
-
-                    <div className="flex flex-col items-center">
-                      <span className="text-2xl font-black text-[#14274E] leading-none">
-                        {selectedCurrentPax}
-                      </span>
-                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
-                        {isSelectedMerged ? 'Combined' : 'Guests'}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleSeatedPaxChange(
-                          selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
-                          Math.min(
-                            selectedEffectiveCapacity,
-                            selectedCurrentPax + 1,
-                          ),
-                        )
-                      }
-                      className="w-9 h-9 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] text-[#E9C46A] flex items-center justify-center font-black cursor-pointer transition-colors active:scale-95"
-                      title="Increase seated guests"
-                    >
-                      <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                    </button>
-                  </div>
-
-                  {/* Quick Pax Shortcuts */}
-                  <div className="flex items-center gap-1.5 mt-2">
-                    {quickPaxOptions.map((pax) => (
-                      <button
-                        key={pax}
-                        type="button"
-                        onClick={() =>
-                          handleSeatedPaxChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, pax)
-                        }
-                        className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                          selectedCurrentPax === pax
-                            ? 'bg-[#14274E] text-[#E9C46A] border-[#14274E]'
-                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        {pax}P
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleSeatedPaxChange(
-                          selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
-                          selectedEffectiveCapacity,
-                        )
-                      }
-                      className="flex-1 py-1 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-200 hover:bg-slate-100 cursor-pointer"
-                    >
-                      Full
-                    </button>
-                  </div>
-
-                  {/* Clear Table Action */}
-                  {selectedCurrentPax > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => handleClearTable(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM)}
-                      className="w-full mt-2 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Clear Table & Mark Available</span>
-                    </button>
-                  )}
-                </div>
-
-                {/* ── D: Pending Advance Order ── */}
-                {advanceOrderForSelectedTable ? (
-                  <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-300 shadow-2xs">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-1.5 text-xs font-black text-amber-950">
-                        <Receipt className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Advance Order: {advanceOrderForSelectedTable.orderNumber}</span>
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide ${
-                          advanceOrderForSelectedTable.status === 'CONFIRMED'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
-                        }`}
-                      >
-                        {advanceOrderForSelectedTable.status === 'CONFIRMED' ? 'Confirmed' : 'Pending'}
-                      </span>
-                    </div>
-
-                    {/* Customer & details */}
-                    <div className="bg-white rounded-xl p-2.5 border border-amber-200/80 mb-2 space-y-1 text-xs">
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 font-medium">Customer:</span>
-                        <span className="font-bold text-[#14274E]">{advanceOrderForSelectedTable.customerName}</span>
-                      </div>
-                      {advanceOrderForSelectedTable.guestCount && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-500 font-medium">Party Size:</span>
-                          <span className="font-bold text-[#14274E]">{advanceOrderForSelectedTable.guestCount} Guests</span>
+                {/* ── TAB 2: RESERVATIONS ── */}
+                {sidebarTab === 'reservation' && (
+                  <div className="flex flex-col gap-3.5 flex-1">
+                    {selectedTable.STATUS === 'RESERVED' && reservations[selectedTable.TABLE_NUM] ? (
+                      /* Active Registered Reservation Card */
+                      <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-300 shadow-xs flex flex-col gap-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-amber-200">
+                          <div className="flex items-center gap-2 text-amber-950 font-black text-xs">
+                            <CalendarClock className="w-4 h-4 text-amber-600" />
+                            <span>Active Reservation</span>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide bg-amber-100 text-amber-900 border border-amber-300">
+                            Reserved
+                          </span>
                         </div>
-                      )}
 
-                      {/* Order items list */}
-                      <div className="pt-1.5 border-t border-slate-100 max-h-28 overflow-y-auto space-y-1">
-                        {advanceOrderForSelectedTable.items.map((it) => (
-                          <div key={it.advanceItemId} className="flex items-center justify-between text-[11px]">
-                            <span className="text-slate-700 truncate font-semibold">
-                              {it.quantity}× {it.itemName}
-                            </span>
-                            <span className="text-slate-600 font-mono ml-2 shrink-0">
-                              ₱{it.totalPrice.toFixed(2)}
+                        <div className="bg-white rounded-xl p-3 border border-amber-200/80 space-y-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-medium">Customer:</span>
+                            <span className="font-bold text-[#14274E] text-sm">
+                              {reservations[selectedTable.TABLE_NUM].customerName}
                             </span>
                           </div>
-                        ))}
-                      </div>
+                          {reservations[selectedTable.TABLE_NUM].phoneNumber && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-500 font-medium flex items-center gap-1">
+                                <Phone className="w-3 h-3 text-slate-400" />
+                                <span>Phone:</span>
+                              </span>
+                              <span className="font-bold text-slate-700 font-mono">
+                                {reservations[selectedTable.TABLE_NUM].phoneNumber}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-medium">Party Size:</span>
+                            <span className="font-bold text-[#14274E]">
+                              {reservations[selectedTable.TABLE_NUM].partySize} Guests
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-medium">Time:</span>
+                            <span className="font-bold text-amber-700">
+                              {reservations[selectedTable.TABLE_NUM].reservationTime}
+                            </span>
+                          </div>
+                          {reservations[selectedTable.TABLE_NUM].notes && (
+                            <div className="pt-2 border-t border-slate-100">
+                              <span className="text-slate-400 text-[11px] block font-medium">Notes:</span>
+                              <span className="text-slate-700 text-xs italic">
+                                {reservations[selectedTable.TABLE_NUM].notes}
+                              </span>
+                            </div>
+                          )}
+                        </div>
 
-                      <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between font-black text-xs text-[#14274E]">
-                        <span>Total:</span>
-                        <span>₱{advanceOrderForSelectedTable.totalAmount.toFixed(2)}</span>
-                      </div>
-                    </div>
+                        <div className="flex flex-col gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleSeatReservation(selectedTable.TABLE_NUM)}
+                            className="w-full py-2.5 px-3 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] active:scale-98 text-[#E9C46A] text-xs font-black flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all"
+                          >
+                            <UserCheck className="w-4 h-4" />
+                            <span>Seat Guests & Start Service</span>
+                          </button>
 
-                    {/* Action buttons */}
-                    {advanceOrderForSelectedTable.status === 'PENDING' ? (
-                      <div className="flex flex-col gap-1.5">
-                        <label className="flex items-center gap-2 px-1 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={keepAdvanceOrder}
-                            onChange={(e) => setKeepAdvanceOrder(e.target.checked)}
-                            className="w-3.5 h-3.5 rounded text-[#14274E] accent-[#14274E] cursor-pointer"
-                          />
-                          <span className="text-[11px] font-bold text-amber-950">
-                            Keep items as regular order
-                          </span>
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => handleSeatWithAdvanceOrder(keepAdvanceOrder)}
-                          className="w-full py-2 px-3 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] active:scale-98 text-[#E9C46A] text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
-                        >
-                          <Users className="w-3.5 h-3.5" />
-                          <span>Seat Guests ({keepAdvanceOrder ? 'Keep Order' : 'Discard'})</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleSeatWithAdvanceOrder(false)}
-                          className="w-full py-1 px-2 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                        >
-                          <Ban className="w-3 h-3" />
-                          <span>Discard Advance Order</span>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCancelReservation(selectedTable.TABLE_NUM)}
+                            className="w-full py-1.5 px-3 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                            <span>Cancel Reservation</span>
+                          </button>
+                        </div>
                       </div>
                     ) : (
-                      <div className="p-1.5 bg-emerald-50 border border-emerald-200 rounded-xl text-center text-xs font-bold text-emerald-800 flex items-center justify-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Kept as Regular Order</span>
-                      </div>
+                      /* Register New Reservation Form */
+                      <form onSubmit={handleRegisterReservation} className="p-3.5 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs flex flex-col gap-3">
+                        <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
+                          <CalendarClock className="w-4 h-4 text-[#14274E]" />
+                          <h3 className="text-xs font-black text-[#14274E]">Register Table Reservation</h3>
+                        </div>
+
+                        {selectedTable.STATUS === 'OCCUPIED' && (
+                          <div className="p-2 rounded-xl bg-blue-50 border border-blue-200 text-[11px] text-blue-900 font-medium">
+                            Table is currently occupied. You can schedule a reservation for later.
+                          </div>
+                        )}
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] font-bold text-slate-600">Customer Name *</label>
+                          <input
+                            type="text"
+                            value={resCustomerName}
+                            onChange={(e) => setResCustomerName(e.target.value)}
+                            placeholder="e.g. Maria Santos"
+                            className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#14274E]/30"
+                            required
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] font-bold text-slate-600">Phone Number</label>
+                          <input
+                            type="tel"
+                            value={resPhone}
+                            onChange={(e) => setResPhone(e.target.value)}
+                            placeholder="e.g. 0917 123 4567"
+                            className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#14274E]/30"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[11px] font-bold text-slate-600">Party Size (Pax)</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={selectedEffectiveCapacity}
+                              value={resPartySize}
+                              onChange={(e) => setResPartySize(Number(e.target.value) || 1)}
+                              className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#14274E]/30"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[11px] font-bold text-slate-600">Reservation Time</label>
+                            <input
+                              type="time"
+                              value={resTime}
+                              onChange={(e) => setResTime(e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#14274E]/30"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] font-bold text-slate-600">Notes / Requests</label>
+                          <textarea
+                            rows={2}
+                            value={resNotes}
+                            onChange={(e) => setResNotes(e.target.value)}
+                            placeholder="Special requests, celebration, high chair..."
+                            className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#14274E]/30 resize-none"
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          className="w-full mt-1 py-2.5 px-4 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] active:scale-98 text-[#E9C46A] text-xs font-black flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all"
+                        >
+                          <Calendar className="w-4 h-4" />
+                          <span>Confirm Reservation</span>
+                        </button>
+                      </form>
                     )}
                   </div>
-                ) : (
-                  <div className="p-3 rounded-2xl bg-slate-50/60 border border-slate-200/60 text-center">
-                    <span className="text-[11px] text-slate-400 font-semibold">No pending advance order</span>
+                )}
+
+                {/* ── TAB 3: ADVANCED ORDERS ── */}
+                {sidebarTab === 'advanced_orders' && (
+                  <div className="flex flex-col gap-3.5 flex-1">
+                    {advanceOrderForSelectedTable ? (
+                      <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-300 shadow-2xs flex flex-col gap-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-amber-200">
+                          <div className="flex items-center gap-1.5 text-xs font-black text-amber-950">
+                            <Receipt className="w-4 h-4 text-amber-600" />
+                            <span>Advance Order: {advanceOrderForSelectedTable.orderNumber}</span>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide ${
+                              advanceOrderForSelectedTable.status === 'CONFIRMED'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
+                            }`}
+                          >
+                            {advanceOrderForSelectedTable.status === 'CONFIRMED' ? 'Confirmed' : 'Pending'}
+                          </span>
+                        </div>
+
+                        {/* Customer & details */}
+                        <div className="bg-white rounded-xl p-3 border border-amber-200/80 space-y-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-medium">Customer:</span>
+                            <span className="font-bold text-[#14274E] text-sm">{advanceOrderForSelectedTable.customerName}</span>
+                          </div>
+                          {advanceOrderForSelectedTable.guestCount && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-500 font-medium">Party Size:</span>
+                              <span className="font-bold text-[#14274E]">{advanceOrderForSelectedTable.guestCount} Guests</span>
+                            </div>
+                          )}
+
+                          {/* Order items list */}
+                          <div className="pt-2 border-t border-slate-100 max-h-36 overflow-y-auto space-y-1.5">
+                            {advanceOrderForSelectedTable.items.map((it) => (
+                              <div key={it.advanceItemId} className="flex items-center justify-between text-xs">
+                                <span className="text-slate-700 truncate font-semibold">
+                                  {it.quantity}× {it.itemName}
+                                </span>
+                                <span className="text-slate-600 font-mono ml-2 shrink-0">
+                                  ₱{it.totalPrice.toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-100 flex items-center justify-between font-black text-xs text-[#14274E]">
+                            <span>Total:</span>
+                            <span className="text-sm">₱{advanceOrderForSelectedTable.totalAmount.toFixed(2)}</span>
+                          </div>
+                        </div>
+
+                        {/* Action buttons */}
+                        {advanceOrderForSelectedTable.status === 'PENDING' ? (
+                          <div className="flex flex-col gap-2 pt-1">
+                            <label className="flex items-center gap-2 px-1 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={keepAdvanceOrder}
+                                onChange={(e) => setKeepAdvanceOrder(e.target.checked)}
+                                className="w-3.5 h-3.5 rounded text-[#14274E] accent-[#14274E] cursor-pointer"
+                              />
+                              <span className="text-[11px] font-bold text-amber-950">
+                                Keep items as regular order
+                              </span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => handleSeatWithAdvanceOrder(keepAdvanceOrder)}
+                              className="w-full py-2.5 px-3 rounded-xl bg-[#14274E] hover:bg-[#1e3a6d] active:scale-98 text-[#E9C46A] text-xs font-black flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all"
+                            >
+                              <Users className="w-4 h-4" />
+                              <span>Seat Guests ({keepAdvanceOrder ? 'Keep Order' : 'Discard'})</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSeatWithAdvanceOrder(false)}
+                              className="w-full py-1.5 px-2 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              <span>Discard Advance Order</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-center text-xs font-bold text-emerald-800 flex items-center justify-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <span>Kept as Regular Order</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      /* Empty Advanced Orders State */
+                      <div className="p-8 rounded-2xl bg-slate-50/70 border border-slate-200/80 text-center flex flex-col items-center justify-center gap-2.5">
+                        <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 text-slate-400 flex items-center justify-center shadow-2xs">
+                          <ShoppingBag className="w-6 h-6 stroke-[1.5]" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-[#14274E]">No Advanced Orders</h4>
+                          <p className="text-[11px] text-slate-400 font-medium max-w-xs mt-1">
+                            There are no pre-orders or online reservations attached to Table {selectedTable.TABLE_NUM}.
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1768,14 +2267,112 @@ export default function ReceptionistInterface() {
                 </div>
                 <h3 className="text-sm font-black text-[#14274E]">Select a Table</h3>
                 <p className="text-xs text-slate-400 font-medium max-w-xs mt-1.5">
-                  Click any table on the floor plan canvas to update status, adjust seated guests, assign VIP
-                  tiers, or view advance orders.
+                  Click any table on the floor plan canvas to update status, register reservations, or view advance orders.
                 </p>
               </div>
             )}
           </div>
         </aside>
       </div>
+
+      {/* Merge Persistency Configuration Modal */}
+      {mergeModalOpen && (
+        <div className="fixed inset-0 z-[120] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 flex flex-col gap-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600">
+                  <GitMerge className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-[#14274E]">Merge {selectedTableNums.size} Tables</h3>
+                  <p className="text-[11px] text-slate-500">Tables {Array.from(selectedTableNums).sort().join(', ')}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMergeModalOpen(false)}
+                className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <span className="text-xs font-bold text-slate-700">Choose Merge Persistency:</span>
+
+              {/* Temporary Option */}
+              <label
+                className={`p-3 rounded-xl border-2 flex items-start gap-3 cursor-pointer transition-all ${
+                  mergePersistencyChoice === 'TEMPORARY'
+                    ? 'border-indigo-600 bg-indigo-50/50 shadow-xs'
+                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="mergePersistency"
+                  value="TEMPORARY"
+                  checked={mergePersistencyChoice === 'TEMPORARY'}
+                  onChange={() => setMergePersistencyChoice('TEMPORARY')}
+                  className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-[#14274E]">Temporary Merge</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">Default</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    When the table is billed out, the merge group automatically dissolves and each table returns to available individually.
+                  </p>
+                </div>
+              </label>
+
+              {/* Continuous Option */}
+              <label
+                className={`p-3 rounded-xl border-2 flex items-start gap-3 cursor-pointer transition-all ${
+                  mergePersistencyChoice === 'CONTINOUOUS'
+                    ? 'border-indigo-600 bg-indigo-50/50 shadow-xs'
+                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="mergePersistency"
+                  value="CONTINOUOUS"
+                  checked={mergePersistencyChoice === 'CONTINOUOUS'}
+                  onChange={() => setMergePersistencyChoice('CONTINOUOUS')}
+                  className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                />
+                <div className="flex-1">
+                  <span className="text-xs font-black text-[#14274E]">Continuous Merge</span>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                    Tables remain merged across multiple dining parties and bill settlements until manually unmerged by staff.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setMergeModalOpen(false)}
+                className="flex-1 py-2 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-bold cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmMerge}
+                className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] hover:from-[#1E3A6D] hover:to-[#27477D] text-[#E9C46A] text-xs font-black cursor-pointer shadow-md active:scale-98 transition-all flex items-center justify-center gap-1.5"
+              >
+                <GitMerge className="w-3.5 h-3.5" />
+                <span>Confirm Merge</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Label Management In-App Modal */}
       <LabelManagementModal

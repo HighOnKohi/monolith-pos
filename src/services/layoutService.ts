@@ -299,17 +299,17 @@ export async function applyPresetPositions(
   for (const pos of positions) {
     await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
+      .from('Table_Info')
       .update({
-        LAYOUT_X: pos.x,
-        LAYOUT_Y: pos.y,
-        ...(pos.capacity ? { GUEST_CAPACITY: pos.capacity } : {}),
+        X_POS: pos.x,
+        Y_POS: pos.y,
+        ...(pos.capacity ? { SEAT_CAPACITY: pos.capacity } : {}),
       })
       .eq('TABLE_ID', pos.tableId)
   }
 
   // Clear positions for tables not belonging to this preset
-  const { data: allTables } = await supabase.schema('tables').from('Restaurant_Tables').select('TABLE_ID')
+  const { data: allTables } = await supabase.schema('tables').from('Table_Info').select('TABLE_ID')
   if (allTables) {
     const unreferencedIds = allTables
       .map((t) => Number(t.TABLE_ID))
@@ -317,8 +317,8 @@ export async function applyPresetPositions(
     if (unreferencedIds.length > 0) {
       await supabase
         .schema('tables')
-        .from('Restaurant_Tables')
-        .update({ LAYOUT_X: null, LAYOUT_Y: null })
+        .from('Table_Info')
+        .update({ X_POS: null, Y_POS: null })
         .in('TABLE_ID', unreferencedIds)
     }
   }
@@ -332,8 +332,8 @@ export async function batchUpdateTablePositions(
   for (const pos of positions) {
     const { error } = await supabase
       .schema('tables')
-      .from('Restaurant_Tables')
-      .update({ LAYOUT_X: pos.x, LAYOUT_Y: pos.y })
+      .from('Table_Info')
+      .update({ X_POS: pos.x, Y_POS: pos.y })
       .eq('TABLE_ID', pos.tableId)
 
     if (error) throw new Error(`Failed to save table ${pos.tableId}'s position: ${error.message}`)
@@ -345,8 +345,8 @@ export async function clearTablePositions(tableIds: number[]): Promise<void> {
   if (tableIds.length === 0) return
   const { error } = await supabase
     .schema('tables')
-    .from('Restaurant_Tables')
-    .update({ LAYOUT_X: null, LAYOUT_Y: null })
+    .from('Table_Info')
+    .update({ X_POS: null, Y_POS: null })
     .in('TABLE_ID', tableIds)
 
   if (error) throw new Error(`Failed to clear table positions: ${error.message}`)

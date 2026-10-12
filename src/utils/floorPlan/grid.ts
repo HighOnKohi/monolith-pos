@@ -17,8 +17,8 @@ export interface FloorConfig {
 }
 
 export const DEFAULT_FLOOR_CONFIG: FloorConfig = {
-  widthBlocks: 20,
-  heightBlocks: 16,
+  widthBlocks: 16,
+  heightBlocks: 11,
   tableSizeBlocks: 2,
   spacingBlocks: 1,
   snapEnabled: true,

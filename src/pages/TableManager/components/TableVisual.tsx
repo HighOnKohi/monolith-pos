@@ -505,8 +505,8 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           </span>
 
           {/* Corner Seat Counter */}
-          <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-full text-[8px] font-black flex items-center gap-0.5 leading-none pointer-events-none bg-slate-100/90 text-slate-700 border border-slate-200">
-            <Users className="w-2 h-2 text-slate-500" />
+          <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-full text-[9px] font-black flex items-center gap-0.5 leading-none pointer-events-none bg-slate-100/95 text-slate-700 border border-slate-300 shadow-2xs">
+            <Users className="w-2.5 h-2.5 text-slate-500" />
             <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
           </div>
         </div>
@@ -846,8 +846,8 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           </span>
 
           {/* Seat Counter Below Table Number */}
-          <div className="px-1.5 py-0.5 rounded-full text-[8px] font-black flex items-center gap-0.5 leading-none pointer-events-none mt-1 bg-slate-100/90 text-slate-700 border border-slate-200 shadow-2xs">
-            <Users className="w-2 h-2 text-slate-500" />
+          <div className="px-1.5 py-0.5 rounded-full text-[9px] font-black flex items-center gap-0.5 leading-none pointer-events-none mt-1 bg-slate-100/95 text-slate-700 border border-slate-300 shadow-2xs">
+            <Users className="w-2.5 h-2.5 text-slate-500" />
             <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
           </div>
         </div>

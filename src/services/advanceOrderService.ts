@@ -7,7 +7,13 @@ import type {
 } from '@/types/advanceOrder'
 import type { CartItem, DiningType } from '@/types/cart'
 import { createOrder, cancelOrder } from '@/services/orderService'
-import { fetchAllTables, fetchOrderSummariesForIds, type TableData } from '@/services/tableService'
+import {
+  fetchAllTables,
+  fetchOrderSummariesForIds,
+  reserveTable,
+  cancelReservation,
+  type TableData,
+} from '@/services/tableService'
 
 // ─── LocalStorage Keys ────────────────────────────────────────────────────────
 const STORAGE_KEY_PREORDER_SESSION_ID = 'monolith_advance_order_session_id'
@@ -89,7 +95,7 @@ export function saveCustomerName(name: string): string {
   return trimmed
 }
 
-/** Marks a table as RESERVED in Restaurant_Tables, syncing across merged groups if applicable. */
+/** Marks a table as RESERVED with guest details. */
 export async function markTableAsReserved(
   tableId: number,
   customerName: string,
@@ -97,39 +103,12 @@ export async function markTableAsReserved(
   guestCount?: number,
 ): Promise<void> {
   try {
-    // Check if this table has a MERGE_GROUP_ID
-    const { data: targetTable } = await supabase
-      .from('Restaurant_Tables')
-      .select('TABLE_ID, MERGE_GROUP_ID')
-      .eq('TABLE_ID', tableId)
-      .single()
-
-    let targetIds = [tableId]
-    if (targetTable?.MERGE_GROUP_ID != null) {
-      const { data: groupTables } = await supabase
-        .from('Restaurant_Tables')
-        .select('TABLE_ID')
-        .eq('MERGE_GROUP_ID', targetTable.MERGE_GROUP_ID)
-      if (groupTables && groupTables.length > 0) {
-        targetIds = groupTables.map((t) => t.TABLE_ID)
-      }
-    }
-
-    const { error } = await supabase
-      .from('Restaurant_Tables')
-      .update({
-        STATUS: 'RESERVED',
-        RESERVED_SINCE: new Date().toISOString(),
-        RESERVATION_NAME: customerName.trim(),
-        RESERVATION_NOTES: note || 'Advance Order',
-        CURRENT_GUEST_COUNT: guestCount ?? 1,
-        RESERVATION_PAX: guestCount ?? 1,
-      })
-      .in('TABLE_ID', targetIds)
-
-    if (error) {
-      console.warn('[advanceOrderService] Could not update table status to RESERVED:', error)
-    }
+    await reserveTable(tableId, {
+      name: customerName.trim(),
+      pax: guestCount ?? 1,
+      notes: note || 'Advance Order',
+      timeLimit: 'Later today',
+    })
   } catch (err) {
     console.warn('[advanceOrderService] Exception marking table as RESERVED:', err)
   }
@@ -138,40 +117,9 @@ export async function markTableAsReserved(
 /** Releases a table reservation back to AVAILABLE, syncing across merged groups. */
 export async function releaseTableReservation(tableId: number): Promise<void> {
   try {
-    const { data: targetTable } = await supabase
-      .from('Restaurant_Tables')
-      .select('TABLE_ID, MERGE_GROUP_ID')
-      .eq('TABLE_ID', tableId)
-      .single()
-
-    let targetIds = [tableId]
-    if (targetTable?.MERGE_GROUP_ID != null) {
-      const { data: groupTables } = await supabase
-        .from('Restaurant_Tables')
-        .select('TABLE_ID')
-        .eq('MERGE_GROUP_ID', targetTable.MERGE_GROUP_ID)
-      if (groupTables && groupTables.length > 0) {
-        targetIds = groupTables.map((t) => t.TABLE_ID)
-      }
-    }
-
-    const { error } = await supabase
-      .from('Restaurant_Tables')
-      .update({
-        STATUS: 'AVAILABLE',
-        RESERVED_SINCE: null,
-        RESERVATION_NAME: null,
-        RESERVATION_NOTES: null,
-        RESERVATION_PAX: null,
-        CURRENT_GUEST_COUNT: 0,
-      })
-      .in('TABLE_ID', targetIds)
-
-    if (error) {
-      console.warn('[advanceOrderService] Could not release table to AVAILABLE:', error)
-    }
+    await cancelReservation(tableId)
   } catch (err) {
-    console.warn('[advanceOrderService] Exception releasing table:', err)
+    console.warn('[advanceOrderService] Exception releasing reservation:', err)
   }
 }
 

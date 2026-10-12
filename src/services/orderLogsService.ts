@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 import type { OrderStatus, OrderType, OrderTimelineEvent } from '@/types/order'
 import { parseDbTimestamp } from './analyticsService'
 import { getActiveStaffSession } from './staffCodeService'
+import { fetchAllTables } from './tableService'
 
 export type PaymentStatusFilter = 'ALL' | 'PAID' | 'UNPAID'
 export type PaymentMethodFilter = 'ALL' | 'CASH' | 'CREDIT_CARD' | 'INSTAPAY_QR'
@@ -110,13 +111,10 @@ function toIsoDate(d: Date): string {
 async function getTableDisplayMap(): Promise<
   Map<number, { tableNum: number; displayLabel: string; isMerged: boolean }>
 > {
-  const { data: tables, error } = await supabase
-    .schema('tables')
-    .from('Restaurant_Tables')
-    .select('TABLE_ID, TABLE_NUM, MERGE_GROUP_ID')
+  const tables = await fetchAllTables().catch(() => [])
 
   const map = new Map<number, { tableNum: number; displayLabel: string; isMerged: boolean }>()
-  if (error || !tables) return map
+  if (!tables || tables.length === 0) return map
 
   // Group by merge group
   const groupMembers = new Map<number, Array<{ id: number; num: number }>>()
