@@ -1,6 +1,8 @@
 import React from 'react'
 import {
   type TableLayoutPreset,
+  DEFAULT_GRID_WIDTH,
+  DEFAULT_GRID_HEIGHT,
 } from '@/services/tableLayoutService'
 import {
   Layers,
@@ -120,7 +122,7 @@ export const PresetsManagerView: React.FC<PresetsManagerViewProps> = ({
                       )}
                     </h3>
                     <p className="text-[11px] font-semibold text-slate-400">
-                      Grid: {preset.PRESET_GRID_WIDTH}x{preset.PRESET_GRID_HEIGHT} Units
+                      Grid: {DEFAULT_GRID_WIDTH}x{DEFAULT_GRID_HEIGHT} Units
                     </p>
                   </div>
                 </div>

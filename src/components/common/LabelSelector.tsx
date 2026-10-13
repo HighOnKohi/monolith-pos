@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Tag, ChevronDown, X } from 'lucide-react'
+import { Tag, ChevronDown } from 'lucide-react'
 import { fetchActiveLabels, assignLabelToTable, type TableLabel } from '@/services/tableLabelService'
 
 interface LabelSelectorProps {
@@ -70,75 +70,92 @@ export const LabelSelector: React.FC<LabelSelectorProps> = ({
   }
 
   return (
-    <div ref={dropdownRef} className={`relative ${className}`}>
+    <div ref={dropdownRef} className={`relative w-full ${className}`}>
       <button
+        type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
-        className={`flex items-center gap-2 rounded-lg border border-[#394867]/20 bg-white/80 transition-all hover:bg-white hover:border-[#394867]/40 disabled:opacity-50 disabled:cursor-not-allowed ${
-          compact ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'
-        }`}
+        className={`w-full min-w-0 px-3.5 py-2.5 bg-white border border-slate-300 hover:border-slate-400 rounded-xl text-xs font-bold text-[#14274E] flex items-center justify-between gap-2 shadow-2xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+          compact ? 'px-2.5 py-1.5 text-[11px]' : ''
+        } ${isOpen ? 'ring-2 ring-[#14274E]/10 border-slate-400' : ''}`}
       >
-        {currentLabel ? (
-          <>
-            <span
-              className="w-3 h-3 rounded-full flex-shrink-0"
-              style={{ backgroundColor: currentLabel.COLOR }}
-            />
-            <span className="font-medium text-[#14274E]">{currentLabel.NAME}</span>
-          </>
-        ) : (
-          <>
-            <Tag className={`text-[#9BA4B4] ${compact ? 'w-3 h-3' : 'w-3.5 h-3.5'}`} />
-            <span className="text-[#9BA4B4]">No Label</span>
-          </>
-        )}
-        <ChevronDown className={`text-[#9BA4B4] ml-auto transition-transform ${isOpen ? 'rotate-180' : ''} ${compact ? 'w-3 h-3' : 'w-3.5 h-3.5'}`} />
+        <div className="flex items-center gap-2 truncate">
+          {currentLabel ? (
+            <>
+              <span
+                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                style={{ backgroundColor: currentLabel.COLOR }}
+              />
+              <span className="font-bold text-[#14274E] truncate">{currentLabel.NAME}</span>
+            </>
+          ) : (
+            <>
+              <Tag className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="text-slate-400 font-semibold truncate">Select Table Label...</span>
+            </>
+          )}
+        </div>
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${
+            isOpen ? 'rotate-180' : ''
+          }`}
+        />
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 min-w-[180px] bg-white rounded-lg shadow-xl border border-[#394867]/15 z-50 py-1 max-h-[240px] overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-150">
-          {/* Remove label option */}
-          {currentLabelId != null && (
-            <button
-              onClick={() => handleSelect(null)}
-              disabled={isAssigning}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#C94A4A] hover:bg-red-50 transition-colors disabled:opacity-50"
-            >
-              <X className="w-3.5 h-3.5" />
-              <span>Remove Label</span>
-            </button>
-          )}
-
-          {currentLabelId != null && labels.length > 0 && (
-            <div className="h-px bg-[#394867]/10 mx-2 my-1" />
-          )}
+        <div className="absolute top-full left-0 mt-1.5 w-full min-w-[200px] z-50 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden animate-in fade-in duration-100 max-h-56 overflow-y-auto divide-y divide-slate-100">
+          {/* None / Clear Label option */}
+          <button
+            type="button"
+            onClick={() => handleSelect(null)}
+            disabled={isAssigning}
+            className={`w-full px-3.5 py-2.5 text-left text-xs font-bold flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+              currentLabelId == null
+                ? 'bg-[#14274E] text-white'
+                : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Tag className={`w-3.5 h-3.5 ${currentLabelId == null ? 'text-white' : 'text-slate-400'}`} />
+              <span>None (No Label)</span>
+            </div>
+            {currentLabelId == null && (
+              <span className="text-[10px] font-black tracking-wider uppercase text-slate-200">ACTIVE</span>
+            )}
+          </button>
 
           {/* Label options */}
-          {labels.map((label) => (
-            <button
-              key={label.LABEL_ID}
-              onClick={() => handleSelect(label.LABEL_ID)}
-              disabled={isAssigning || label.LABEL_ID === currentLabelId}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors disabled:opacity-50 ${
-                label.LABEL_ID === currentLabelId
-                  ? 'bg-[#E9C46A]/10 text-[#14274E] font-medium'
-                  : 'text-[#394867] hover:bg-[#F1F6F9]'
-              }`}
-            >
-              <span
-                className="w-3 h-3 rounded-full flex-shrink-0 border border-black/10"
-                style={{ backgroundColor: label.COLOR }}
-              />
-              <span className="flex-1 text-left">{label.NAME}</span>
-              {label.LABEL_ID === currentLabelId && (
-                <span className="text-[10px] text-[#9BA4B4] font-medium">ACTIVE</span>
-              )}
-            </button>
-          ))}
+          {labels.map((label) => {
+            const isSelected = label.LABEL_ID === currentLabelId
+            return (
+              <button
+                key={label.LABEL_ID}
+                type="button"
+                onClick={() => handleSelect(label.LABEL_ID)}
+                disabled={isAssigning}
+                className={`w-full px-3.5 py-2.5 text-left text-xs font-bold flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+                  isSelected
+                    ? 'bg-[#14274E] text-white'
+                    : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 truncate">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/10 shadow-2xs"
+                    style={{ backgroundColor: label.COLOR }}
+                  />
+                  <span className="truncate">{label.NAME}</span>
+                </div>
+                {isSelected && (
+                  <span className="text-[10px] font-black tracking-wider uppercase text-slate-200">ACTIVE</span>
+                )}
+              </button>
+            )
+          })}
 
           {labels.length === 0 && (
-            <div className="px-3 py-3 text-xs text-[#9BA4B4] text-center">
-              No labels configured. Create labels in Table Management.
+            <div className="p-3 text-xs text-slate-400 font-semibold text-center">
+              No labels configured
             </div>
           )}
         </div>

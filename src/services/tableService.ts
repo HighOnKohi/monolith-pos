@@ -29,6 +29,7 @@ export interface TableData {
   RESERVATION_PAX: number | null
   RESERVATION_NOTES: string | null
   RESERVATION_TIME_LIMIT?: string | null
+  RESERVATION_PHONE_NUMBER?: string | null
   LAYOUT_X?: number | null
   LAYOUT_Y?: number | null
   TABLE_TYPE?: number | null
@@ -161,6 +162,7 @@ function assembleTableData(
       RESERVATION_PAX: reservation?.EXPECTED_GUEST_COUNT != null ? Number(reservation.EXPECTED_GUEST_COUNT) : null,
       RESERVATION_NOTES: reservation?.RESERVATION_NOTE ? String(reservation.RESERVATION_NOTE) : null,
       RESERVATION_TIME_LIMIT: reservation?.TIME_LIMIT ? String(reservation.TIME_LIMIT) : null,
+      RESERVATION_PHONE_NUMBER: reservation?.APPOINTED_PHONE_NUMBER != null ? String(reservation.APPOINTED_PHONE_NUMBER) : null,
       LAYOUT_X: info?.X_POS != null ? Number(info.X_POS) : null,
       LAYOUT_Y: info?.Y_POS != null ? Number(info.Y_POS) : null,
       TABLE_TYPE: info?.TABLE_TYPE != null ? Number(info.TABLE_TYPE) : 1,
@@ -463,6 +465,7 @@ export interface ReservationData {
   pax: number
   timeLimit: string
   notes?: string
+  phoneNumber?: string | number | null
 }
 
 export async function reserveTable(
@@ -498,6 +501,9 @@ export async function reserveTable(
   ;(secondaries ?? []).forEach((s) => memberIds.add(Number(s.TABLE_ID)))
   const targetIds = Array.from(memberIds)
 
+  const cleanedPhone = reservation.phoneNumber ? String(reservation.phoneNumber).replace(/\D/g, '') : null
+  const appointedPhone = cleanedPhone ? Number(cleanedPhone) : null
+
   // 1. Insert into Table_Reservations
   const { data: reservationRow, error: reservationError } = await supabase
     .schema('tables')
@@ -505,6 +511,7 @@ export async function reserveTable(
     .insert({
       TABLE_ID: tableId,
       APPOINTED_NAME: reservation.name.trim(),
+      APPOINTED_PHONE_NUMBER: appointedPhone,
       EXPECTED_GUEST_COUNT: reservation.pax,
       RESERVATION_NOTE: reservation.notes?.trim() || null,
       TIME_LIMIT: reservation.timeLimit || null,
@@ -859,6 +866,21 @@ export async function saveTableMerge(
         MERGE_PERSISTENCY: persistency,
       })
       .in('TABLE_ID', memberIds)
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('monolith-order-update', { detail: { type: 'tables_sync', captainId, memberIds, persistency } })
+    )
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        const bc = new BroadcastChannel('monolith_order_events')
+        bc.postMessage({ type: 'tables_sync', captainId, memberIds, persistency })
+        bc.close()
+      } catch {
+        // ignore
+      }
+    }
   }
 
   return fetchTablesByIds(selectedIds)

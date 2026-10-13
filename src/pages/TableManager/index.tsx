@@ -39,13 +39,13 @@ import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
 import { useActiveEvent } from '@/hooks/useActiveEvent'
 import { useBusinessDay } from '@/hooks/useBusinessDay'
 import { getActiveBusinessDay } from '@/services/businessDayService'
-import { GitMerge, HelpCircle } from 'lucide-react'
+import { GitMerge, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { LabelManagementModal } from './components/LabelManagementModal'
 import { RemoveAllTablesModal } from './components/RemoveAllTablesModal'
 import { AdminAuthModal } from './components/AdminAuthModal'
 import { AutomaticAllocationModal } from './components/AutomaticAllocationModal'
 import { validateTableTypeCount } from '@/services/tableTypeConfigService'
-import { removeAllTables } from '@/services/tableService'
+import { removeAllTables, saveTableMerge } from '@/services/tableService'
 import { logTableAction } from '@/services/tableAuditService'
 import { fetchActiveLabels, type TableLabel } from '@/services/tableLabelService'
 
@@ -189,6 +189,7 @@ export interface MergeGroupVisualBox {
   minY: number
   maxX: number
   maxY: number
+  isSelected?: boolean
 }
 
 export interface MergeGroupVisualChain {
@@ -207,6 +208,7 @@ export interface MergeGroupVisualChain {
     cy: number
     tableNum: number
   }>
+  isSelected?: boolean
 }
 
 export type MergeGroupVisual = MergeGroupVisualBox | MergeGroupVisualChain
@@ -220,6 +222,7 @@ export default function TableManager() {
 
   // Editor State (Editing by default)
   const isEditMode = true
+  const [isAddTableVisible, setIsAddTableVisible] = useState(true)
   const [labelsModalOpen, setLabelsModalOpen] = useState(false)
   const [isQrPrintMode, setIsQrPrintMode] = useState(false)
   const [selectedForPrintTableNums, setSelectedForPrintTableNums] = useState<Set<number>>(new Set())
@@ -405,7 +408,7 @@ export default function TableManager() {
   const gridWidth = DEFAULT_GRID_WIDTH
   const gridHeight = DEFAULT_GRID_HEIGHT
 
-  // Dynamic cell size: scales to fit BOTH container width and height (17 blocks wide x 12 blocks high)
+  // Dynamic cell size: scales to fit BOTH container width and height (18 blocks wide x 12 blocks high)
   const cellSize = useMemo(() => {
     if (containerDimensions.width <= 0 || containerDimensions.height <= 0) return 48
     const maxW = (containerDimensions.width - 24) / TOTAL_GRID_WIDTH_BLOCKS
@@ -1564,8 +1567,8 @@ export default function TableManager() {
     showToast(`Table ${tableNum} unmerged`, 'info')
   }
 
-  // ── 13b. Merge Multi-Selected Tables (Floating Button in View/Edit Mode) ──
-  const handleMergeSelectedTables = async () => {
+  // ── 13b. Merge Multi-Selected Tables (Floating Buttons in View/Edit Mode) ──
+  const handleMergeSelectedTables = async (persistency: 'TEMPORARY' | 'CONTINOUOUS' = 'TEMPORARY') => {
     if (selectedTableNums.size < 2) return
     lastMutationTimeRef.current = Date.now()
 
@@ -1584,7 +1587,10 @@ export default function TableManager() {
       }
     }
 
-    const targetMergeGroupId = Math.min(...Array.from(allTableNumsToMerge))
+    const sortedNums = Array.from(allTableNumsToMerge).sort((a, b) => a - b)
+    const targetMergeGroupId = sortedNums[0]
+    const captainNum = sortedNums[0]
+    const memberNums = sortedNums.slice(1)
 
     // Collect any existing labels among the merged tables to share across the group
     const existingLabels = layoutTables
@@ -1613,17 +1619,38 @@ export default function TableManager() {
       activePresetMaxPax,
       baseCapacitiesMap,
     )
-    const updatedRest = rawRest.map((r) =>
-      allTableNumsToMerge.has(r.TABLE_NUM) && sharedLabelId != null
-        ? { ...r, LABEL_ID: sharedLabelId }
-        : r,
-    )
+    const updatedRest = rawRest.map((r) => {
+      if (allTableNumsToMerge.has(r.TABLE_NUM)) {
+        return {
+          ...r,
+          MERGE_GROUP_ID: r.TABLE_NUM === captainNum ? null : captainNum,
+          MERGE_PERSISTENCY: persistency,
+          ...(sharedLabelId != null ? { LABEL_ID: sharedLabelId } : {}),
+        }
+      }
+      return r
+    })
 
     setLayoutTables(updatedLayout)
     setRestaurantTables(updatedRest)
     setSelectedTableNums(new Set())
+    setSelectedTableNum(null)
+
+    // Persist to Active_Tables
+    try {
+      const captainId = restaurantTables.find((r) => r.TABLE_NUM === captainNum)?.TABLE_ID ??
+        layoutTables.find((t) => t.TABLE_NUM === captainNum)?.TABLE_ID ?? captainNum
+      const memberIds = memberNums.map((num) => {
+        return restaurantTables.find((r) => r.TABLE_NUM === num)?.TABLE_ID ??
+          layoutTables.find((t) => t.TABLE_NUM === num)?.TABLE_ID ?? num
+      })
+      await saveTableMerge(captainId, memberIds, persistency)
+    } catch (err) {
+      console.warn('[TableManager] Failed to persist merge to Active_Tables:', err)
+    }
+
     scheduleAutoSave(updatedLayout, updatedRest, 100)
-    showToast(`Merged ${allTableNumsToMerge.size} tables into Group #${targetMergeGroupId}`, 'success')
+    showToast(`Merged ${allTableNumsToMerge.size} tables into Group #${targetMergeGroupId} (${persistency.toLowerCase()})`, 'success')
   }
 
 
@@ -1943,11 +1970,10 @@ export default function TableManager() {
     for (const [groupId, members] of groupMap.entries()) {
       if (members.length < 2) continue
 
-      // Only show merge group indicator if at least one member table in this group is currently selected
+      // Indicator is always shown for merge groups with >= 2 tables, with highlight when selected
       const isGroupSelected = members.some(
         (m) => m.TABLE_NUM === selectedTableNum || selectedTableNums.has(m.TABLE_NUM),
       )
-      if (!isGroupSelected) continue
 
       const memberDetails = members.map((m) => {
         const cfg = TABLE_TYPES[m.TABLE_TYPE] || TABLE_TYPES[1]
@@ -2004,6 +2030,7 @@ export default function TableManager() {
           minY,
           maxX,
           maxY,
+          isSelected: isGroupSelected,
         })
       } else {
         // Overlaps foreign tables -> build smart nearest-neighbor chain link
@@ -2019,7 +2046,8 @@ export default function TableManager() {
                 maxDistSq = dSq
                 startTable =
                   memberDetails[i].cx < memberDetails[j].cx ||
-                  (memberDetails[i].cx === memberDetails[j].cx && memberDetails[i].cy <= memberDetails[j].cy)
+                  (memberDetails[i].cx === memberDetails[j].cx &&
+                    memberDetails[i].cy <= memberDetails[j].cy)
                     ? memberDetails[i]
                     : memberDetails[j]
               }
@@ -2037,7 +2065,9 @@ export default function TableManager() {
 
           for (const cand of memberDetails) {
             if (visited.has(cand.tableNum)) continue
-            const dSq = Math.pow(cand.cx - current.cx, 2) + Math.pow(cand.cy - current.cy, 2)
+            const dSq =
+              Math.pow(cand.cx - current.cx, 2) +
+              Math.pow(cand.cy - current.cy, 2)
             if (dSq < nearestDistSq) {
               nearestDistSq = dSq
               nearestCandidate = cand
@@ -2075,12 +2105,163 @@ export default function TableManager() {
           groupId,
           links,
           nodes,
+          isSelected: isGroupSelected,
         })
       }
     }
 
     return visuals
   }, [mergedNodes, selectedTableNum, selectedTableNums, dragState, cellSize])
+
+  // ── 18b. Faded Merge Indicator Preview on Multi-Select ──
+  const multiSelectVisual = useMemo(() => {
+    if (selectedTableNums.size < 2) return null
+
+    const selectedMembers = mergedNodes.filter((n) => selectedTableNums.has(n.TABLE_NUM))
+    if (selectedMembers.length < 2) return null
+
+    // If all selected tables already belong to the exact same merge group, their merge group visual handles it
+    const firstGroupId = selectedMembers[0]?.MERGE_GROUP_ID
+    const allSameGroup =
+      firstGroupId != null && selectedMembers.every((m) => m.MERGE_GROUP_ID === firstGroupId)
+    if (allSameGroup) return null
+
+    const memberDetails = selectedMembers.map((m) => {
+      const cfg = TABLE_TYPES[m.TABLE_TYPE] || TABLE_TYPES[1]
+      const isDraggingThis = dragState?.tableNum === m.TABLE_NUM
+      const x = isDraggingThis ? dragState.currentX : m.X_POS
+      const y = isDraggingThis ? dragState.currentY : m.Y_POS
+      const width = cfg.width
+      const height = cfg.height
+      const cx = halfCellMarginPx + (x + width / 2) * cellSize
+      const cy = halfCellMarginPx + (y + height / 2) * cellSize
+      return {
+        tableNum: m.TABLE_NUM,
+        x,
+        y,
+        width,
+        height,
+        right: x + width,
+        bottom: y + height,
+        cx,
+        cy,
+      }
+    })
+
+    const minX = Math.min(...memberDetails.map((m) => m.x))
+    const minY = Math.min(...memberDetails.map((m) => m.y))
+    const maxX = Math.max(...memberDetails.map((m) => m.right))
+    const maxY = Math.max(...memberDetails.map((m) => m.bottom))
+
+    // Check if bounding box overlaps any other tables not selected
+    const foreignTables = mergedNodes.filter((n) => !selectedTableNums.has(n.TABLE_NUM))
+    let overlapsForeign = false
+
+    for (const foreign of foreignTables) {
+      const fCfg = TABLE_TYPES[foreign.TABLE_TYPE] || TABLE_TYPES[1]
+      const isDraggingForeign = dragState?.tableNum === foreign.TABLE_NUM
+      const fx = isDraggingForeign ? dragState.currentX : foreign.X_POS
+      const fy = isDraggingForeign ? dragState.currentY : foreign.Y_POS
+      const fRight = fx + fCfg.width
+      const fBottom = fy + fCfg.height
+
+      const noOverlap = fRight <= minX || fx >= maxX || fBottom <= minY || fy >= maxY
+      if (!noOverlap) {
+        overlapsForeign = true
+        break
+      }
+    }
+
+    if (!overlapsForeign) {
+      return {
+        type: 'box' as const,
+        minX,
+        minY,
+        maxX,
+        maxY,
+      }
+    } else {
+      // Overlaps other unselected tables -> chain links
+      let startTable = memberDetails[0]
+      if (memberDetails.length > 2) {
+        let maxDistSq = -1
+        for (let i = 0; i < memberDetails.length; i++) {
+          for (let j = i + 1; j < memberDetails.length; j++) {
+            const dSq =
+              Math.pow(memberDetails[i].cx - memberDetails[j].cx, 2) +
+              Math.pow(memberDetails[i].cy - memberDetails[j].cy, 2)
+            if (dSq > maxDistSq) {
+              maxDistSq = dSq
+              startTable =
+                memberDetails[i].cx < memberDetails[j].cx ||
+                (memberDetails[i].cx === memberDetails[j].cx &&
+                  memberDetails[i].cy <= memberDetails[j].cy)
+                  ? memberDetails[i]
+                  : memberDetails[j]
+            }
+          }
+        }
+      }
+
+      const chain: typeof memberDetails = [startTable]
+      const visited = new Set<number>([startTable.tableNum])
+
+      while (chain.length < memberDetails.length) {
+        const current = chain[chain.length - 1]
+        let nearestCandidate: (typeof memberDetails)[0] | null = null
+        let nearestDistSq = Infinity
+
+        for (const cand of memberDetails) {
+          if (visited.has(cand.tableNum)) continue
+          const dSq =
+            Math.pow(cand.cx - current.cx, 2) +
+            Math.pow(cand.cy - current.cy, 2)
+          if (dSq < nearestDistSq) {
+            nearestDistSq = dSq
+            nearestCandidate = cand
+          }
+        }
+
+        if (nearestCandidate) {
+          visited.add(nearestCandidate.tableNum)
+          chain.push(nearestCandidate)
+        } else {
+          break
+        }
+      }
+
+      const links: Array<{
+        x1: number
+        y1: number
+        x2: number
+        y2: number
+        fromTable: number
+        toTable: number
+      }> = []
+      for (let i = 0; i < chain.length - 1; i++) {
+        links.push({
+          x1: chain[i].cx,
+          y1: chain[i].cy,
+          x2: chain[i + 1].cx,
+          y2: chain[i + 1].cy,
+          fromTable: chain[i].tableNum,
+          toTable: chain[i + 1].tableNum,
+        })
+      }
+
+      const nodes = memberDetails.map((m) => ({
+        cx: m.cx,
+        cy: m.cy,
+        tableNum: m.tableNum,
+      }))
+
+      return {
+        type: 'chain' as const,
+        links,
+        nodes,
+      }
+    }
+  }, [mergedNodes, selectedTableNums, dragState, cellSize, halfCellMarginPx])
 
   const selectedNode = mergedNodes.find((n) => n.TABLE_NUM === selectedTableNum) || null
 
@@ -2283,82 +2464,191 @@ export default function TableManager() {
             }}
             onMouseDown={handleCanvasMouseDown}
           >
-            {/* Question Mark icon in upper left corner with hover tooltip */}
-            <div className="absolute top-3.5 left-3.5 z-30 group">
-              <button
-                type="button"
-                aria-label="Grid instructions and shortcuts"
-                className="w-8 h-8 rounded-xl bg-white/90 hover:bg-white text-slate-500 hover:text-[#14274E] border border-slate-200/80 shadow-xs hover:shadow-md flex items-center justify-center transition-all cursor-help focus:outline-none"
-              >
-                <HelpCircle className="w-4 h-4 stroke-[2.2]" />
-              </button>
+            {/* Upper Left: Help Guide & Sliding Add Table Controls */}
+            <div className="absolute top-3.5 left-3.5 z-30 flex items-center gap-2">
+              {/* Question Mark icon with hover tooltip */}
+              <div className="group relative">
+                <button
+                  type="button"
+                  aria-label="Grid instructions and shortcuts"
+                  className="w-8 h-8 rounded-xl bg-white/90 hover:bg-white text-slate-500 hover:text-[#14274E] border border-slate-200/80 shadow-xs hover:shadow-md flex items-center justify-center transition-all cursor-help focus:outline-none"
+                >
+                  <HelpCircle className="w-4 h-4 stroke-[2.2]" />
+                </button>
 
-              {/* Tooltip Content on Hover */}
-              <div className="pointer-events-none opacity-0 group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 ease-out translate-y-1 group-hover:translate-y-0 absolute top-10 left-0 w-72 p-3.5 rounded-2xl bg-[#14274E] text-white shadow-2xl border border-white/10 z-50">
-                <div className="flex items-center gap-1.5 pb-2 mb-2 border-b border-white/10">
-                  <HelpCircle className="w-3.5 h-3.5 text-[#E9C46A]" />
-                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-200">Grid Guide & Controls</span>
+                {/* Tooltip Content on Hover */}
+                <div className="pointer-events-none opacity-0 group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 ease-out translate-y-1 group-hover:translate-y-0 absolute top-10 left-0 w-72 p-3.5 rounded-2xl bg-[#14274E] text-white shadow-2xl border border-white/10 z-50">
+                  <div className="flex items-center gap-1.5 pb-2 mb-2 border-b border-white/10">
+                    <HelpCircle className="w-3.5 h-3.5 text-[#E9C46A]" />
+                    <span className="text-[11px] font-black uppercase tracking-wider text-slate-200">Grid Guide & Controls</span>
+                  </div>
+                  <ul className="space-y-2 text-[11px] text-slate-300 leading-relaxed font-medium">
+                    <li className="flex items-start gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
+                      <span><strong className="text-white font-bold">Purpose of the Grid:</strong> Visual interactive floor plan to map tables and spatial seating arrangements.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
+                      <span><strong className="text-white font-bold">Multi-Select Tables:</strong> Hold <kbd className="px-1 py-0.5 rounded bg-white/15 text-[10px] font-mono text-white">Ctrl</kbd> (or <kbd className="px-1 py-0.5 rounded bg-white/15 text-[10px] font-mono text-white">⌘</kbd>) while clicking tables, or drag a selection box.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
+                      <span><strong className="text-white font-bold">Move Tables:</strong> Drag any selected table across the grid to freely position it.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
+                      <span><strong className="text-white font-bold">Table Configuration:</strong> Click any table to view and edit its info and capacity in the sidebar.</span>
+                    </li>
+                  </ul>
                 </div>
-                <ul className="space-y-2 text-[11px] text-slate-300 leading-relaxed font-medium">
-                  <li className="flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
-                    <span><strong className="text-white font-bold">Purpose of the Grid:</strong> Visual interactive floor plan to map tables and spatial seating arrangements.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
-                    <span><strong className="text-white font-bold">Multi-Select Tables:</strong> Hold <kbd className="px-1 py-0.5 rounded bg-white/15 text-[10px] font-mono text-white">Ctrl</kbd> (or <kbd className="px-1 py-0.5 rounded bg-white/15 text-[10px] font-mono text-white">⌘</kbd>) while clicking tables, or drag a selection box.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
-                    <span><strong className="text-white font-bold">Move Tables:</strong> Drag any selected table across the grid to freely position it.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#E9C46A] shrink-0 mt-1.5" />
-                    <span><strong className="text-white font-bold">Table Configuration:</strong> Click any table to view and edit its info and capacity in the sidebar.</span>
-                  </li>
-                </ul>
               </div>
-            </div>
-              {/* Add Table button in upper right corner (Edit Mode only, non-obtrusive) */}
-              {isEditMode && (
-                <div className="absolute top-3.5 right-3.5 z-30">
-                  <FloatingLayoutControls
-                    onAddTable={handleAddTable}
-                    onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
-                    totalCapacity={totalAllocatedCapacity}
-                    maxVenueCapacity={activePresetMaxPax}
-                  />
-                </div>
-              )}
 
-              {/* Floating Merge Tables button in upper right corner (When >= 2 tables selected) */}
-              {!isQrPrintMode && selectedTableNums.size >= 2 && (
-                <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150">
+              {/* Add Table Sliding Container with Toggle Arrow on its Right Side */}
+              {isEditMode && (
+                <div className="flex items-center">
+                  <div
+                    className={`overflow-hidden transition-all duration-300 ease-in-out ${
+                      isAddTableVisible
+                        ? 'max-w-[340px] opacity-100'
+                        : 'max-w-0 opacity-0 pointer-events-none'
+                    }`}
+                  >
+                    <FloatingLayoutControls
+                      onAddTable={handleAddTable}
+                      onOpenAutoAllocate={() => setAutoAllocModalOpen(true)}
+                      totalCapacity={totalAllocatedCapacity}
+                      maxVenueCapacity={activePresetMaxPax}
+                    />
+                  </div>
+
                   <button
                     type="button"
-                    onClick={handleMergeSelectedTables}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-xl hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-105 active:scale-95 transition-all font-bold text-xs cursor-pointer"
+                    onClick={() => setIsAddTableVisible((prev) => !prev)}
+                    className="h-8 w-6 ml-1 flex items-center justify-center rounded-lg bg-white/90 hover:bg-white text-slate-600 hover:text-[#14274E] border border-slate-200/80 shadow-xs hover:shadow-md transition-all cursor-pointer focus:outline-none"
+                    title={isAddTableVisible ? 'Hide Add Table' : 'Show Add Table'}
+                    aria-label={isAddTableVisible ? 'Hide Add Table' : 'Show Add Table'}
                   >
-                    <GitMerge className="w-4 h-4 text-[#E9C46A]" />
-                    <span>Merge Tables ({selectedTableNums.size})</span>
+                    {isAddTableVisible ? (
+                      <ChevronLeft className="w-3.5 h-3.5 stroke-[2.5]" />
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                    )}
                   </button>
                 </div>
               )}
+            </div>
 
-              {/* Floor Grid: 17x12 blocks with half-cell extension on all 4 sides */}
-              <div
-                className="w-full h-full relative select-none bg-white"
-                style={{
-                  backgroundImage: isEditMode
-                    ? `
-                      linear-gradient(to right, rgba(20, 39, 78, 0.08) 1px, transparent 1px),
-                      linear-gradient(to bottom, rgba(20, 39, 78, 0.08) 1px, transparent 1px)
-                    `
-                    : 'none',
-                  backgroundSize: `${cellSize}px ${cellSize}px`,
-                  backgroundPosition: `${halfCellMarginPx}px ${halfCellMarginPx}px`,
-                }}
-              >
+            {/* Two Simple Merge Buttons in upper right corner (When >= 2 tables selected) */}
+            {!isQrPrintMode && selectedTableNums.size >= 2 && (
+              <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150 flex items-center gap-2">
+                {/* Merge Temporary Button */}
+                <div className="relative group">
+                  <button
+                    type="button"
+                    onClick={() => handleMergeSelectedTables('TEMPORARY')}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-lg hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-102 active:scale-98 transition-all font-bold text-xs cursor-pointer"
+                  >
+                    <GitMerge className="w-3.5 h-3.5 text-[#E9C46A]" />
+                    <span>Merge Temporary</span>
+                  </button>
+                  <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-150 absolute top-full right-0 mt-1.5 w-52 p-2.5 rounded-xl bg-slate-900 text-slate-200 text-[11px] shadow-2xl border border-white/10 z-50 text-center leading-snug">
+                    This merge disappears once the table bills out.
+                  </div>
+                </div>
+
+                {/* Merge Continouous Button */}
+                <div className="relative group">
+                  <button
+                    type="button"
+                    onClick={() => handleMergeSelectedTables('CONTINOUOUS')}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-lg hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-102 active:scale-98 transition-all font-bold text-xs cursor-pointer"
+                  >
+                    <GitMerge className="w-3.5 h-3.5 text-[#E9C46A]" />
+                    <span>Merge Continouous</span>
+                  </button>
+                  <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-150 absolute top-full right-0 mt-1.5 w-52 p-2.5 rounded-xl bg-slate-900 text-slate-200 text-[11px] shadow-2xl border border-white/10 z-50 text-center leading-snug">
+                    This merge doesnt disappear when the table bills out.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Floor Grid: 18x12 blocks (17x11 playable) with half-cell extension on all 4 sides */}
+            <div
+              className="w-full h-full relative select-none bg-white"
+              style={{
+                backgroundImage: isEditMode
+                  ? `
+                    linear-gradient(to right, rgba(20, 39, 78, 0.08) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(20, 39, 78, 0.08) 1px, transparent 1px)
+                  `
+                  : 'none',
+                backgroundSize: `${cellSize}px ${cellSize}px`,
+                backgroundPosition: `${halfCellMarginPx}px ${halfCellMarginPx}px`,
+              }}
+            >
+              {/* Faded Multi-Select Merge Indicator Preview (Box if unblocked, chained lines if overlapping foreign tables) */}
+              {multiSelectVisual && (
+                multiSelectVisual.type === 'box' ? (
+                  <div
+                    key="multi-select-preview-box"
+                    className="absolute pointer-events-none rounded-2xl border-2 border-dashed border-[#14274E]/40 bg-[#14274E]/[0.05] z-10 transition-all duration-150 shadow-xs"
+                    style={{
+                      left: `${halfCellMarginPx + multiSelectVisual.minX * cellSize - Math.max(6, Math.round(cellSize * 0.12))}px`,
+                      top: `${halfCellMarginPx + multiSelectVisual.minY * cellSize - Math.max(6, Math.round(cellSize * 0.12))}px`,
+                      width: `${(multiSelectVisual.maxX - multiSelectVisual.minX) * cellSize + Math.max(6, Math.round(cellSize * 0.12)) * 2}px`,
+                      height: `${(multiSelectVisual.maxY - multiSelectVisual.minY) * cellSize + Math.max(6, Math.round(cellSize * 0.12)) * 2}px`,
+                    }}
+                  />
+                ) : (
+                  <svg
+                    key="multi-select-preview-chain"
+                    className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible"
+                  >
+                    {multiSelectVisual.links.map((link, idx) => (
+                      <g key={`preview-link-${link.fromTable}-${link.toTable}-${idx}`}>
+                        <line
+                          x1={link.x1}
+                          y1={link.y1}
+                          x2={link.x2}
+                          y2={link.y2}
+                          stroke="#14274E"
+                          strokeWidth={6}
+                          strokeOpacity={0.12}
+                          strokeDasharray="10 6"
+                          strokeLinecap="round"
+                        />
+                        <line
+                          x1={link.x1}
+                          y1={link.y1}
+                          x2={link.x2}
+                          y2={link.y2}
+                          stroke="#14274E"
+                          strokeWidth={2}
+                          strokeOpacity={0.4}
+                          strokeDasharray="8 5"
+                          strokeLinecap="round"
+                        />
+                      </g>
+                    ))}
+                    {multiSelectVisual.nodes.map((node) => (
+                      <g key={`preview-node-${node.tableNum}`}>
+                        <circle
+                          cx={node.cx}
+                          cy={node.cy}
+                          r={5}
+                          fill="#14274E"
+                          fillOpacity={0.35}
+                          stroke="#FFFFFF"
+                          strokeWidth={1.5}
+                        />
+                        <circle cx={node.cx} cy={node.cy} r={2} fill="#FFFFFF" />
+                      </g>
+                    ))}
+                  </svg>
+                )
+              )}
+
               {/* Dynamic Merge Group Indicators (Box or Broken Chain Link Lines) */}
               {mergeGroupVisuals.map((visual) => {
                 const theme = getMergeGroupColor(visual.groupId)
@@ -2373,7 +2663,9 @@ export default function TableManager() {
                   return (
                     <div
                       key={`merge-group-box-${visual.groupId}`}
-                      className="absolute pointer-events-none rounded-2xl border-2 border-dashed transition-all duration-150 z-10 shadow-xs"
+                      className={`absolute pointer-events-none rounded-2xl border-2 border-dashed transition-all duration-150 z-10 ${
+                        visual.isSelected ? 'shadow-md ring-2 ring-indigo-300' : 'shadow-xs'
+                      }`}
                       style={{
                         left: `${left}px`,
                         top: `${top}px`,
@@ -2402,8 +2694,8 @@ export default function TableManager() {
                             x2={link.x2}
                             y2={link.y2}
                             stroke={theme.glow}
-                            strokeWidth={6}
-                            strokeOpacity={0.35}
+                            strokeWidth={visual.isSelected ? 8 : 6}
+                            strokeOpacity={visual.isSelected ? 0.5 : 0.35}
                             strokeDasharray="10 6"
                             strokeLinecap="round"
                           />
@@ -2414,7 +2706,7 @@ export default function TableManager() {
                             x2={link.x2}
                             y2={link.y2}
                             stroke={theme.primary}
-                            strokeWidth={2.5}
+                            strokeWidth={visual.isSelected ? 3.5 : 2.5}
                             strokeDasharray="8 5"
                             strokeLinecap="round"
                           />

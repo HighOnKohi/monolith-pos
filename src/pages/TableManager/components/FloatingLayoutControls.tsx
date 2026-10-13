@@ -85,7 +85,7 @@ export const FloatingLayoutControls: React.FC<FloatingLayoutControlsProps> = mem
 
       {/* Table Type Dropdown Menu with Golden Icons */}
       {isDropdownOpen && (
-        <div className="absolute top-full right-0 mt-1.5 w-60 bg-white border border-slate-200 rounded-xl shadow-2xl p-1 z-50 animate-in fade-in duration-100 text-slate-800">
+        <div className="absolute top-full left-0 mt-1.5 w-60 bg-white border border-slate-200 rounded-xl shadow-2xl p-1 z-50 animate-in fade-in duration-100 text-slate-800">
           <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider px-2.5 py-1">
             Table Type
           </div>

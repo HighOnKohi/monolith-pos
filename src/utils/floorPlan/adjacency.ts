@@ -110,52 +110,9 @@ export function sanitizeLayoutMergeGroups<
   for (const [, members] of rawGroupMap.entries()) {
     if (members.length < 2) continue
 
-    // Find connected components within this group based on spatial adjacency
-    const mCount = members.length
-    const adj: number[][] = Array.from({ length: mCount }, () => [])
-    for (let i = 0; i < mCount; i++) {
-      for (let j = i + 1; j < mCount; j++) {
-        if (areLayoutTablesAdjacent(members[i], members[j])) {
-          adj[i].push(j)
-          adj[j].push(i)
-        }
-      }
-    }
-
-    const hasAnyMultiNodeComp = adj.some((neighbors) => neighbors.length > 0)
-    const visited = new Array(mCount).fill(false)
-
-    for (let i = 0; i < mCount; i++) {
-      if (!visited[i]) {
-        const comp: T[] = []
-        const queue = [i]
-        visited[i] = true
-
-        while (queue.length > 0) {
-          const curr = queue.shift()!
-          comp.push(members[curr])
-          for (const neighbor of adj[curr]) {
-            if (!visited[neighbor]) {
-              visited[neighbor] = true
-              queue.push(neighbor)
-            }
-          }
-        }
-
-        if (comp.length >= 2) {
-          const anchor = Math.min(...comp.map((t) => t.TABLE_NUM))
-          for (const t of comp) {
-            newMergeGroupIdByNum.set(t.TABLE_NUM, anchor)
-          }
-        } else if (comp.length === 1 && !hasAnyMultiNodeComp) {
-          // Manual merge where none of the tables directly touch
-          const anchor = Math.min(...members.map((t) => t.TABLE_NUM))
-          for (const t of members) {
-            newMergeGroupIdByNum.set(t.TABLE_NUM, anchor)
-          }
-          break
-        }
-      }
+    const anchor = Math.min(...members.map((t) => t.TABLE_NUM))
+    for (const t of members) {
+      newMergeGroupIdByNum.set(t.TABLE_NUM, anchor)
     }
   }
 

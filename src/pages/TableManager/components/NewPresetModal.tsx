@@ -6,6 +6,8 @@ import {
 } from '@/utils/floorPlan/distribution'
 import {
   TABLE_TYPES,
+  DEFAULT_GRID_WIDTH,
+  DEFAULT_GRID_HEIGHT,
   type TableType,
   type TableLayoutInfo,
 } from '@/services/tableLayoutService'
@@ -41,8 +43,8 @@ const DEFAULT_WEIGHTS: Record<TableType, number> = {
 
 export const NewPresetModal: React.FC<NewPresetModalProps> = ({
   isOpen,
-  gridWidth = 16,
-  gridHeight = 11,
+  gridWidth = DEFAULT_GRID_WIDTH,
+  gridHeight = DEFAULT_GRID_HEIGHT,
   onClose,
   onCreate,
 }) => {

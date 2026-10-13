@@ -61,10 +61,10 @@ export const TABLE_TYPES: Record<TableType, TableTypeConfig> = {
   },
 }
 
-export const DEFAULT_GRID_WIDTH = 16
+export const DEFAULT_GRID_WIDTH = 17
 export const DEFAULT_GRID_HEIGHT = 11
 export const GRID_MARGIN_BLOCKS = 0.5
-export const TOTAL_GRID_WIDTH_BLOCKS = 17
+export const TOTAL_GRID_WIDTH_BLOCKS = 18
 export const TOTAL_GRID_HEIGHT_BLOCKS = 12
 
 export interface TableLayoutPreset {
@@ -114,6 +114,7 @@ export interface RestaurantTableData {
   RESERVATION_PAX?: number | null
   RESERVATION_NOTES?: string | null
   RESERVATION_TIME_LIMIT?: string | null
+  RESERVATION_PHONE_NUMBER?: string | null
 }
 
 export interface MergedTableNode extends TableLayoutInfo {
@@ -130,6 +131,7 @@ export interface MergedTableNode extends TableLayoutInfo {
   RESERVATION_PAX?: number | null
   RESERVATION_NOTES?: string | null
   RESERVATION_TIME_LIMIT?: string | null
+  RESERVATION_PHONE_NUMBER?: string | null
   RESERVED_SINCE?: string | null
 }
 
@@ -191,8 +193,8 @@ export async function fetchAllLayoutPresets(): Promise<TableLayoutPreset[]> {
     return {
       LAYOUT_PRESET_ID: id,
       PRESET_NAME: String(row.PRESET_NAME || ''),
-      PRESET_GRID_WIDTH: Number((row as Record<string, unknown>).PRESET_GRID_WIDTH || 20),
-      PRESET_GRID_HEIGHT: Number((row as Record<string, unknown>).PRESET_GRID_HEIGHT || 16),
+      PRESET_GRID_WIDTH: Number((row as Record<string, unknown>).PRESET_GRID_WIDTH || DEFAULT_GRID_WIDTH),
+      PRESET_GRID_HEIGHT: Number((row as Record<string, unknown>).PRESET_GRID_HEIGHT || DEFAULT_GRID_HEIGHT),
       IS_DEFAULT: isActive,
       IS_ACTIVE: isActive,
       IS_PROTECTED: Boolean(row.IS_PROTECTED),
@@ -215,8 +217,8 @@ export async function fetchDefaultOrFirstPreset(): Promise<TableLayoutPreset | n
 export async function createLayoutPreset(
   name: string,
   maxPax: number = 50,
-  _gridWidth: number = 20,
-  _gridHeight: number = 16,
+  _gridWidth: number = DEFAULT_GRID_WIDTH,
+  _gridHeight: number = DEFAULT_GRID_HEIGHT,
   isActive: boolean = false,
 ): Promise<TableLayoutPreset> {
   if (isActive) {
@@ -258,8 +260,8 @@ export async function createLayoutPreset(
   const createdPreset: TableLayoutPreset = {
     LAYOUT_PRESET_ID: presetId,
     PRESET_NAME: String(data.PRESET_NAME || name),
-    PRESET_GRID_WIDTH: 20,
-    PRESET_GRID_HEIGHT: 16,
+    PRESET_GRID_WIDTH: DEFAULT_GRID_WIDTH,
+    PRESET_GRID_HEIGHT: DEFAULT_GRID_HEIGHT,
     IS_DEFAULT: isActive,
     IS_ACTIVE: isActive,
     MAX_PAX: validMaxPax,
@@ -711,17 +713,34 @@ export async function fetchPresetLayout(presetId: number): Promise<TableLayoutIn
 
   const activeMap = new Map((activeRows ?? []).map((a) => [Number(a.TABLE_ID), a]))
 
+  const captainIds = new Set<number>()
+  for (const a of activeRows ?? []) {
+    if (a.MERGE_GROUP_ID != null) {
+      captainIds.add(Number(a.MERGE_GROUP_ID))
+    }
+  }
+
+  const tableIdToNumMap = new Map((infoRows ?? []).map((r) => [Number(r.TABLE_ID), Number(r.TABLE_NUM)]))
+
   const rawTables: TableLayoutInfo[] = (infoRows ?? []).map((row: Record<string, unknown>) => {
     const tableId = Number(row.TABLE_ID)
     const active = activeMap.get(tableId)
     const capacity = row.SEAT_CAPACITY != null ? Number(row.SEAT_CAPACITY) : 4
+
+    let mergeGroupId: number | null = null
+    if (active?.MERGE_GROUP_ID != null) {
+      const capId = Number(active.MERGE_GROUP_ID)
+      mergeGroupId = tableIdToNumMap.get(capId) ?? capId
+    } else if (captainIds.has(tableId)) {
+      mergeGroupId = Number(row.TABLE_NUM)
+    }
 
     return {
       INFO_ID: String(tableId),
       TABLE_ID: tableId,
       LAYOUT_PRESET_ID: presetId,
       TABLE_NUM: Number(row.TABLE_NUM),
-      MERGE_GROUP_ID: active?.MERGE_GROUP_ID != null ? Number(active.MERGE_GROUP_ID) : null,
+      MERGE_GROUP_ID: mergeGroupId,
       TABLE_TYPE: (Number(row.TABLE_TYPE) || 1) as TableType,
       X_POS: Number(row.X_POS ?? 0),
       Y_POS: Number(row.Y_POS ?? 0),
@@ -786,6 +805,7 @@ export async function fetchLiveRestaurantTables(): Promise<RestaurantTableData[]
       RESERVATION_PAX: res?.EXPECTED_GUEST_COUNT != null ? Number(res.EXPECTED_GUEST_COUNT) : null,
       RESERVATION_NOTES: res?.RESERVATION_NOTE ? String(res.RESERVATION_NOTE) : null,
       RESERVATION_TIME_LIMIT: res?.TIME_LIMIT ? String(res.TIME_LIMIT) : null,
+      RESERVATION_PHONE_NUMBER: res?.APPOINTED_PHONE_NUMBER != null ? String(res.APPOINTED_PHONE_NUMBER) : null,
     }
   })
 

@@ -2,7 +2,13 @@
 // Centralized Authoritative Table Capacity & Distribution Engine
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { TABLE_TYPES, type TableType, type TableLayoutInfo } from '@/services/tableLayoutService'
+import {
+  TABLE_TYPES,
+  DEFAULT_GRID_WIDTH,
+  DEFAULT_GRID_HEIGHT,
+  type TableType,
+  type TableLayoutInfo,
+} from '@/services/tableLayoutService'
 import { calculateTableDistribution } from './distribution'
 import { type TablePosition, detectHardCollision } from './collision'
 
@@ -241,8 +247,8 @@ export function resolveLayoutCapacityOverflow(
  */
 export function distributePresetTables(
   maxPax: number,
-  gridWidth: number = 20,
-  gridHeight: number = 16,
+  gridWidth: number = DEFAULT_GRID_WIDTH,
+  gridHeight: number = DEFAULT_GRID_HEIGHT,
 ): { layoutTables: TableLayoutInfo[]; baseCapacities: Map<number, number> } {
   const targetPax = Math.max(1, Math.round(maxPax))
   const distribution = calculateTableDistribution(targetPax, [4, 2], targetPax)

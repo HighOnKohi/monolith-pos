@@ -344,14 +344,30 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   const mergeTheme = getMergeGroupColor(mergeGroupId)
   const chairSize = Math.max(10, Math.round(cellSize * 0.22))
   const chairOffset = -Math.round(chairSize * 1.15)
+  const displayPaxText = isEditMode ? String(capacity) : (guestCount > 0 ? `${guestCount}/${capacity}` : String(capacity))
 
-  // Border & background style for tabletop - border colors strictly indicate table status
+  // Border & background style for tabletop
+  // In layout manager: don't recolor based on status. Keep borders gray (#94A3B8) and dark navy (#14274E) when selected.
   const getTabletopStyle = () => {
     if (isQrPrintMode) {
       return {
         backgroundColor: '#FFFFFF',
       }
     }
+
+    if (isEditMode) {
+      const borderColor = isSelected ? '#14274E' : '#94A3B8'
+      return {
+        backgroundColor: '#FFFFFF',
+        borderColor,
+        borderWidth: isSelected ? '3.5px' : '3px',
+        borderStyle: 'solid' as const,
+        boxShadow: isSelected
+          ? '0 4px 14px rgba(20, 39, 78, 0.25)'
+          : '0 1px 3px rgba(0, 0, 0, 0.05)',
+      }
+    }
+
     const borderColor = statusInfo.color
 
     let bg = '#FFFFFF'
@@ -388,7 +404,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
         </div>
       )}
 
-      {/* Top Left Merge Indicator (status dot beside merge dot removed as border shows status) */}
+      {/* Top Left Merge Indicator */}
       {!isQrPrintMode && isMerged && (
         <div className="absolute top-1 left-1.5 flex items-center gap-1 pointer-events-none z-20">
           <div
@@ -410,6 +426,12 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
       return isPrintSelected
         ? 'bg-white border-2 border-[#14274E] ring-3 ring-[#14274E]/30 shadow-lg cursor-pointer'
         : 'bg-white/95 border-2 border-dashed border-slate-300 opacity-70 hover:opacity-100 hover:border-slate-400 cursor-pointer'
+    }
+    if (isEditMode) {
+      if (isSelected) {
+        return 'ring-4 ring-[#14274E]/25 shadow-lg scale-102'
+      }
+      return 'shadow-xs'
     }
     if (isSelected) {
       return 'ring-4 ring-indigo-500/70 shadow-lg scale-102'
@@ -507,7 +529,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           {/* Corner Seat Counter */}
           <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-full text-[9px] font-black flex items-center gap-0.5 leading-none pointer-events-none bg-slate-100/95 text-slate-700 border border-slate-300 shadow-2xs">
             <Users className="w-2.5 h-2.5 text-slate-500" />
-            <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
+            <span>{displayPaxText}</span>
           </div>
         </div>
       </div>
@@ -631,7 +653,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           {/* Corner Seat Counter */}
           <div className="absolute bottom-1.5 right-2 px-1.5 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1 leading-none pointer-events-none bg-slate-100/90 text-slate-700 border border-slate-200">
             <Users className="w-2.5 h-2.5 text-slate-500" />
-            <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
+            <span>{displayPaxText}</span>
           </div>
         </div>
       </div>
@@ -755,7 +777,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           {/* Corner Seat Counter */}
           <div className="absolute bottom-1.5 px-1.5 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1 leading-none pointer-events-none bg-slate-100/90 text-slate-700 border border-slate-200">
             <Users className="w-2.5 h-2.5 text-slate-500" />
-            <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
+            <span>{displayPaxText}</span>
           </div>
         </div>
       </div>
@@ -848,7 +870,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           {/* Seat Counter Below Table Number */}
           <div className="px-1.5 py-0.5 rounded-full text-[9px] font-black flex items-center gap-0.5 leading-none pointer-events-none mt-1 bg-slate-100/95 text-slate-700 border border-slate-300 shadow-2xs">
             <Users className="w-2.5 h-2.5 text-slate-500" />
-            <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
+            <span>{displayPaxText}</span>
           </div>
         </div>
       </div>
@@ -926,7 +948,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           {/* Seat Counter Below Table Number */}
           <div className="px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1 leading-none pointer-events-none mt-1.5 bg-slate-100/90 text-slate-700 border border-slate-200 shadow-2xs">
             <Users className="w-2.5 h-2.5 text-slate-500" />
-            <span>{guestCount > 0 ? `${guestCount}/${capacity}` : capacity}</span>
+            <span>{displayPaxText}</span>
           </div>
         </div>
       </div>

@@ -35,16 +35,13 @@ import { LabelSelector } from '@/components/common/LabelSelector'
 import {
   Users,
   CheckCircle2,
-  Clock,
   Ban,
   GitMerge,
   Unlink,
   Minus,
   Plus,
   AlertCircle,
-  X,
   Check,
-  Tag,
   Receipt,
   LayoutGrid,
   CalendarClock,
@@ -52,6 +49,7 @@ import {
   Phone,
   UserCheck,
   ShoppingBag,
+  HelpCircle,
 } from 'lucide-react'
 import {
   getActiveAdvanceOrderByTable,
@@ -130,10 +128,6 @@ export default function ReceptionistInterface() {
   const [resTime, setResTime] = useState('')
   const [resNotes, setResNotes] = useState('')
 
-  // ── Merge Modal State ──
-  const [mergeModalOpen, setMergeModalOpen] = useState(false)
-  const [mergePersistencyChoice, setMergePersistencyChoice] = useState<'TEMPORARY' | 'CONTINOUOUS'>('TEMPORARY')
-
   // ── Drag & Drop State ──
   interface DragState {
     tableNum: number
@@ -183,7 +177,7 @@ export default function ReceptionistInterface() {
   const gridWidth = DEFAULT_GRID_WIDTH
   const gridHeight = DEFAULT_GRID_HEIGHT
 
-  // Dynamic cell size: scales to fit BOTH container width and height (17 blocks wide x 12 blocks high)
+  // Dynamic cell size: scales to fit BOTH container width and height (18 blocks wide x 12 blocks high)
   const cellSize = useMemo(() => {
     if (containerDimensions.width <= 0 || containerDimensions.height <= 0) return 48
     const maxW = (containerDimensions.width - 24) / TOTAL_GRID_WIDTH_BLOCKS
@@ -238,6 +232,7 @@ export default function ReceptionistInterface() {
       setActivePreset(targetPreset)
 
       const liveByNum = new Map(liveTables.map((t) => [t.TABLE_NUM, t]))
+      const liveById = new Map(liveTables.map((t) => [t.TABLE_ID, t]))
 
       let layoutData: TableLayoutInfo[] = []
       if (targetPreset) {
@@ -253,11 +248,12 @@ export default function ReceptionistInterface() {
         const live = liveByNum.get(lt.TABLE_NUM)
         let gid: number | string | null = lt.MERGE_GROUP_ID ?? null
         if (gid == null && live?.MERGE_GROUP_ID != null) {
-          gid = live.MERGE_GROUP_ID
+          const anchor = liveById.get(Number(live.MERGE_GROUP_ID))
+          gid = anchor ? anchor.TABLE_NUM : live.MERGE_GROUP_ID
         }
         if (gid == null && live?.TABLE_ID != null) {
           const isCaptain = liveTables.some((rt) => rt.MERGE_GROUP_ID === live.TABLE_ID)
-          if (isCaptain) gid = live.TABLE_ID
+          if (isCaptain) gid = lt.TABLE_NUM
         }
         if (gid != null) {
           const lbl = live?.LABEL_ID != null ? live.LABEL_ID : (lt.LABEL_ID ?? null)
@@ -272,11 +268,12 @@ export default function ReceptionistInterface() {
           const live = liveByNum.get(lt.TABLE_NUM)
           let gid: number | null = lt.MERGE_GROUP_ID != null ? Number(lt.MERGE_GROUP_ID) : null
           if (gid == null && live?.MERGE_GROUP_ID != null) {
-            gid = Number(live.MERGE_GROUP_ID)
+            const anchor = liveById.get(Number(live.MERGE_GROUP_ID))
+            gid = anchor ? anchor.TABLE_NUM : Number(live.MERGE_GROUP_ID)
           }
           if (gid == null && live?.TABLE_ID != null) {
             const isCaptain = liveTables.some((rt) => rt.MERGE_GROUP_ID === live.TABLE_ID)
-            if (isCaptain) gid = Number(live.TABLE_ID)
+            if (isCaptain) gid = lt.TABLE_NUM
           }
 
           const directLabel = live?.LABEL_ID != null ? live.LABEL_ID : (lt.LABEL_ID ?? null)
@@ -298,6 +295,7 @@ export default function ReceptionistInterface() {
             RESERVATION_PAX: live?.RESERVATION_PAX ?? null,
             RESERVATION_NOTES: live?.RESERVATION_NOTES ?? null,
             RESERVATION_TIME_LIMIT: live?.RESERVATION_TIME_LIMIT ?? null,
+            RESERVATION_PHONE_NUMBER: live?.RESERVATION_PHONE_NUMBER ?? null,
             RESERVED_SINCE: live?.RESERVED_SINCE ?? null,
           }
         })
@@ -345,6 +343,7 @@ export default function ReceptionistInterface() {
             RESERVATION_PAX: rt.RESERVATION_PAX ?? null,
             RESERVATION_NOTES: rt.RESERVATION_NOTES ?? null,
             RESERVATION_TIME_LIMIT: rt.RESERVATION_TIME_LIMIT ?? null,
+            RESERVATION_PHONE_NUMBER: rt.RESERVATION_PHONE_NUMBER ?? null,
             RESERVED_SINCE: rt.RESERVED_SINCE ?? null,
           }
         })
@@ -360,7 +359,7 @@ export default function ReceptionistInterface() {
           dbReservations[rt.TABLE_NUM] = {
             tableNum: rt.TABLE_NUM,
             customerName: rt.RESERVATION_NAME,
-            phoneNumber: '',
+            phoneNumber: rt.RESERVATION_PHONE_NUMBER || '',
             partySize: rt.RESERVATION_PAX || rt.CURRENT_GUEST_COUNT || 1,
             reservationTime: rt.RESERVATION_TIME_LIMIT || 'Later today',
             notes: rt.RESERVATION_NOTES || '',
@@ -534,16 +533,18 @@ export default function ReceptionistInterface() {
     return selectedTable.CURRENT_GUEST_COUNT ?? 0
   }, [selectedTable, isSelectedMerged, selectedGroupMembers])
 
-  const quickPaxOptions = useMemo(() => {
-    if (selectedEffectiveCapacity <= 4) {
-      return [1, 2, 3, 4].filter((p) => p <= selectedEffectiveCapacity)
-    }
-    if (selectedEffectiveCapacity <= 8) {
-      return [2, 4, 6, selectedEffectiveCapacity].filter((v, i, a) => a.indexOf(v) === i)
-    }
-    const step = Math.max(2, Math.ceil(selectedEffectiveCapacity / 4))
-    const list = [2, 2 + step, 2 + step * 2, selectedEffectiveCapacity]
-    return Array.from(new Set(list.filter((p) => p <= selectedEffectiveCapacity)))
+  const quickPaxButtons = useMemo(() => {
+    const cap = selectedEffectiveCapacity || 1
+    const p20 = Math.max(1, Math.round(cap * 0.2))
+    const p50 = Math.max(1, Math.round(cap * 0.5))
+    const p80 = Math.max(1, Math.round(cap * 0.8))
+    return [
+      { label: 'Empty', value: 0, title: 'Empty (0 Guests)' },
+      { label: '20%', value: p20, title: `20% of max seat count (${p20} Guests)` },
+      { label: '50%', value: p50, title: `50% of max seat count (${p50} Guests)` },
+      { label: '80%', value: p80, title: `80% of max seat count (${p80} Guests)` },
+      { label: 'Full', value: cap, title: `Full (${cap} Guests)` },
+    ]
   }, [selectedEffectiveCapacity])
 
   // ── Dynamic Visuals for Merged Groups (Box or Chain) ──
@@ -1162,6 +1163,7 @@ export default function ReceptionistInterface() {
     try {
       await reserveTable(tableId, {
         name: resCustomerName.trim(),
+        phoneNumber: resPhone.trim() || null,
         pax: newRes.partySize,
         timeLimit: resTime || 'Later today',
         notes: resNotes.trim(),
@@ -1278,14 +1280,8 @@ export default function ReceptionistInterface() {
     }
   }
 
-  // ── Merge Multi-Selected Tables ──
-  function handleMergeSelectedTables() {
-    if (selectedTableNums.size < 2) return
-    setMergePersistencyChoice('TEMPORARY')
-    setMergeModalOpen(true)
-  }
-
-  async function handleConfirmMerge() {
+  // ── Merge Multi-Selected Tables (Immediate Execution without Extra Prompt) ──
+  async function handleExecuteMerge(persistency: 'TEMPORARY' | 'CONTINOUOUS') {
     if (selectedTableNums.size < 2) return
     lastMutationTimeRef.current = Date.now()
 
@@ -1293,7 +1289,6 @@ export default function ReceptionistInterface() {
     const selectedTables = layoutTables.filter((t) => selectedTableNums.has(t.TABLE_NUM))
     if (selectedTables.length < 2) {
       showToast('Select at least 2 tables to merge', 'error')
-      setMergeModalOpen(false)
       return
     }
 
@@ -1303,16 +1298,15 @@ export default function ReceptionistInterface() {
     const memberIds = sorted.slice(1).map((t) => t.TABLE_ID ?? t.TABLE_NUM)
 
     try {
-      await saveTableMerge(captainId, memberIds, mergePersistencyChoice)
-      void logTableAction('TABLES_MERGED', `Merged tables ${Array.from(selectedTableNums).sort().join(', ')} (${mergePersistencyChoice}) from Receptionist.`, {
+      await saveTableMerge(captainId, memberIds, persistency)
+      void logTableAction('TABLES_MERGED', `Merged tables ${Array.from(selectedTableNums).sort().join(', ')} (${persistency}) from Receptionist.`, {
         targetEntity: 'TABLE_GROUP',
         targetId: String(captainId),
-        newState: { memberTableNums: Array.from(selectedTableNums), persistency: mergePersistencyChoice },
+        newState: { memberTableNums: Array.from(selectedTableNums), persistency },
       })
-      showToast(`Merged ${selectedTableNums.size} tables into Group #${sorted[0].TABLE_NUM} (${mergePersistencyChoice.toLowerCase()})`, 'success')
+      showToast(`Merged ${selectedTableNums.size} tables into Group #${sorted[0].TABLE_NUM} (${persistency.toLowerCase()})`, 'success')
       setSelectedTableNums(new Set())
       setSelectedTableNum(null)
-      setMergeModalOpen(false)
       await loadData(true)
     } catch (err) {
       showToast((err as Error).message || 'Failed to merge tables', 'error')
@@ -1437,26 +1431,45 @@ export default function ReceptionistInterface() {
               height: `${totalFloorHeightPx}px`,
             }}
           >
-            {/* Floating Merge Tables Button (When >= 2 tables are multi-selected) */}
+            {/* Two Simple Merge Buttons in upper right corner (When >= 2 tables are multi-selected) */}
             {selectedTableNums.size >= 2 && (
-              <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150">
-                <button
-                  type="button"
-                  onClick={handleMergeSelectedTables}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-xl hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-105 active:scale-95 transition-all font-bold text-xs cursor-pointer"
-                >
-                  <GitMerge className="w-4 h-4 text-[#E9C46A]" />
-                  <span>Merge Tables ({selectedTableNums.size})</span>
-                </button>
+              <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150 flex items-center gap-2">
+                {/* Merge Temporary Button */}
+                <div className="relative group">
+                  <button
+                    type="button"
+                    onClick={() => handleExecuteMerge('TEMPORARY')}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-lg hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-102 active:scale-98 transition-all font-bold text-xs cursor-pointer"
+                  >
+                    <GitMerge className="w-3.5 h-3.5 text-[#E9C46A]" />
+                    <span>Merge Temporary</span>
+                  </button>
+                  <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-150 absolute top-full right-0 mt-1.5 w-52 p-2.5 rounded-xl bg-slate-900 text-slate-200 text-[11px] shadow-2xl border border-white/10 z-50 text-center leading-snug">
+                    This merge disappears once the table bills out.
+                  </div>
+                </div>
+
+                {/* Merge Continouous Button */}
+                <div className="relative group">
+                  <button
+                    type="button"
+                    onClick={() => handleExecuteMerge('CONTINOUOUS')}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-lg hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-102 active:scale-98 transition-all font-bold text-xs cursor-pointer"
+                  >
+                    <GitMerge className="w-3.5 h-3.5 text-[#E9C46A]" />
+                    <span>Merge Continouous</span>
+                  </button>
+                  <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-150 absolute top-full right-0 mt-1.5 w-52 p-2.5 rounded-xl bg-slate-900 text-slate-200 text-[11px] shadow-2xl border border-white/10 z-50 text-center leading-snug">
+                    This merge doesnt disappear when the table bills out.
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* Floor Canvas (17x12 blocks: 16x11 playable with half-cell extension on all 4 sides) */}
+            {/* Floor Canvas (18x12 blocks: 17x11 playable with half-cell extension on all 4 sides) */}
             <div className="w-full h-full relative select-none bg-white">
-              {/* Dynamic Merge Group Indicators (Only shown when a table under that merge group is selected) */}
-              {mergeGroupVisuals
-                .filter((visual) => visual.isSelected)
-                .map((visual) => {
+              {/* Dynamic Merge Group Indicators (Always visible, highlighting when selected) */}
+              {mergeGroupVisuals.map((visual) => {
                 if (visual.type === 'box') {
                   const padding = Math.max(6, Math.round(cellSize * 0.12))
                   const left = halfCellMarginPx + visual.minX * cellSize - padding
@@ -1629,7 +1642,7 @@ export default function ReceptionistInterface() {
           <div className="h-full overflow-y-auto flex flex-col">
             {selectedTable ? (
               <div className="p-4 flex flex-col gap-3.5 flex-1 min-h-0">
-                {/* Header: Table Title & Active Label (No number icon, No description below title) */}
+                {/* Header: Table Title & Active Label on left, Table Status Badge on right */}
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                   <div className="flex items-center gap-2 min-w-0">
                     <h2 className="text-lg font-black text-[#14274E] leading-tight">
@@ -1645,15 +1658,41 @@ export default function ReceptionistInterface() {
                     )}
                   </div>
 
-                  {/* Close Inspector */}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTableNum(null)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer shrink-0"
-                    title="Close inspector"
+                  {/* Table Status Badge in Header */}
+                  <div
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shrink-0 border shadow-2xs ${
+                      selectedTable.STATUS === 'AVAILABLE'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : selectedTable.STATUS === 'OCCUPIED'
+                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                        : selectedTable.STATUS === 'RESERVED'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : selectedTable.STATUS === 'HAS_REQUEST'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse'
+                        : 'bg-slate-100 text-slate-700 border-slate-200'
+                    }`}
                   >
-                    <X className="w-4 h-4" />
-                  </button>
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        selectedTable.STATUS === 'AVAILABLE'
+                          ? 'bg-emerald-500'
+                          : selectedTable.STATUS === 'OCCUPIED'
+                          ? 'bg-blue-500'
+                          : selectedTable.STATUS === 'RESERVED'
+                          ? 'bg-amber-500'
+                          : selectedTable.STATUS === 'HAS_REQUEST'
+                          ? 'bg-rose-500'
+                          : 'bg-slate-400'
+                      }`}
+                    />
+                    <span>
+                      {selectedTable.STATUS === 'HAS_REQUEST'
+                        ? 'BILL OUT'
+                        : selectedTable.STATUS === 'OCCUPIED' && occupiedDuration
+                        ? `OCCUPIED · ${occupiedDuration}`
+                        : (selectedTable.STATUS?.replace('_', ' ') ?? 'AVAILABLE')}
+                    </span>
+                  </div>
                 </div>
 
                 {/* 3 Tabs: Table | Reservation | Advanced Orders */}
@@ -1707,87 +1746,35 @@ export default function ReceptionistInterface() {
                 {/* ── TAB 1: TABLE CONFIGURATIONS ── */}
                 {sidebarTab === 'table' && (
                   <div className="flex flex-col gap-3.5 flex-1">
-                    {/* 1. Table Label Config (Moved to TOP of configs, not inside a container) */}
-                    <div className="flex flex-col gap-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-[#14274E] tracking-tight">Table Label</span>
+                    {/* Table Label Selector with Priority Tooltip */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <LabelSelector
+                          tableId={selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM}
+                          currentLabelId={selectedTable.LABEL_ID ?? null}
+                          labels={labels}
+                          onLabelChanged={(labelId) =>
+                            handleLabelChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, labelId)
+                          }
+                        />
+                      </div>
+                      <div className="relative group shrink-0">
                         <button
                           type="button"
-                          onClick={() => setLabelsModalOpen(true)}
-                          className="flex items-center gap-1 text-[11px] font-bold text-[#14274E] hover:text-[#1e3a6d] cursor-pointer"
+                          className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-[#14274E] flex items-center justify-center cursor-help transition-colors border border-slate-200/80"
+                          aria-label="Table Label Information"
                         >
-                          <Tag className="w-3 h-3" />
-                          <span>Manage</span>
+                          <HelpCircle className="w-4 h-4" />
                         </button>
-                      </div>
-                      <LabelSelector
-                        tableId={selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM}
-                        currentLabelId={selectedTable.LABEL_ID ?? null}
-                        labels={labels}
-                        onLabelChanged={(labelId) =>
-                          handleLabelChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, labelId)
-                        }
-                      />
-                    </div>
-
-                    {/* 2. Table Status Config Container (Status badge next to title removed, 4 grid buttons removed) */}
-                    <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-black text-[#14274E] tracking-tight">Table Status</span>
-                      </div>
-
-                      <div
-                        className={`p-2.5 rounded-xl border flex items-center gap-3 transition-colors ${
-                          selectedTable.STATUS === 'AVAILABLE'
-                            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
-                            : selectedTable.STATUS === 'OCCUPIED'
-                            ? 'bg-blue-50/70 border-blue-200 text-blue-900'
-                            : selectedTable.STATUS === 'RESERVED'
-                            ? 'bg-amber-50/70 border-amber-200 text-amber-900'
-                            : selectedTable.STATUS === 'HAS_REQUEST'
-                            ? 'bg-rose-50/70 border-rose-200 text-rose-900'
-                            : 'bg-slate-100 border-slate-300 text-slate-800'
-                        }`}
-                      >
-                        <div
-                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-2xs ${
-                            selectedTable.STATUS === 'AVAILABLE'
-                              ? 'bg-emerald-500 text-white'
-                              : selectedTable.STATUS === 'OCCUPIED'
-                              ? 'bg-blue-500 text-white'
-                              : selectedTable.STATUS === 'RESERVED'
-                              ? 'bg-amber-500 text-white'
-                              : selectedTable.STATUS === 'HAS_REQUEST'
-                              ? 'bg-rose-500 text-white'
-                              : 'bg-slate-500 text-white'
-                          }`}
-                        >
-                          {selectedTable.STATUS === 'AVAILABLE' && <CheckCircle2 className="w-4 h-4" />}
-                          {selectedTable.STATUS === 'OCCUPIED' && <Users className="w-4 h-4" />}
-                          {selectedTable.STATUS === 'RESERVED' && <Clock className="w-4 h-4" />}
-                          {selectedTable.STATUS === 'HAS_REQUEST' && <Receipt className="w-4 h-4" />}
-                          {selectedTable.STATUS === 'UNAVAILABLE' && <Ban className="w-4 h-4" />}
-                        </div>
-                        <div className="min-w-0">
-                          <span className="text-xs font-black block leading-tight">
-                            {selectedTable.STATUS?.replace('_', ' ') ?? 'AVAILABLE'}
-                          </span>
-                          <span className="text-[11px] text-slate-500 font-medium block truncate">
-                            {selectedTable.STATUS === 'AVAILABLE'
-                              ? 'Available for seating'
-                              : selectedTable.STATUS === 'OCCUPIED'
-                              ? `${selectedCurrentPax} / ${selectedEffectiveCapacity} seated${occupiedDuration ? ` · Occupied for ${occupiedDuration}` : ''}`
-                              : selectedTable.STATUS === 'RESERVED'
-                              ? 'Reserved for customer'
-                              : selectedTable.STATUS === 'HAS_REQUEST'
-                              ? 'Bill out requested'
-                              : 'Out of service'}
-                          </span>
+                        <div className="absolute right-0 bottom-full mb-2 hidden group-hover:flex group-focus-within:flex flex-col w-56 p-2.5 bg-slate-900 text-white text-[11px] font-medium leading-relaxed rounded-xl shadow-xl z-50 pointer-events-none animate-in fade-in zoom-in-95 duration-150">
+                          <span className="font-bold text-[#E9C46A] mb-0.5">Table Labels</span>
+                          Table Labels determine the priority of a table when ordering.
+                          <div className="absolute top-full right-3.5 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-slate-900" />
                         </div>
                       </div>
                     </div>
 
-                    {/* 3. Seated Guests Config (No 'Guests' below number, no 'P' on quick buttons, 'Empty' button added) */}
+                    {/* Seated Guests Config */}
                     <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/80 shadow-2xs">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-black text-[#14274E] tracking-tight">Seated Guests</span>
@@ -1835,53 +1822,28 @@ export default function ReceptionistInterface() {
                         </button>
                       </div>
 
-                      {/* Quick Pax Shortcuts: Empty, numeric buttons without P, Full */}
-                      <div className="flex items-center gap-1.5 mt-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSeatedPaxChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, 0)
-                          }
-                          className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                            selectedCurrentPax === 0
-                              ? 'bg-[#14274E] text-[#E9C46A] border-[#14274E]'
-                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
-                          Empty
-                        </button>
-                        {quickPaxOptions.map((pax) => (
-                          <button
-                            key={pax}
-                            type="button"
-                            onClick={() =>
-                              handleSeatedPaxChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, pax)
-                            }
-                            className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                              selectedCurrentPax === pax
-                                ? 'bg-[#14274E] text-[#E9C46A] border-[#14274E]'
-                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                            }`}
-                          >
-                            {pax}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSeatedPaxChange(
-                              selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM,
-                              selectedEffectiveCapacity,
-                            )
-                          }
-                          className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                            selectedCurrentPax === selectedEffectiveCapacity && selectedEffectiveCapacity > 0
-                              ? 'bg-[#14274E] text-[#E9C46A] border-[#14274E]'
-                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
-                          Full
-                        </button>
+                      {/* Quick Pax Shortcuts: Empty, 20%, 50%, 80%, Full */}
+                      <div className="grid grid-cols-5 gap-1.5 mt-2">
+                        {quickPaxButtons.map((btn) => {
+                          const isSelected = selectedCurrentPax === btn.value
+                          return (
+                            <button
+                              key={btn.label}
+                              type="button"
+                              title={btn.title}
+                              onClick={() =>
+                                handleSeatedPaxChange(selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM, btn.value)
+                              }
+                              className={`py-1.5 px-0.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer text-center ${
+                                isSelected
+                                  ? 'bg-[#14274E] text-[#E9C46A] border-[#14274E]'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                              }`}
+                            >
+                              {btn.label}
+                            </button>
+                          )
+                        })}
                       </div>
                     </div>
 
@@ -2275,104 +2237,7 @@ export default function ReceptionistInterface() {
         </aside>
       </div>
 
-      {/* Merge Persistency Configuration Modal */}
-      {mergeModalOpen && (
-        <div className="fixed inset-0 z-[120] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 flex flex-col gap-4 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600">
-                  <GitMerge className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-[#14274E]">Merge {selectedTableNums.size} Tables</h3>
-                  <p className="text-[11px] text-slate-500">Tables {Array.from(selectedTableNums).sort().join(', ')}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setMergeModalOpen(false)}
-                className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
 
-            <div className="flex flex-col gap-2.5">
-              <span className="text-xs font-bold text-slate-700">Choose Merge Persistency:</span>
-
-              {/* Temporary Option */}
-              <label
-                className={`p-3 rounded-xl border-2 flex items-start gap-3 cursor-pointer transition-all ${
-                  mergePersistencyChoice === 'TEMPORARY'
-                    ? 'border-indigo-600 bg-indigo-50/50 shadow-xs'
-                    : 'border-slate-200 hover:border-slate-300 bg-white'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="mergePersistency"
-                  value="TEMPORARY"
-                  checked={mergePersistencyChoice === 'TEMPORARY'}
-                  onChange={() => setMergePersistencyChoice('TEMPORARY')}
-                  className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
-                />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-black text-[#14274E]">Temporary Merge</span>
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">Default</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                    When the table is billed out, the merge group automatically dissolves and each table returns to available individually.
-                  </p>
-                </div>
-              </label>
-
-              {/* Continuous Option */}
-              <label
-                className={`p-3 rounded-xl border-2 flex items-start gap-3 cursor-pointer transition-all ${
-                  mergePersistencyChoice === 'CONTINOUOUS'
-                    ? 'border-indigo-600 bg-indigo-50/50 shadow-xs'
-                    : 'border-slate-200 hover:border-slate-300 bg-white'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="mergePersistency"
-                  value="CONTINOUOUS"
-                  checked={mergePersistencyChoice === 'CONTINOUOUS'}
-                  onChange={() => setMergePersistencyChoice('CONTINOUOUS')}
-                  className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
-                />
-                <div className="flex-1">
-                  <span className="text-xs font-black text-[#14274E]">Continuous Merge</span>
-                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                    Tables remain merged across multiple dining parties and bill settlements until manually unmerged by staff.
-                  </p>
-                </div>
-              </label>
-            </div>
-
-            <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setMergeModalOpen(false)}
-                className="flex-1 py-2 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-bold cursor-pointer transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmMerge}
-                className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] hover:from-[#1E3A6D] hover:to-[#27477D] text-[#E9C46A] text-xs font-black cursor-pointer shadow-md active:scale-98 transition-all flex items-center justify-center gap-1.5"
-              >
-                <GitMerge className="w-3.5 h-3.5" />
-                <span>Confirm Merge</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Label Management In-App Modal */}
       <LabelManagementModal
