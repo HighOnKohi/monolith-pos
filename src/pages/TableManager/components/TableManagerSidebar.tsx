@@ -1,6 +1,7 @@
 import React, { memo, useState, useRef, useEffect, useMemo } from 'react'
 import {
   TABLE_TYPES,
+  TABLE_TYPE_MAX_CAPACITIES,
   type TableType,
   type MergedTableNode,
   type RestaurantTableData,
@@ -15,10 +16,7 @@ import {
   Ban,
   ShieldCheck,
   GitMerge,
-  QrCode,
-  Copy,
   Check,
-  ExternalLink,
   ChevronDown,
   Printer,
   FileDown,
@@ -26,8 +24,8 @@ import {
   Square,
   Layers,
   Tag,
+  HelpCircle,
 } from 'lucide-react'
-import { getTableQrUrl } from '@/components/table-qr/tableQrUtils'
 import { getMergeGroupColor } from '@/utils/floorPlan/mergeGroupColors'
 import { TableTypesManager } from './TableTypesManager'
 import { LabelHierarchyManager } from './LabelHierarchyManager'
@@ -50,7 +48,7 @@ interface TableManagerSidebarProps {
   onPrintSelectedQrs?: () => void
   isPrintingBulk?: boolean
   onUpdateTableNum?: (oldNum: number, newNum: number) => void
-  onChangeTableType: (tableNum: number, newType: TableType) => void
+  onChangeTableType?: (tableNum: number, newType: TableType) => void
   onUpdateSeatCount: (tableNum: number, seats: number) => void
   onUpdateGuestCount: (tableNum: number, guests: number) => void
   onUpdateStatus: (tableNum: number, status: RestaurantTableData['STATUS']) => void
@@ -80,14 +78,12 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   isGeneratingPdf = false,
   onPrintSelectedQrs,
   isPrintingBulk = false,
-  onChangeTableType,
   onUpdateSeatCount,
   onUpdateGuestCount,
   onUpdateStatus,
   onUnmergeTable,
   isMergeGroupBlockedFromUnmerge = false,
   onDeleteTable,
-  onOpenQrModal,
   activeSidebarTab,
   onSidebarTabChange,
   onDeselectTable,
@@ -105,7 +101,6 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
     onSidebarTabChange?.(tab)
   }
 
-  const [copied, setCopied] = useState(false)
   const [isTableDropdownOpen, setIsTableDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -123,26 +118,6 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [isTableDropdownOpen])
-
-  const handleCopyUrl = async () => {
-    if (!selectedTable) return
-    const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
-    const url = getTableQrUrl(tableId)
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      const input = document.createElement('input')
-      input.value = url
-      document.body.appendChild(input)
-      input.select()
-      document.execCommand('copy')
-      document.body.removeChild(input)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
 
   const sortedTables = [...allTables].sort((a, b) => a.TABLE_NUM - b.TABLE_NUM)
   const allPrintSelected = sortedTables.length > 0 && selectedForPrintTableNums.size === sortedTables.length
@@ -288,12 +263,12 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   // ═══════════════════════════════════════════════════════════════════════════
 
   const currentTypeConfig = selectedTable ? (TABLE_TYPES[selectedTable.TABLE_TYPE] || TABLE_TYPES[1]) : null
-  const originalMaxSeats = currentTypeConfig ? currentTypeConfig.defaultCapacity : 4
-  const maxSeatsAllowed = originalMaxSeats
+  const hardcodedTypeMax = selectedTable ? (TABLE_TYPE_MAX_CAPACITIES[selectedTable.TABLE_TYPE] ?? 14) : 14
+  const maxSeatsAllowed = hardcodedTypeMax
 
   // In Edit Mode: base unsuppressed capacity configured for the table
   const configuredBaseCapacity = selectedTable
-    ? Math.min(maxSeatsAllowed, Math.max(1, selectedTable.TABLE_CAPACITY ?? selectedTable.GUEST_CAPACITY ?? maxSeatsAllowed))
+    ? Math.min(maxSeatsAllowed, Math.max(1, selectedTable.TABLE_CAPACITY ?? selectedTable.SEAT_CAPACITY ?? selectedTable.GUEST_CAPACITY ?? currentTypeConfig?.defaultCapacity ?? 4))
     : 4
 
   // In View Mode: effective capacity respecting suppressed adjacent chairs (e.g. 4 for big circle table)
@@ -327,8 +302,6 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
       )
     : 0
   const currentStatus = selectedTable?.STATUS || 'AVAILABLE'
-
-  const tableTypeOptions: TableType[] = [1, 2, 3, 4]
 
   const statusOptions: Array<{
     id: RestaurantTableData['STATUS']
@@ -365,8 +338,8 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   return (
     <aside className="table-manager-sidebar w-[420px] max-w-[460px] min-w-[380px] shrink-0 h-full bg-white border-l border-slate-200 flex flex-col shadow-xs select-none z-20 overflow-hidden">
       {/* ── 3-Tab Segmented Header: Table | Types | Labels ── */}
-      <div className="p-3 border-b border-slate-100 bg-slate-50/80 shrink-0">
-        <div className="flex items-center gap-1 bg-slate-200/60 p-1 rounded-xl">
+      <div className="p-3 border-b border-slate-100 bg-slate-50/80 shrink-0 flex items-center gap-2">
+        <div className="flex-1 flex items-center gap-1 bg-slate-200/60 p-1 rounded-xl">
           <button
             type="button"
             onClick={() => handleTabClick('table')}
@@ -403,6 +376,36 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
             <Tag className="w-3.5 h-3.5" />
             <span>Labels</span>
           </button>
+        </div>
+
+        {/* Tab Summary Tooltip */}
+        <div className="relative group shrink-0">
+          <button
+            type="button"
+            className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-400 hover:text-[#14274E] hover:border-slate-300 flex items-center justify-center cursor-help transition-colors shadow-2xs"
+            aria-label="Tabs Summary"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
+          <div className="absolute right-0 top-full mt-2 w-72 p-3 bg-[#14274E] text-white text-[11px] rounded-xl shadow-xl border border-slate-700/60 z-50 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-150 leading-relaxed">
+            <div className="font-black text-[#E9C46A] text-xs mb-1.5 flex items-center gap-1.5">
+              <span>Management Tabs</span>
+            </div>
+            <div className="space-y-1.5">
+              <div>
+                <span className="font-black text-white">Table:</span>{' '}
+                <span className="text-slate-300">Inspect or adjust individual table seating capacity, live status, and merging.</span>
+              </div>
+              <div>
+                <span className="font-black text-white">Types:</span>{' '}
+                <span className="text-slate-300">Set default seating capacities and inventory counts per table type.</span>
+              </div>
+              <div>
+                <span className="font-black text-white">Labels:</span>{' '}
+                <span className="text-slate-300">Manage VIP priority tags. Orders from higher-ranked labels jump ahead in preparation queues.</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -696,58 +699,11 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
             )}
 
             {/* ═══════════════════════════════════════════════════════════════════ */}
-            {/* EDIT MODE: Table Type Shapes, Max Seat Capacity, Unmerge */}
+            {/* EDIT MODE: Max Seat Capacity, Unmerge */}
             {/* ═══════════════════════════════════════════════════════════════════ */}
             {isEditMode && (
               <div className="space-y-4">
-                {/* 1. Change Table Type (Gold Shape Icons) */}
-                <div>
-                  <label className="block text-xs font-black text-[#14274E] mb-2">
-                    Table Type / Shape
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {tableTypeOptions.map((typeKey) => {
-                      const cfg = TABLE_TYPES[typeKey]
-                      const isCurrent = typeKey === selectedTable.TABLE_TYPE
-
-                      return (
-                        <button
-                          key={typeKey}
-                          type="button"
-                          onClick={() => onChangeTableType(selectedTable.TABLE_NUM, typeKey)}
-                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                            isCurrent
-                              ? 'bg-[#14274E] border-[#14274E] text-white shadow-xs'
-                              : 'bg-slate-50/70 border-slate-200 hover:bg-white hover:border-slate-300 text-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <TableShapeIcon tableType={typeKey} size={18} />
-                            <span
-                              className={`text-[10px] font-bold ${
-                                isCurrent ? 'text-slate-300' : 'text-slate-400'
-                              }`}
-                            >
-                              {cfg.width}×{cfg.height}
-                            </span>
-                          </div>
-                          <div className="text-xs font-black leading-tight mt-1">
-                            {cfg.name}
-                          </div>
-                          <div
-                            className={`text-[10px] mt-0.5 ${
-                              isCurrent ? 'text-slate-300' : 'text-slate-400'
-                            }`}
-                          >
-                            Max {cfg.defaultCapacity} seats
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* 2. Max Seat Capacity Editor (Moved to Edit Mode) */}
+                {/* Max Seat Capacity Editor (Moved to Edit Mode) */}
                 <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
@@ -757,7 +713,7 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
                       </span>
                     </div>
                     <span className="text-[11px] font-bold text-slate-400">
-                      Type Max: {originalMaxSeats}
+                      Max Limit: {maxSeatsAllowed}
                     </span>
                   </div>
 
@@ -787,11 +743,11 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
 
                     <button
                       type="button"
-                      disabled={configuredBaseCapacity >= originalMaxSeats || remainingVenueCapacity <= 0}
+                      disabled={configuredBaseCapacity >= maxSeatsAllowed || remainingVenueCapacity <= 0}
                       onClick={() =>
                         onUpdateSeatCount(
                           selectedTable.TABLE_NUM,
-                          Math.min(originalMaxSeats, configuredBaseCapacity + 1),
+                          Math.min(maxSeatsAllowed, configuredBaseCapacity + 1),
                         )
                       }
                       className="w-9 h-9 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-40 flex items-center justify-center font-black text-slate-700 cursor-pointer text-base active:scale-95 transition-all shadow-2xs"
@@ -841,77 +797,6 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
               </div>
             )}
 
-            {/* ═══════════════════════════════════════════════════════════════════ */}
-            {/* Table QR Code & Customer Ordering (Visible in both View & Edit)  */}
-            {/* ═══════════════════════════════════════════════════════════════════ */}
-            {(() => {
-              const tableId = selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM
-              const qrUrl = getTableQrUrl(tableId)
-              return (
-                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <QrCode className="w-4 h-4 text-[#14274E]" />
-                      <span className="text-xs font-black text-[#14274E] uppercase tracking-wider">
-                        Table QR & Ordering
-                      </span>
-                    </div>
-                    <span className="text-[10px] font-mono font-bold text-slate-400">
-                      ID: #{tableId}
-                    </span>
-                  </div>
-
-                  {/* Prominent View / Print QR Code button */}
-                  <button
-                    type="button"
-                    onClick={() => onOpenQrModal && onOpenQrModal(selectedTable)}
-                    className="w-full py-2.5 px-3 rounded-xl bg-[#14274E] hover:bg-[#0f1f40] text-white text-xs font-black flex items-center justify-center gap-2 shadow-xs transition-transform active:scale-98 cursor-pointer"
-                  >
-                    <QrCode className="w-4 h-4 text-[#E9C46A]" />
-                    <span>View / Print Table {selectedTable.TABLE_NUM} QR</span>
-                  </button>
-
-                  {/* Canonical QR URL with copy button */}
-                  <div className="flex items-center justify-between p-2 rounded-xl bg-white border border-slate-200 text-xs">
-                    <span
-                      className="text-[11px] font-mono text-slate-600 truncate max-w-[170px]"
-                      title={qrUrl}
-                    >
-                      {qrUrl}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleCopyUrl}
-                      className="p-1 text-xs text-slate-500 hover:text-[#14274E] rounded-md transition-colors flex items-center gap-1 font-bold cursor-pointer"
-                      title="Copy canonical table QR URL"
-                    >
-                      {copied ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          <span className="text-emerald-700 text-[10px]">Copied</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5" />
-                          <span className="text-[10px]">Copy</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  {/* External customer link */}
-                  <a
-                    href={qrUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Test Customer View</span>
-                  </a>
-                </div>
-              )
-            })()}
           </div>
 
           {/* ── Footer: Delete Table (Fixed at the bottom in Edit Mode) ── */}

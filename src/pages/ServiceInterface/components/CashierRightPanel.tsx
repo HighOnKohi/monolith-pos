@@ -128,11 +128,6 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   const billTax = taxableSubtotal * 0.05
   const grandTotal = taxableSubtotal + billTax
 
-  // 2. Calculate Punch Cart totals (VAT-inclusive)
-  const punchGross = punchCart.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)
-  const punchSubtotal = punchGross > 0 ? punchGross / 1.05 : 0
-  const punchTax = punchGross - punchSubtotal
-  const punchTotal = punchGross
 
   return (
     <div className="service-interface-right-panel">
@@ -427,9 +422,6 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                         <h5 className="text-sm font-bold text-[#14274E] truncate">
                           {ci.item.name}
                         </h5>
-                        <span className="text-sm font-black text-[#14274E]">
-                          ₱{(ci.item.price * ci.quantity).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </span>
                       </div>
 
                       {/* Stepper */}
@@ -475,20 +467,6 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                   className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-[#14274E] placeholder-slate-400 focus:outline-none focus:border-[#14274E]"
                 />
               </label>
-              <div className="space-y-1.5 text-xs">
-                <div className="flex justify-between text-slate-500">
-                  <span>Subtotal ({punchCart.reduce((s, c) => s + c.quantity, 0)} items)</span>
-                  <span>₱{punchSubtotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                </div>
-                <div className="flex justify-between text-slate-500">
-                  <span>Tax (5%)</span>
-                  <span>₱{punchTax.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                </div>
-                <div className="flex justify-between text-base font-black text-[#14274E] pt-1.5 border-t border-slate-200">
-                  <span>Order Total</span>
-                  <span>₱{punchTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                </div>
-              </div>
 
               <div className="space-y-2 pt-1">
                 <button

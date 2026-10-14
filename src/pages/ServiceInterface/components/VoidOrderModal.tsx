@@ -8,7 +8,8 @@ interface VoidOrderModalProps {
   tableLabel: string
   initialItemId?: number | null
   onClose: () => void
-  onConfirmVoid: (orderId: number, orderItemIds: number[], password: string) => Promise<void>
+  onConfirmVoid: (orderId: number, orderItemIds: number[], password?: string) => Promise<void>
+  requirePassword?: boolean
 }
 
 export function VoidOrderModal({
@@ -18,6 +19,7 @@ export function VoidOrderModal({
   initialItemId,
   onClose,
   onConfirmVoid,
+  requirePassword = true,
 }: VoidOrderModalProps) {
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([])
   const [password, setPassword] = useState('')
@@ -70,7 +72,7 @@ export function VoidOrderModal({
       setError('Please select at least one item to void.')
       return
     }
-    if (!password.trim()) {
+    if (requirePassword && !password.trim()) {
       setError('Admin password is required.')
       return
     }
@@ -79,7 +81,7 @@ export function VoidOrderModal({
     setSubmitting(true)
 
     try {
-      await onConfirmVoid(order.orderId, selectedItemIds, password.trim())
+      await onConfirmVoid(order.orderId, selectedItemIds, requirePassword ? password.trim() : '')
       onClose()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to void selected items.')
@@ -106,7 +108,7 @@ export function VoidOrderModal({
             <div>
               <h3 className="text-sm font-black text-[#14274E]">Void Order / Items</h3>
               <p className="text-[11px] font-bold text-slate-500">
-                {tableLabel} · Order #{order.orderId} (Pending)
+                {tableLabel} · Order #{order.orderId} {requirePassword ? '(Pending)' : '(Cashier Authorization)'}
               </p>
             </div>
           </div>
@@ -126,7 +128,9 @@ export function VoidOrderModal({
             <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-900 text-xs font-medium leading-relaxed">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <span>
-                Voiding items requires administrator authorization. Select the item(s) to remove from this pending order.
+                {requirePassword
+                  ? 'Voiding items requires administrator authorization. Select the item(s) to remove from this pending order.'
+                  : 'As cashier, select the item(s) to void and cancel from this table.'}
               </span>
             </div>
 
@@ -195,31 +199,33 @@ export function VoidOrderModal({
               )}
             </div>
 
-            {/* Admin Password Input */}
-            <div className="space-y-1.5 pt-1">
-              <label className="block text-xs font-bold text-slate-700">
-                Administrator Password
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="password"
-                  required
-                  disabled={submitting}
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value)
-                    if (error) setError(null)
-                  }}
-                  placeholder="Enter administrator password"
-                  autoComplete="current-password"
-                  className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 focus:border-[#14274E] focus:ring-2 focus:ring-[#14274E]/10 outline-hidden transition-all bg-white"
-                />
+            {/* Admin Password Input (if required) */}
+            {requirePassword && (
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-xs font-bold text-slate-700">
+                  Administrator Password
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="password"
+                    required
+                    disabled={submitting}
+                    value={password}
+                    onChange={(e) => {
+                      setPassword(e.target.value)
+                      if (error) setError(null)
+                    }}
+                    placeholder="Enter administrator password"
+                    autoComplete="current-password"
+                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 focus:border-[#14274E] focus:ring-2 focus:ring-[#14274E]/10 outline-hidden transition-all bg-white"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 font-semibold">
+                  Use your system administrator credentials to authorize this void action.
+                </p>
               </div>
-              <p className="text-[10px] text-slate-400 font-semibold">
-                Use your system administrator credentials to authorize this void action.
-              </p>
-            </div>
+            )}
 
             {/* Error Message */}
             {error && (
@@ -241,13 +247,13 @@ export function VoidOrderModal({
             </button>
             <button
               type="submit"
-              disabled={submitting || selectedItemIds.length === 0 || !password.trim()}
+              disabled={submitting || selectedItemIds.length === 0 || (requirePassword && !password.trim())}
               className="px-4 py-2 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
             >
               {submitting ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Verifying...</span>
+                  <span>Processing...</span>
                 </>
               ) : (
                 <>

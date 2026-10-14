@@ -46,9 +46,9 @@ export const TABLE_TYPES: Record<TableType, TableTypeConfig> = {
     name: 'Big Circle Table',
     width: 2,
     height: 2,
-    defaultCapacity: 6,
+    defaultCapacity: 10,
     shape: 'big_circle',
-    description: '2x2 Big Circle (6 Chairs)',
+    description: '2x2 Big Circle (10 Chairs)',
   },
   5: {
     type: 5,
@@ -59,6 +59,56 @@ export const TABLE_TYPES: Record<TableType, TableTypeConfig> = {
     shape: 'rectangle',
     description: '1x3 Rectangle (8 Chairs)',
   },
+}
+
+/**
+ * Hardcoded maximum possible seating capacity limits per table type.
+ * Square table = 8, Rectangle table = 14, Circle table = 8, Big Circle Table = 14
+ */
+export const TABLE_TYPE_MAX_CAPACITIES: Record<TableType, number> = {
+  1: 8,  // Square table = 8
+  2: 14, // Rectangle table = 14
+  3: 8,  // Circle table = 8
+  4: 14, // Big Circle Table = 14
+  5: 14, // Rectangle table (Vertical) = 14
+}
+
+/**
+ * Synchronize in-memory TABLE_TYPES definitions with the database Table_Types table.
+ */
+export async function syncTableTypesFromDb(): Promise<Record<TableType, TableTypeConfig>> {
+  try {
+    const { data, error } = await supabase
+      .schema('tables')
+      .from('Table_Types')
+      .select('*')
+
+    if (!error && data) {
+      for (const row of data) {
+        const typeId = Number(row.TABLE_TYPE_ID) as TableType
+        const maxCap = TABLE_TYPE_MAX_CAPACITIES[typeId] ?? 14
+        if (TABLE_TYPES[typeId]) {
+          if (row.NAME) TABLE_TYPES[typeId].name = String(row.NAME)
+          if (row.DEFAULT_SEAT_CAPACITY != null) {
+            TABLE_TYPES[typeId].defaultCapacity = Math.min(Number(row.DEFAULT_SEAT_CAPACITY), maxCap)
+          }
+        }
+        if (typeId === 2 && TABLE_TYPES[5]) {
+          if (row.DEFAULT_SEAT_CAPACITY != null) {
+            TABLE_TYPES[5].defaultCapacity = Math.min(Number(row.DEFAULT_SEAT_CAPACITY), 14)
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[tableLayoutService] Notice syncing table types from DB:', err)
+  }
+  return TABLE_TYPES
+}
+
+// Initial background sync
+if (typeof window !== 'undefined') {
+  void syncTableTypesFromDb()
 }
 
 export const DEFAULT_GRID_WIDTH = 17
@@ -549,12 +599,20 @@ export async function syncAllLayoutPresetsToDefaultGridSize(): Promise<void> {
 export async function updateTableCapacity(
   tableNum: number,
   capacity: number,
+  tableId?: number,
 ): Promise<void> {
-  const { error } = await supabase
+  let query = supabase
     .schema('tables')
     .from('Table_Info')
     .update({ SEAT_CAPACITY: capacity })
-    .eq('TABLE_NUM', tableNum)
+
+  if (tableId != null && tableId > 0) {
+    query = query.eq('TABLE_ID', tableId)
+  } else {
+    query = query.eq('TABLE_NUM', tableNum)
+  }
+
+  const { error } = await query
 
   if (error) {
     console.error('[tableLayoutService] Error updating table capacity in Table_Info:', error)
@@ -856,9 +914,9 @@ export async function savePresetLayout(
     }
 
     const capacity =
-      t.SEAT_CAPACITY ??
-      t.TABLE_CAPACITY ??
       tableCapacities?.get(t.TABLE_NUM) ??
+      t.TABLE_CAPACITY ??
+      t.SEAT_CAPACITY ??
       TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ??
       4
 

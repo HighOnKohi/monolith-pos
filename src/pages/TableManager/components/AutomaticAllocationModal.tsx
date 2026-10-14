@@ -26,14 +26,14 @@ interface AutomaticAllocationModalProps {
   onApply: (allocatedTables: TableLayoutInfo[]) => void
 }
 
-const ALL_TABLE_TYPES: TableType[] = [1, 2, 3, 4, 5]
+const ALL_TABLE_TYPES: TableType[] = [1, 2, 3, 4]
 
 const DEFAULT_WEIGHTS: Record<TableType, number> = {
-  1: 30, // Square Table (1x1, 4 Pax)
-  2: 20, // Rectangle Table Horizontal (3x1, 8 Pax)
-  3: 20, // Small Circle Table (1x1, 4 Pax)
-  4: 15, // Big Circle Table (2x2, 6 Pax)
-  5: 15, // Rectangle Table Vertical (1x3, 8 Pax)
+  1: 30, // Square Table (1x1)
+  2: 25, // Rectangle Table (3x1)
+  3: 25, // Small Circle Table (1x1)
+  4: 20, // Big Circle Table (2x2)
+  5: 0,
 }
 
 export const AutomaticAllocationModal: React.FC<AutomaticAllocationModalProps> = ({

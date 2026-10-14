@@ -65,37 +65,20 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         </div>
       </div>
 
-      {item.isItemGroup && item.includedItemNames && item.includedItemNames.length > 0 && (
-        <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
-          {item.includedItemNames.join(' • ')}
-        </p>
-      )}
-
-      {/* Item Title */}
-      <h4
-        className="text-base font-extrabold text-[#14274E] mb-1 line-clamp-1 leading-snug"
-        title={item.name}
-      >
-        {item.name}
-      </h4>
-
-      {/* Price & Dietary Classification matching reference image */}
-      <div className="flex items-center justify-between mb-3 mt-auto">
-        <span className="text-lg font-black text-[#14274E]">
-          ₱{item.price.toFixed(2)}
-        </span>
-        <span className="text-[11px] font-bold flex items-center gap-1 text-slate-600">
-          <span
-            className={[
-              'w-2.5 h-2.5 rounded-full',
-              item.dietaryType === 'veg' ? 'bg-green-500' : 'bg-amber-400',
-            ].join(' ')}
-          />
-          {item.dietaryType === 'veg' ? 'Vegetarian' : 'Non-Vegetarian'}
-        </span>
+      {/* Item Title at bottom left */}
+      <div className="mt-auto pt-1 text-left">
+        {item.isItemGroup && item.includedItemNames && item.includedItemNames.length > 0 && (
+          <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500 line-clamp-1">
+            {item.includedItemNames.join(' • ')}
+          </p>
+        )}
+        <h4
+          className="text-base font-extrabold text-[#14274E] line-clamp-2 leading-snug text-left"
+          title={item.name}
+        >
+          {item.name}
+        </h4>
       </div>
-
-
     </div>
   )
 }

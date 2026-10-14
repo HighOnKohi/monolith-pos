@@ -1,6 +1,6 @@
 import React, { memo } from 'react'
 import { Users, GitMerge, Check, RotateCw } from 'lucide-react'
-import type { TableType } from '@/services/tableLayoutService'
+import { type TableType } from '@/services/tableLayoutService'
 import { getMergeGroupColor } from '@/utils/floorPlan/mergeGroupColors'
 
 interface ChairProps {
@@ -446,9 +446,17 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
     const hideLeft = Boolean(hideChairs.left)
     const hideRight = Boolean(hideChairs.right)
 
-    const unblockedMask = [!hideTop, !hideBottom, !hideLeft, !hideRight]
-    const priorityOrder = [0, 1, 2, 3]
+    const isEightSlots = capacity > 4
+    const unblockedMask = isEightSlots
+      ? [!hideTop, !hideTop, !hideBottom, !hideBottom, !hideLeft, !hideLeft, !hideRight, !hideRight]
+      : [!hideTop, !hideBottom, !hideLeft, !hideRight]
+    const priorityOrder = isEightSlots
+      ? [0, 2, 4, 6, 1, 3, 5, 7]
+      : [0, 1, 2, 3]
     const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
+
+    const sqChairSize = isEightSlots ? Math.max(10, Math.round(cellSize * 0.19)) : chairSize
+    const sqChairOffset = isEightSlots ? -Math.round(sqChairSize * 1.15) : chairOffset
 
     return (
       <div
@@ -461,44 +469,110 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           }
         }}
       >
-        {/* Top Chair */}
-        {activeSlots.has(0) && (
-          <div
-            className="absolute left-1/2 -translate-x-1/2 z-0"
-            style={{ top: `${chairOffset}px` }}
-          >
-            <Chair rotation={0} size={chairSize} />
-          </div>
-        )}
-
-        {/* Bottom Chair */}
-        {activeSlots.has(1) && (
-          <div
-            className="absolute left-1/2 -translate-x-1/2 z-0"
-            style={{ bottom: `${chairOffset}px` }}
-          >
-            <Chair rotation={180} size={chairSize} />
-          </div>
-        )}
-
-        {/* Left Chair */}
-        {activeSlots.has(2) && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 z-0"
-            style={{ left: `${chairOffset}px` }}
-          >
-            <Chair rotation={270} size={chairSize} />
-          </div>
-        )}
-
-        {/* Right Chair */}
-        {activeSlots.has(3) && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 z-0"
-            style={{ right: `${chairOffset}px` }}
-          >
-            <Chair rotation={90} size={chairSize} />
-          </div>
+        {!isEightSlots ? (
+          <>
+            {/* 4 Cardinal Chairs */}
+            {activeSlots.has(0) && (
+              <div
+                className="absolute left-1/2 -translate-x-1/2 z-0"
+                style={{ top: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={0} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(1) && (
+              <div
+                className="absolute left-1/2 -translate-x-1/2 z-0"
+                style={{ bottom: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={180} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(2) && (
+              <div
+                className="absolute top-1/2 -translate-y-1/2 z-0"
+                style={{ left: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={270} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(3) && (
+              <div
+                className="absolute top-1/2 -translate-y-1/2 z-0"
+                style={{ right: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={90} size={sqChairSize} />
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* Up to 8 Perimeter Chairs (2 per side) */}
+            {activeSlots.has(0) && (
+              <div
+                className="absolute left-[30%] -translate-x-1/2 z-0"
+                style={{ top: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={0} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(1) && (
+              <div
+                className="absolute left-[70%] -translate-x-1/2 z-0"
+                style={{ top: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={0} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(2) && (
+              <div
+                className="absolute left-[30%] -translate-x-1/2 z-0"
+                style={{ bottom: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={180} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(3) && (
+              <div
+                className="absolute left-[70%] -translate-x-1/2 z-0"
+                style={{ bottom: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={180} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(4) && (
+              <div
+                className="absolute top-[30%] -translate-y-1/2 z-0"
+                style={{ left: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={270} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(5) && (
+              <div
+                className="absolute top-[70%] -translate-y-1/2 z-0"
+                style={{ left: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={270} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(6) && (
+              <div
+                className="absolute top-[30%] -translate-y-1/2 z-0"
+                style={{ right: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={90} size={sqChairSize} />
+              </div>
+            )}
+            {activeSlots.has(7) && (
+              <div
+                className="absolute top-[70%] -translate-y-1/2 z-0"
+                style={{ right: `${sqChairOffset}px` }}
+              >
+                <Chair rotation={90} size={sqChairSize} />
+              </div>
+            )}
+          </>
         )}
 
         {/* Tabletop Surface */}
@@ -546,17 +620,31 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
     const hideLeft = Boolean(hideChairs.left)
     const hideRight = Boolean(hideChairs.right)
 
+    // Side chairs count (3 if <= 8 capacity, up to 6 for up to 14 capacity)
+    const sideChairsCount = Math.min(6, Math.max(3, Math.ceil((capacity - 2) / 2)))
+    const topIndices = Array.from({ length: sideChairsCount }, (_, i) => i)
+    const bottomIndices = Array.from({ length: sideChairsCount }, (_, i) => i + sideChairsCount)
+    const leftSlotIdx = sideChairsCount * 2
+    const rightSlotIdx = sideChairsCount * 2 + 1
+
     const unblockedMask = [
-      !topMask[0],
-      !topMask[1],
-      !topMask[2],
-      !bottomMask[0],
-      !bottomMask[1],
-      !bottomMask[2],
+      ...topIndices.map((i) => {
+        const blockIdx = Math.min(2, Math.floor((i / sideChairsCount) * 3))
+        return !topMask[blockIdx]
+      }),
+      ...bottomIndices.map((_, i) => {
+        const blockIdx = Math.min(2, Math.floor((i / sideChairsCount) * 3))
+        return !bottomMask[blockIdx]
+      }),
       !hideLeft,
       !hideRight,
     ]
-    const priorityOrder = [1, 4, 6, 7, 0, 3, 2, 5]
+    const priorityOrder = [
+      ...topIndices,
+      ...bottomIndices,
+      leftSlotIdx,
+      rightSlotIdx,
+    ]
     const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
 
     return (
@@ -572,26 +660,34 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
       >
         {/* Top Chairs */}
         <div
-          className="absolute top-0 w-full flex justify-around px-4 z-0"
+          className="absolute top-0 w-full flex justify-around px-2 z-0"
           style={{ top: `${chairOffset}px` }}
         >
-          {activeSlots.has(0) ? <Chair rotation={0} size={chairSize} /> : <div style={{ width: chairSize }} />}
-          {activeSlots.has(1) ? <Chair rotation={0} size={chairSize} /> : <div style={{ width: chairSize }} />}
-          {activeSlots.has(2) ? <Chair rotation={0} size={chairSize} /> : <div style={{ width: chairSize }} />}
+          {topIndices.map((idx) =>
+            activeSlots.has(idx) ? (
+              <Chair key={`top-${idx}`} rotation={0} size={chairSize} />
+            ) : (
+              <div key={`top-${idx}`} style={{ width: chairSize }} />
+            )
+          )}
         </div>
 
         {/* Bottom Chairs */}
         <div
-          className="absolute bottom-0 w-full flex justify-around px-4 z-0"
+          className="absolute bottom-0 w-full flex justify-around px-2 z-0"
           style={{ bottom: `${chairOffset}px` }}
         >
-          {activeSlots.has(3) ? <Chair rotation={180} size={chairSize} /> : <div style={{ width: chairSize }} />}
-          {activeSlots.has(4) ? <Chair rotation={180} size={chairSize} /> : <div style={{ width: chairSize }} />}
-          {activeSlots.has(5) ? <Chair rotation={180} size={chairSize} /> : <div style={{ width: chairSize }} />}
+          {bottomIndices.map((idx) =>
+            activeSlots.has(idx) ? (
+              <Chair key={`bottom-${idx}`} rotation={180} size={chairSize} />
+            ) : (
+              <div key={`bottom-${idx}`} style={{ width: chairSize }} />
+            )
+          )}
         </div>
 
         {/* Left End Chair */}
-        {activeSlots.has(6) && (
+        {activeSlots.has(leftSlotIdx) && (
           <div
             className="absolute top-1/2 -translate-y-1/2 z-0"
             style={{ left: `${chairOffset}px` }}
@@ -601,7 +697,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
         )}
 
         {/* Right End Chair */}
-        {activeSlots.has(7) && (
+        {activeSlots.has(rightSlotIdx) && (
           <div
             className="absolute top-1/2 -translate-y-1/2 z-0"
             style={{ right: `${chairOffset}px` }}
@@ -670,17 +766,30 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
     const hideTop = Boolean(hideChairs.top)
     const hideBottom = Boolean(hideChairs.bottom)
 
+    const flankCount = Math.min(6, Math.max(3, Math.ceil((capacity - 2) / 2)))
+    const leftIndices = Array.from({ length: flankCount }, (_, i) => i)
+    const rightIndices = Array.from({ length: flankCount }, (_, i) => i + flankCount)
+    const topSlotIdx = flankCount * 2
+    const bottomSlotIdx = flankCount * 2 + 1
+
     const unblockedMask = [
-      !leftMask[0],
-      !leftMask[1],
-      !leftMask[2],
-      !rightMask[0],
-      !rightMask[1],
-      !rightMask[2],
+      ...leftIndices.map((i) => {
+        const blockIdx = Math.min(2, Math.floor((i / flankCount) * 3))
+        return !leftMask[blockIdx]
+      }),
+      ...rightIndices.map((_, i) => {
+        const blockIdx = Math.min(2, Math.floor((i / flankCount) * 3))
+        return !rightMask[blockIdx]
+      }),
       !hideTop,
       !hideBottom,
     ]
-    const priorityOrder = [1, 4, 6, 7, 0, 3, 2, 5]
+    const priorityOrder = [
+      ...leftIndices,
+      ...rightIndices,
+      topSlotIdx,
+      bottomSlotIdx,
+    ]
     const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
 
     return (
@@ -696,26 +805,34 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
       >
         {/* Left Flank Chairs */}
         <div
-          className="absolute left-0 h-full flex flex-col justify-around py-4 z-0"
+          className="absolute left-0 h-full flex flex-col justify-around py-2 z-0"
           style={{ left: `${chairOffset}px` }}
         >
-          {activeSlots.has(0) ? <Chair rotation={270} size={chairSize} /> : <div style={{ height: chairSize }} />}
-          {activeSlots.has(1) ? <Chair rotation={270} size={chairSize} /> : <div style={{ height: chairSize }} />}
-          {activeSlots.has(2) ? <Chair rotation={270} size={chairSize} /> : <div style={{ height: chairSize }} />}
+          {leftIndices.map((idx) =>
+            activeSlots.has(idx) ? (
+              <Chair key={`left-${idx}`} rotation={270} size={chairSize} />
+            ) : (
+              <div key={`left-${idx}`} style={{ height: chairSize }} />
+            )
+          )}
         </div>
 
         {/* Right Flank Chairs */}
         <div
-          className="absolute right-0 h-full flex flex-col justify-around py-4 z-0"
+          className="absolute right-0 h-full flex flex-col justify-around py-2 z-0"
           style={{ right: `${chairOffset}px` }}
         >
-          {activeSlots.has(3) ? <Chair rotation={90} size={chairSize} /> : <div style={{ height: chairSize }} />}
-          {activeSlots.has(4) ? <Chair rotation={90} size={chairSize} /> : <div style={{ height: chairSize }} />}
-          {activeSlots.has(5) ? <Chair rotation={90} size={chairSize} /> : <div style={{ height: chairSize }} />}
+          {rightIndices.map((idx) =>
+            activeSlots.has(idx) ? (
+              <Chair key={`right-${idx}`} rotation={90} size={chairSize} />
+            ) : (
+              <div key={`right-${idx}`} style={{ height: chairSize }} />
+            )
+          )}
         </div>
 
         {/* Top End Chair */}
-        {activeSlots.has(6) && (
+        {activeSlots.has(topSlotIdx) && (
           <div
             className="absolute left-1/2 -translate-x-1/2 z-0"
             style={{ top: `${chairOffset}px` }}
@@ -725,7 +842,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
         )}
 
         {/* Bottom End Chair */}
-        {activeSlots.has(7) && (
+        {activeSlots.has(bottomSlotIdx) && (
           <div
             className="absolute left-1/2 -translate-x-1/2 z-0"
             style={{ bottom: `${chairOffset}px` }}
@@ -786,19 +903,35 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
 
   // ── 3. Type 3: Small Circle Table (1x1) ──
   if (tableType === 3) {
+    const totalSize = cellSize
+    const numChairs = Math.max(1, Math.min(8, capacity))
+    const smallChairSize = numChairs > 6
+      ? Math.max(9, Math.round(cellSize * 0.18))
+      : numChairs > 4
+        ? Math.max(10, Math.round(cellSize * 0.20))
+        : chairSize
+    const radius = totalSize / 2 + Math.round(smallChairSize * 0.7)
+
     const hideTop = Boolean(Array.isArray(hideChairs.top) ? hideChairs.top[0] : hideChairs.top)
     const hideBottom = Boolean(Array.isArray(hideChairs.bottom) ? hideChairs.bottom[0] : hideChairs.bottom)
     const hideLeft = Boolean(hideChairs.left)
     const hideRight = Boolean(hideChairs.right)
 
-    const unblockedMask = [!hideTop, !hideBottom, !hideLeft, !hideRight]
-    const priorityOrder = [0, 1, 2, 3]
-    const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
+    // Evenly distribute all chairs around the full 360° of the circle
+    const angles = Array.from({ length: numChairs }, (_, i) => Math.round((i * 360) / numChairs))
+
+    const isChairBlocked = (deg: number) => {
+      if ((deg >= 315 || deg <= 45) && hideTop) return true
+      if (deg > 45 && deg < 135 && hideRight) return true
+      if (deg >= 135 && deg <= 225 && hideBottom) return true
+      if (deg > 225 && deg < 315 && hideLeft) return true
+      return false
+    }
 
     return (
       <div
         className="relative select-none"
-        style={{ width: `${cellSize}px`, height: `${cellSize}px` }}
+        style={{ width: `${totalSize}px`, height: `${totalSize}px` }}
         onClick={(e) => {
           if (isQrPrintMode && onTogglePrintSelect) {
             e.stopPropagation()
@@ -806,41 +939,25 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           }
         }}
       >
-        {activeSlots.has(0) && (
-          <div
-            className="absolute left-1/2 -translate-x-1/2 z-0"
-            style={{ top: `${chairOffset}px` }}
-          >
-            <Chair rotation={0} size={chairSize} />
-          </div>
-        )}
+        {angles.map((deg) => {
+          if (isChairBlocked(deg)) return null
+          const rad = (deg - 90) * (Math.PI / 180)
+          const cx = totalSize / 2 + radius * Math.cos(rad) - smallChairSize / 2
+          const cy = totalSize / 2 + radius * Math.sin(rad) - smallChairSize / 2
 
-        {activeSlots.has(1) && (
-          <div
-            className="absolute left-1/2 -translate-x-1/2 z-0"
-            style={{ bottom: `${chairOffset}px` }}
-          >
-            <Chair rotation={180} size={chairSize} />
-          </div>
-        )}
-
-        {activeSlots.has(2) && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 z-0"
-            style={{ left: `${chairOffset}px` }}
-          >
-            <Chair rotation={270} size={chairSize} />
-          </div>
-        )}
-
-        {activeSlots.has(3) && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 z-0"
-            style={{ right: `${chairOffset}px` }}
-          >
-            <Chair rotation={90} size={chairSize} />
-          </div>
-        )}
+          return (
+            <div
+              key={deg}
+              className="absolute z-0"
+              style={{
+                left: `${cx}px`,
+                top: `${cy}px`,
+              }}
+            >
+              <Chair rotation={deg} size={smallChairSize} />
+            </div>
+          )
+        })}
 
         {/* Circular Tabletop Surface */}
         <div
@@ -880,13 +997,21 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
   // ── 4. Type 4: Big Circle Table (2x2) ──
   if (tableType === 4) {
     const totalSize = cellSize * 2
+    const numChairs = Math.max(1, Math.min(14, capacity))
+    const bigChairSize = numChairs > 10
+      ? Math.max(10, Math.round(cellSize * 0.18))
+      : chairSize
+    const radius = totalSize / 2 + Math.round(bigChairSize * 0.7)
     const radialMask = hideChairs.radial || []
-    const radius = totalSize / 2 + Math.round(chairSize * 0.7)
-    const angles = [0, 60, 120, 180, 240, 300]
 
-    const unblockedMask = angles.map((_, i) => !radialMask[i])
-    const priorityOrder = [0, 3, 2, 5, 1, 4]
-    const activeSlots = pickDynamicChairSlots(priorityOrder, unblockedMask, capacity)
+    // Evenly distribute all chairs around the full 360° of the circle
+    const angles = Array.from({ length: numChairs }, (_, i) => Math.round((i * 360) / numChairs))
+
+    const isChairBlocked = (deg: number) => {
+      if (radialMask.length === 0) return false
+      const dirIdx = Math.round(deg / 60) % 6
+      return Boolean(radialMask[dirIdx])
+    }
 
     return (
       <div
@@ -899,12 +1024,12 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
           }
         }}
       >
-        {/* Dynamic Radial Chairs */}
-        {angles.map((deg, idx) => {
-          if (!activeSlots.has(idx)) return null
+        {/* Dynamic Radial Chairs distributed evenly around circle */}
+        {angles.map((deg) => {
+          if (isChairBlocked(deg)) return null
           const rad = (deg - 90) * (Math.PI / 180)
-          const cx = totalSize / 2 + radius * Math.cos(rad) - chairSize / 2
-          const cy = totalSize / 2 + radius * Math.sin(rad) - chairSize / 2
+          const cx = totalSize / 2 + radius * Math.cos(rad) - bigChairSize / 2
+          const cy = totalSize / 2 + radius * Math.sin(rad) - bigChairSize / 2
 
           return (
             <div
@@ -915,7 +1040,7 @@ export const TableVisual: React.FC<TableVisualProps> = memo(({
                 top: `${cy}px`,
               }}
             >
-              <Chair rotation={deg} size={chairSize} />
+              <Chair rotation={deg} size={bigChairSize} />
             </div>
           )
         })}

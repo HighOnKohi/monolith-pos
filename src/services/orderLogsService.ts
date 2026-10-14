@@ -84,6 +84,37 @@ export interface OrderLogItemDetail {
   notes: string | null
 }
 
+export interface InvoiceItemBreakdown {
+  index: number
+  itemId: number
+  itemName: string
+  price: number
+  percentDiscount: number
+  intDiscount: number
+  netPrice: number
+}
+
+export interface OrderInvoiceLogDetail {
+  invoiceId: number
+  tableNum: number
+  mergeGroupNum: number | null
+  guestCount: number
+  cashierName: string | null
+  dateGenerated: string
+  subtotal: number
+  total: number
+  items: InvoiceItemBreakdown[]
+}
+
+export interface OrderReceiptLogDetail {
+  receiptId: number
+  invoiceId: number
+  datePaid: string
+  paymentType: string
+  amountReceived: number
+  changeGiven: number
+}
+
 export interface OrderLogDetails {
   order: OrderLogRow
   items: OrderLogItemDetail[]
@@ -98,6 +129,8 @@ export interface OrderLogDetails {
     requestedAt: string
   } | null
   timeline: OrderTimelineEvent[]
+  invoice?: OrderInvoiceLogDetail | null
+  receipt?: OrderReceiptLogDetail | null
 }
 
 /** Helper to format Date into ISO string */
@@ -654,12 +687,117 @@ export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetail
   // 5. Fetch Timeline
   const timeline = await fetchOrderTimeline(orderId, orderRow)
 
+  // 6. Fetch linked Order_Invoices and Order_Receipts if available
+  let invoiceDetail: OrderInvoiceLogDetail | null = null
+  let receiptDetail: OrderReceiptLogDetail | null = null
+
+  const invoiceId = orderData['INVOICE_ID'] ? Number(orderData['INVOICE_ID']) : null
+  const receiptId = orderData['RECEIPT_ID'] ? Number(orderData['RECEIPT_ID']) : null
+
+  if (invoiceId) {
+    try {
+      const { data: invRow } = await supabase
+        .schema('orders')
+        .from('Order_Invoices')
+        .select('*')
+        .eq('INVOICE_ID', invoiceId)
+        .maybeSingle()
+
+      if (invRow) {
+        const itemIds = (invRow['ITEM_ID_LIST'] as number[]) || []
+        const percentList = (invRow['PERCENT_DISCOUNT_LIST'] as number[]) || []
+        const intList = (invRow['INT_DISCOUNT_LIST'] as number[]) || []
+
+        // Resolve item names from Menu_Items
+        const uniqueIds = Array.from(new Set(itemIds))
+        const nameMap = new Map<number, { name: string; price: number }>()
+        if (uniqueIds.length > 0) {
+          const { data: menuData } = await supabase
+            .from('Menu_Items')
+            .select('ITEM_ID, ITEM_NAME, ITEM_PRICE')
+            .in('ITEM_ID', uniqueIds)
+
+          for (const m of menuData || []) {
+            nameMap.set(Number(m.ITEM_ID), {
+              name: String(m.ITEM_NAME || `Item #${m.ITEM_ID}`),
+              price: Number(m.ITEM_PRICE || 0),
+            })
+          }
+        }
+
+        const invoiceItems: InvoiceItemBreakdown[] = []
+        for (let i = 0; i < itemIds.length; i++) {
+          const itId = Number(itemIds[i])
+          const itInfo = nameMap.get(itId)
+          const itemName = itInfo?.name || `Item #${itId}`
+          const price = itInfo?.price || 0
+          const percentDiscount = Number(percentList[i]) || 0
+          const intDiscount = Number(intList[i]) || 0
+          const netPrice = Math.max(0, price - intDiscount)
+          invoiceItems.push({
+            index: i,
+            itemId: itId,
+            itemName,
+            price,
+            percentDiscount,
+            intDiscount,
+            netPrice,
+          })
+        }
+
+        invoiceDetail = {
+          invoiceId: Number(invRow['INVOICE_ID']),
+          tableNum: Number(invRow['TABLE_NUM']) || 1,
+          mergeGroupNum: invRow['MERGE_GROUP_NUM'] ? Number(invRow['MERGE_GROUP_NUM']) : null,
+          guestCount: Number(invRow['GUEST_COUNT']) || 1,
+          cashierName: invRow['CASHIER_NAME'] ? `Cashier #${invRow['CASHIER_NAME']}` : null,
+          dateGenerated: String(invRow['DATE_GENERATED'] || ''),
+          subtotal: Number(invRow['SUBTOTAL']) || 0,
+          total: Number(invRow['TOTAL']) || 0,
+          items: invoiceItems,
+        }
+      }
+    } catch (invErr) {
+      console.warn('[orderLogsService] Failed to load linked Order_Invoice:', invErr)
+    }
+  }
+
+  // Fetch linked Receipt either by RECEIPT_ID or by INVOICE_ID
+  const targetReceiptId = receiptId
+  const targetInvoiceId = invoiceId
+  if (targetReceiptId || targetInvoiceId) {
+    try {
+      let recQuery = supabase.schema('orders').from('Order_Receipts').select('*')
+      if (targetReceiptId) {
+        recQuery = recQuery.eq('RECEIPT_ID', targetReceiptId)
+      } else if (targetInvoiceId) {
+        recQuery = recQuery.eq('INVOICE_ID', targetInvoiceId)
+      }
+      const { data: recRow } = await recQuery.maybeSingle()
+
+      if (recRow) {
+        receiptDetail = {
+          receiptId: Number(recRow['RECEIPT_ID']),
+          invoiceId: Number(recRow['INVOICE_ID']),
+          datePaid: String(recRow['DATE_PAID'] || ''),
+          paymentType: String(recRow['PAYMENT_TYPE'] || 'CASH'),
+          amountReceived: Number(recRow['AMOUNT_RECEIVED']) || 0,
+          changeGiven: Number(recRow['CHANGE_GIVEN']) || 0,
+        }
+      }
+    } catch (recErr) {
+      console.warn('[orderLogsService] Failed to load linked Order_Receipt:', recErr)
+    }
+  }
+
   return {
     order: orderRow,
     items,
     discounts,
     billRequest,
     timeline,
+    invoice: invoiceDetail,
+    receipt: receiptDetail,
   }
 }
 

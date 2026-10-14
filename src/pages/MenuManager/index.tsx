@@ -64,7 +64,6 @@ export default function MenuManagerPage() {
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null)
   const [isItemModalOpen, setItemModalOpen] = useState(false)
   const [availabilitySaving, setAvailabilitySaving] = useState<string | null>(null)
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
 
   // Confirm modal state
   const [confirmState, setConfirmState] = useState<{
@@ -74,9 +73,8 @@ export default function MenuManagerPage() {
     onConfirm: () => void
   } | null>(null)
 
-  function showToast(text: string, type: 'success' | 'info' | 'error' = 'success') {
-    setToastMessage({ text, type })
-    setTimeout(() => setToastMessage(null), 3500)
+  function showToast(_text: string, _type: 'success' | 'info' | 'error' = 'success') {
+    // Popup notifications disabled
   }
 
   // Fetch all master catalog items
@@ -407,20 +405,6 @@ export default function MenuManagerPage() {
 
   return (
     <div className="flex h-full bg-[#CBD5E1] p-3 sm:p-4 gap-3 sm:gap-4 overflow-hidden select-none">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div
-          className={`fixed top-5 right-5 z-50 px-4 py-2.5 rounded-2xl shadow-xl border text-xs sm:text-sm font-black flex items-center gap-2 animate-in fade-in slide-in-from-top-3 ${
-            toastMessage.type === 'success'
-              ? 'bg-[#14274E] text-[#E9C46A] border-[#E9C46A]/40'
-              : toastMessage.type === 'error'
-                ? 'bg-rose-700 text-white border-rose-500'
-                : 'bg-slate-800 text-white border-slate-600'
-          }`}
-        >
-          <span>{toastMessage.text}</span>
-        </div>
-      )}
 
       {/* ── Main Workspace: Inner Menu Container ── */}
       <div className="flex-1 min-w-0 flex flex-col gap-3 h-full overflow-hidden">

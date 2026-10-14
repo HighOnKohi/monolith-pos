@@ -77,10 +77,8 @@ export default function EventsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('calendar')
 
   // ── Toast ──
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 4000)
+  const showToast = useCallback((_message: string, _type: 'success' | 'error' = 'success') => {
+    // Popup notifications disabled
   }, [])
 
   // ── Drawer ──
@@ -357,19 +355,6 @@ export default function EventsPage() {
 
   return (
     <div className="events-page events-page-container staff-page flex flex-col gap-3.5 sm:gap-4 pb-12">
-      {/* ── Toast ── */}
-      {toast && (
-        <div
-          className={[
-            'fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl shadow-lg text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-3',
-            toast.type === 'success'
-              ? 'bg-[#14274E] text-[#E9C46A] border border-[#E9C46A]/30'
-              : 'bg-rose-600 text-white',
-          ].join(' ')}
-        >
-          {toast.message}
-        </div>
-      )}
 
       <div className="flex items-center justify-between gap-3 shrink-0 flex-wrap">
         <div className={`events-view-toggle flex items-center gap-1 bg-slate-100 rounded-xl p-1 ${viewMode === 'list' ? 'events-view-toggle-list' : ''}`}>

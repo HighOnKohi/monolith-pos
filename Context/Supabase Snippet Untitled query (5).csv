@@ -981,6 +981,116 @@
   },
   {
     "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "INVOICE_ID",
+    "data_type": "bigint",
+    "is_primary_key": "YES",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "TABLE_NUM",
+    "data_type": "bigint",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "MERGE_GROUP_NUM",
+    "data_type": "bigint",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "GUEST_COUNT",
+    "data_type": "bigint",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "CASHIER_NAME",
+    "data_type": "bigint",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "ITEM_ID_LIST",
+    "data_type": "bigint[]",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "PERCENT_DISCOUNT_LIST",
+    "data_type": "bigint[]",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "INT_DISCOUNT_LIST",
+    "data_type": "double precision[]",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "DATE_GENERATED",
+    "data_type": "timestamp with time zone",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "SUBTOTAL",
+    "data_type": "double precision",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Invoices",
+    "column_name": "TOTAL",
+    "data_type": "double precision",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Invoices_pkey: PRIMARY KEY (\"INVOICE_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
     "table_name": "Order_Item_Group",
     "column_name": "ORDER_GROUP_ID",
     "data_type": "bigint",
@@ -1098,6 +1208,66 @@
     "primary_key_definition": "Order_Items_pkey: PRIMARY KEY (\"ORDER_ITEM_ID\")",
     "foreign_key_relation": null,
     "check_constraints": "order_items_status_check: CHECK ((\"ORDER_ITEM_STATUS\" = ANY (ARRAY['PENDING'::text, 'COOKING'::text, 'DONE'::text, 'CANCELLED'::text])))"
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Receipts",
+    "column_name": "RECEIPT_ID",
+    "data_type": "bigint",
+    "is_primary_key": "YES",
+    "primary_key_definition": "Order_Receipts_pkey: PRIMARY KEY (\"RECEIPT_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Receipts",
+    "column_name": "INVOICE_ID",
+    "data_type": "bigint",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Receipts_pkey: PRIMARY KEY (\"RECEIPT_ID\")",
+    "foreign_key_relation": "Order_Receipts_INVOICE_ID_fkey: INVOICE_ID -> orders.Order_Invoices.INVOICE_ID",
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Receipts",
+    "column_name": "DATE_PAID",
+    "data_type": "timestamp with time zone",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Receipts_pkey: PRIMARY KEY (\"RECEIPT_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Receipts",
+    "column_name": "PAYMENT_TYPE",
+    "data_type": "text",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Receipts_pkey: PRIMARY KEY (\"RECEIPT_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Receipts",
+    "column_name": "AMOUNT_RECEIVED",
+    "data_type": "double precision",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Receipts_pkey: PRIMARY KEY (\"RECEIPT_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "orders",
+    "table_name": "Order_Receipts",
+    "column_name": "CHANGE_GIVEN",
+    "data_type": "double precision",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Order_Receipts_pkey: PRIMARY KEY (\"RECEIPT_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
   },
   {
     "schema_name": "orders",
@@ -1861,6 +2031,26 @@
   },
   {
     "schema_name": "system_history",
+    "table_name": "Order_History",
+    "column_name": "INVOICE_ID",
+    "data_type": "bigint",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Completed_Orders_pkey: PRIMARY KEY (\"ORDER_ID\")",
+    "foreign_key_relation": "Order_History_INVOICE_ID_fkey: INVOICE_ID -> orders.Order_Invoices.INVOICE_ID",
+    "check_constraints": null
+  },
+  {
+    "schema_name": "system_history",
+    "table_name": "Order_History",
+    "column_name": "RECEIPT_ID",
+    "data_type": "bigint",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Completed_Orders_pkey: PRIMARY KEY (\"ORDER_ID\")",
+    "foreign_key_relation": "Order_History_RECEIPT_ID_fkey: RECEIPT_ID -> orders.Order_Receipts.RECEIPT_ID",
+    "check_constraints": null
+  },
+  {
+    "schema_name": "system_history",
     "table_name": "Shift_History",
     "column_name": "SHIFT_HISTORY_ID",
     "data_type": "bigint",
@@ -2364,6 +2554,16 @@
     "table_name": "Table_Reservations",
     "column_name": "RESERVED_SINCE",
     "data_type": "timestamp with time zone",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Table_Reservations_pkey: PRIMARY KEY (\"RESERVATION_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": null
+  },
+  {
+    "schema_name": "tables",
+    "table_name": "Table_Reservations",
+    "column_name": "APPOINTED_PHONE_NUMBER",
+    "data_type": "bigint",
     "is_primary_key": "NO",
     "primary_key_definition": "Table_Reservations_pkey: PRIMARY KEY (\"RESERVATION_ID\")",
     "foreign_key_relation": null,

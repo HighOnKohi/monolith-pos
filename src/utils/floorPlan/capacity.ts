@@ -4,6 +4,7 @@
 
 import {
   TABLE_TYPES,
+  TABLE_TYPE_MAX_CAPACITIES,
   DEFAULT_GRID_WIDTH,
   DEFAULT_GRID_HEIGHT,
   type TableType,
@@ -29,10 +30,11 @@ export function calculateTableBaseCapacity(
   tableType: TableType,
   customCapacity?: number | null,
 ): number {
+  const hardcodedMax = TABLE_TYPE_MAX_CAPACITIES[tableType] ?? 14
   if (customCapacity != null && customCapacity > 0) {
-    return Math.round(customCapacity)
+    return Math.min(Math.round(customCapacity), hardcodedMax)
   }
-  return TABLE_TYPES[tableType]?.defaultCapacity ?? 4
+  return Math.min(TABLE_TYPES[tableType]?.defaultCapacity ?? 4, hardcodedMax)
 }
 
 /**

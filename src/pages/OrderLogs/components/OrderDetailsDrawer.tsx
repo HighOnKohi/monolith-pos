@@ -6,6 +6,8 @@ import {
   XCircle,
   AlertCircle,
   Tag,
+  FileText,
+  Printer,
 } from 'lucide-react'
 import {
   fetchOrderDetails,
@@ -446,6 +448,129 @@ export const OrderDetailsDrawer: React.FC<OrderDetailsDrawerProps> = ({
                 {/* ── TAB 3: Payment & Billing ── */}
                 {activeSection === 'payment' && (
                   <div className="space-y-4">
+                    {/* 1. Official Invoice Details Card (if available) */}
+                    {details?.invoice && (
+                      <div className="p-4 bg-white rounded-2xl border border-slate-200/90 shadow-2xs space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 rounded-xl bg-[#14274E]/10 text-[#14274E]">
+                              <FileText className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-black text-[#14274E] uppercase tracking-wider">
+                                Customer Invoice #INV-{details.invoice.invoiceId}
+                              </h4>
+                              <p className="text-[10px] text-slate-400 font-semibold">
+                                Generated: {formatTime(details.invoice.dateGenerated)}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                            {details.invoice.mergeGroupNum
+                              ? `Group ${details.invoice.mergeGroupNum}`
+                              : `Table #${details.invoice.tableNum}`}
+                          </span>
+                        </div>
+
+                        {/* Invoice Items & Discount Breakdown */}
+                        <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                          <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            Punched Items & Discount Breakdown
+                          </div>
+                          <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                            {details.invoice.items.map((it, idx) => (
+                              <div
+                                key={idx}
+                                className="p-2 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-xs gap-2"
+                              >
+                                <div className="space-y-0.5 min-w-0">
+                                  <div className="font-extrabold text-slate-800 truncate text-[11px]">
+                                    {idx + 1}. {it.itemName}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400">
+                                    Base: ₱{it.price.toFixed(2)}
+                                    {it.intDiscount > 0 && (
+                                      <span className="ml-1.5 text-rose-600 font-bold">
+                                        (Disc: {it.percentDiscount > 0 ? `${it.percentDiscount}%` : ''} -₱{it.intDiscount.toFixed(2)})
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="font-black text-slate-900 text-xs">
+                                    ₱{it.netPrice.toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Invoice Subtotal & Total */}
+                        <div className="pt-2 border-t border-slate-100 space-y-1 text-xs">
+                          <div className="flex justify-between text-slate-500 font-semibold">
+                            <span>Invoice Subtotal</span>
+                            <span>₱{details.invoice.subtotal.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm font-black text-[#14274E] pt-1 border-t border-slate-200/60">
+                            <span>Invoice Total</span>
+                            <span>₱{details.invoice.total.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 2. Official Receipt Details Card (if available) */}
+                    {details?.receipt && (
+                      <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200/80 shadow-2xs space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 rounded-xl bg-emerald-600/15 text-emerald-800">
+                              <Printer className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-black text-emerald-950 uppercase tracking-wider">
+                                Payment Receipt #REC-{details.receipt.receiptId}
+                              </h4>
+                              <p className="text-[10px] text-emerald-700 font-semibold">
+                                Paid: {formatTime(details.receipt.datePaid)}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            {details.receipt.paymentType}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1.5 pt-2 border-t border-emerald-200/50 text-xs">
+                          <div className="flex justify-between text-slate-600">
+                            <span>Payment Method</span>
+                            <span className="font-extrabold text-slate-900">
+                              {details.receipt.paymentType}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-slate-600">
+                            <span>Amount Received</span>
+                            <span className="font-extrabold text-slate-900">
+                              ₱{details.receipt.amountReceived.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-slate-600">
+                            <span>Change Given</span>
+                            <span className="font-extrabold text-emerald-700">
+                              ₱{details.receipt.changeGiven.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-slate-500 text-[11px] pt-1 border-t border-emerald-200/40">
+                            <span>Referenced Invoice</span>
+                            <span className="font-bold text-[#14274E]">
+                              #INV-{details.receipt.invoiceId}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="p-4 bg-white rounded-xl border border-slate-200/80 space-y-3">
                       <h4 className="text-xs font-black text-[#14274E] uppercase tracking-wider">
                         Payment Summary

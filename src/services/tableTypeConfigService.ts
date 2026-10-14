@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { TABLE_TYPES, TABLE_TYPE_MAX_CAPACITIES, type TableType } from '@/services/tableLayoutService'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -36,11 +37,13 @@ export async function fetchAllTypeConfigs(): Promise<TableTypeConfig[]> {
 
   return (data ?? []).map((row: Record<string, unknown>) => {
     const id = Number(row.TABLE_TYPE_ID)
+    const maxCap = TABLE_TYPE_MAX_CAPACITIES[id as TableType] ?? 14
+    const rawCap = Number(row.DEFAULT_SEAT_CAPACITY ?? 4)
     return {
       TYPE_CONFIG_ID: id,
       TABLE_TYPE: id,
       NAME: String(row.NAME ?? ''),
-      CAPACITY: Number(row.DEFAULT_SEAT_CAPACITY ?? 4),
+      CAPACITY: Math.min(rawCap, maxCap),
       MAX_COUNT: row.TABLES_IN_STOCK != null ? Number(row.TABLES_IN_STOCK) : null,
       IS_ACTIVE: Boolean(row.IS_ACTIVE),
       CREATED_AT: row.CREATED_AT != null ? String(row.CREATED_AT) : undefined,
@@ -62,6 +65,10 @@ export async function updateTypeConfig(
   if (fields.name !== undefined) payload.NAME = fields.name.trim()
   if (fields.capacity !== undefined) {
     if (fields.capacity < 1) throw new Error('Capacity must be at least 1.')
+    const maxCap = TABLE_TYPE_MAX_CAPACITIES[typeConfigId as TableType] ?? 14
+    if (fields.capacity > maxCap) {
+      throw new Error(`Seating capacity cannot exceed the maximum limit of ${maxCap} guests for this table type.`)
+    }
     payload.DEFAULT_SEAT_CAPACITY = fields.capacity
   }
   if (fields.maxCount !== undefined) {
@@ -81,11 +88,22 @@ export async function updateTypeConfig(
   if (error || !data) throw error ?? new Error('Failed to update type config in Table_Types.')
 
   const id = Number(data.TABLE_TYPE_ID)
+  const cap = Number(data.DEFAULT_SEAT_CAPACITY ?? 4)
+
+  // Update in-memory TABLE_TYPES immediately
+  const typeId = id as TableType
+  if (TABLE_TYPES[typeId]) {
+    TABLE_TYPES[typeId].defaultCapacity = cap
+  }
+  if (typeId === 2 && TABLE_TYPES[5]) {
+    TABLE_TYPES[5].defaultCapacity = cap
+  }
+
   return {
     TYPE_CONFIG_ID: id,
     TABLE_TYPE: id,
     NAME: String(data.NAME),
-    CAPACITY: Number(data.DEFAULT_SEAT_CAPACITY ?? 4),
+    CAPACITY: cap,
     MAX_COUNT: data.TABLES_IN_STOCK != null ? Number(data.TABLES_IN_STOCK) : null,
     IS_ACTIVE: Boolean(data.IS_ACTIVE),
     CREATED_AT: String(data.CREATED_AT),

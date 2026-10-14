@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Search, X, Plus, Filter } from 'lucide-react'
+import { Search, X, Plus, Filter, LogOut } from 'lucide-react'
 import type { StaffRole, CodeStatus, ShiftStatus, StaffCodeFilterParams } from '@/types/account'
 import { ROLE_DEFINITIONS } from '@/types/account'
 
@@ -8,6 +8,8 @@ interface AccountManagerFilterBarProps {
   onFilterChange: (newFilters: Partial<StaffCodeFilterParams>) => void
   onClearFilters: () => void
   onAddCode: () => void
+  onEndAllShifts?: () => void
+  ongoingShiftsCount?: number
 }
 
 export const AccountManagerFilterBar: React.FC<AccountManagerFilterBarProps> = ({
@@ -15,6 +17,8 @@ export const AccountManagerFilterBar: React.FC<AccountManagerFilterBarProps> = (
   onFilterChange,
   onClearFilters,
   onAddCode,
+  onEndAllShifts,
+  ongoingShiftsCount,
 }) => {
   const [localSearch, setLocalSearch] = useState(filters.searchQuery || '')
 
@@ -67,15 +71,36 @@ export const AccountManagerFilterBar: React.FC<AccountManagerFilterBarProps> = (
           )}
         </div>
 
-        {/* Action Button: Add Staff Code */}
-        <button
-          type="button"
-          onClick={onAddCode}
-          className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs active:scale-98 transition-all cursor-pointer shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Staff Code</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Action Button: End All Shifts */}
+          {onEndAllShifts && (
+            <button
+              type="button"
+              onClick={onEndAllShifts}
+              disabled={ongoingShiftsCount === 0}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-black shadow-2xs active:scale-98 transition-all cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-rose-50"
+              title="End shifts for all staff currently on active duty"
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-600" />
+              <span>End all Shifts</span>
+              {ongoingShiftsCount !== undefined && ongoingShiftsCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-rose-200 text-rose-800 text-[10px] font-black leading-none">
+                  {ongoingShiftsCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Action Button: Add Staff Code */}
+          <button
+            type="button"
+            onClick={onAddCode}
+            className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs active:scale-98 transition-all cursor-pointer shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Staff Code</span>
+          </button>
+        </div>
       </div>
 
       {/* ── Bottom Row: Filters & Reset ── */}

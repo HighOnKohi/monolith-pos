@@ -882,6 +882,8 @@ export interface SettleOrderAttribution {
   staffId?: number | null
   cashierName?: string | null
   paymentMethod?: string | null
+  invoiceId?: number | null
+  receiptId?: number | null
 }
 
 export async function settleTableOrders(
@@ -1063,6 +1065,8 @@ export async function settleTableOrders(
       KITCHEN_NOTE: o['KITCHEN_NOTE'] ? String(o['KITCHEN_NOTE']) : null,
       SERVER_NOTE: o['SERVER_NOTE'] ? String(o['SERVER_NOTE']) : null,
       ORDER_ITEMS: compressed,
+      INVOICE_ID: attribution?.invoiceId ?? null,
+      RECEIPT_ID: attribution?.receiptId ?? null,
     }
   })
 

@@ -50,15 +50,13 @@ export default function AnalyticsPage() {
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [clearModalOpen, setClearModalOpen] = useState(false)
-  const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
   const [activeKpiMetric, setActiveKpiMetric] = useState<KpiMetricType | null>(null)
   const [activeCustomerInsightTab, setActiveCustomerInsightTab] = useState<CustomerInsightTab | null>(null)
   const [diningViewMode, setDiningViewMode] = useState<'timeline' | 'weekly'>('timeline')
   const [revenueViewMode, setRevenueViewMode] = useState<'timeline' | 'weekly'>('timeline')
 
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
-    setToastMsg({ text, type })
-    setTimeout(() => setToastMsg(null), 4000)
+  const showToast = (_text: string, _type: 'success' | 'error' = 'success') => {
+    // Popup notifications disabled
   }
 
   // Load analytics data
@@ -116,17 +114,6 @@ export default function AnalyticsPage() {
 
   return (
     <div className="analytics-page-container flex flex-col gap-5 pb-12">
-      {/* Toast Notification */}
-      {toastMsg && (
-        <div
-          className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl shadow-lg text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-3 ${toastMsg.type === 'success'
-              ? 'bg-[#14274E] text-[#E9C46A] border border-[#E9C46A]/30'
-              : 'bg-rose-600 text-white'
-            }`}
-        >
-          <span>{toastMsg.text}</span>
-        </div>
-      )}
 
       {/* ── Top Header & Actions ── */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">

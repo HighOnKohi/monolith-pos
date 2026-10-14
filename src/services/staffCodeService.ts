@@ -532,6 +532,49 @@ export async function endStaffShiftManually(codeId: number): Promise<StaffCodeIt
 }
 
 /**
+ * Manually ends shifts for all staff members who currently have an ongoing shift.
+ * Returns the count of staff members whose shifts were ended.
+ */
+export async function endAllStaffShiftsManually(): Promise<number> {
+  let ongoingCodes: StaffCodeItem[] = []
+  try {
+    const { data, error } = await supabase
+      .schema('staff')
+      .from('Staff_Codes')
+      .select('*')
+      .eq('SHIFT_STATUS', 'ONGOING')
+
+    if (!error && data) {
+      ongoingCodes = (data as Array<Record<string, unknown>>).map(mapDbRowToStaffCode)
+    }
+  } catch (err) {
+    console.warn('[staffCodeService] Fetch ongoing shifts error:', err)
+  }
+
+  // Also check fallback codes in case Supabase is offline
+  const fallbackAll = getFallbackCodes()
+  const fallbackOngoing = fallbackAll.filter((c) => c.shiftStatus === 'ONGOING')
+
+  const mergedIds = new Set<number>()
+  ongoingCodes.forEach((c) => mergedIds.add(c.codeId))
+  fallbackOngoing.forEach((c) => mergedIds.add(c.codeId))
+
+  if (mergedIds.size === 0) return 0
+
+  let endedCount = 0
+  for (const codeId of mergedIds) {
+    try {
+      await endStaffShiftManually(codeId)
+      endedCount++
+    } catch (err) {
+      console.warn(`[staffCodeService] Error ending shift for #${codeId}:`, err)
+    }
+  }
+
+  return endedCount
+}
+
+/**
  * Deletes a staff code from the database.
  */
 export async function deleteStaffCode(codeId: number): Promise<void> {

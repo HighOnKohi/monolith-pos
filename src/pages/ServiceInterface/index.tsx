@@ -69,11 +69,8 @@ export default function CashierPage() {
   const [showReceiptModal, setShowReceiptModal] = useState(false)
 
   // Toast feedback state
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null)
-
-  const showToast = useCallback((text: string, type: 'success' | 'info' | 'error' = 'success') => {
-    setToastMessage({ text, type })
-    setTimeout(() => setToastMessage(null), 3500)
+  const showToast = useCallback((_text: string, _type: 'success' | 'info' | 'error' = 'success') => {
+    // Popup notifications disabled
   }, [])
 
   // ── 3. Menu Data Hook ──
@@ -649,7 +646,10 @@ export default function CashierPage() {
     setIsVoidModalOpen(true)
   }
 
-  const handleConfirmVoid = async (orderId: number, orderItemIds: number[], password: string) => {
+  const handleConfirmVoid = async (orderId: number, orderItemIds: number[], password?: string) => {
+    if (!password) {
+      throw new Error('Administrator password is required.')
+    }
     const authRes = await verifyAdminPassword(password, user?.email)
     if (!authRes.valid) {
       throw new Error(authRes.error || 'Incorrect administrator password.')
@@ -699,7 +699,6 @@ export default function CashierPage() {
       }
       return [...prev, { item, quantity: 1 }]
     })
-    showToast(`Added ${item.name} to punch cart!`, 'info')
   }
 
   const handleIncreasePunchQty = (itemId: string) => {
@@ -871,12 +870,6 @@ export default function CashierPage() {
 
   return (
     <div className="service-page-container service-interface-page-container">
-      {/* Toast Alert */}
-      {toastMessage && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-2xl shadow-xl border bg-[#14274E] text-white text-xs font-bold animate-slide-down flex items-center gap-2">
-          <span>{toastMessage.text}</span>
-        </div>
-      )}
 
       <div className="service-interface-layout">
         <div className="inner-service-interface-container">

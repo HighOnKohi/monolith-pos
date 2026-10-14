@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useBlocker } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import {
   fetchAllLayoutPresets,
@@ -14,11 +13,13 @@ import {
   updateTableGuestCount,
   deleteLayoutPreset,
   TABLE_TYPES,
+  TABLE_TYPE_MAX_CAPACITIES,
   DEFAULT_GRID_WIDTH,
   DEFAULT_GRID_HEIGHT,
   GRID_MARGIN_BLOCKS,
   TOTAL_GRID_WIDTH_BLOCKS,
   TOTAL_GRID_HEIGHT_BLOCKS,
+  syncTableTypesFromDb,
   type TableLayoutPreset,
   type TableLayoutInfo,
   type RestaurantTableData,
@@ -39,7 +40,7 @@ import { downloadBulkQrPdf } from '@/components/table-qr/tableQrPdf'
 import { useActiveEvent } from '@/hooks/useActiveEvent'
 import { useBusinessDay } from '@/hooks/useBusinessDay'
 import { getActiveBusinessDay } from '@/services/businessDayService'
-import { GitMerge, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { GitMerge, HelpCircle, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { LabelManagementModal } from './components/LabelManagementModal'
 import { RemoveAllTablesModal } from './components/RemoveAllTablesModal'
 import { AdminAuthModal } from './components/AdminAuthModal'
@@ -248,20 +249,6 @@ export default function TableManager() {
   const restaurantTablesRef = useRef<RestaurantTableData[]>(restaurantTables)
   restaurantTablesRef.current = restaurantTables
 
-  // ── Navigation Guard: block route changes when there are unsaved edits ──
-  const shouldBlock = isDirty
-  const blocker = useBlocker(shouldBlock)
-
-  // Guard browser close / refresh
-  useEffect(() => {
-    if (!shouldBlock) return
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault()
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [shouldBlock])
-
   // Dragging & Container Dimension State
   const [dragState, setDragState] = useState<DragState | null>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -301,7 +288,6 @@ export default function TableManager() {
     currentName: '',
     currentMaxPax: 50,
   })
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
 
   // Sidebar Navigation Tabs ('table' | 'types' | 'labels')
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('table')
@@ -317,27 +303,25 @@ export default function TableManager() {
     return map
   }, [activeLabels])
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
+  const showToast = (_message: string, _type: 'success' | 'error' | 'info' = 'success') => {
+    // Popup notifications disabled
   }
 
   // Serialize floor layout configuration to detect true layout changes and protect against DB egress
   const serializeLayout = useCallback((tables: TableLayoutInfo[]): string => {
     return tables
-      .map((t) => `${t.TABLE_NUM}:${t.TABLE_TYPE}:${t.X_POS}:${t.Y_POS}:${t.TABLE_CAPACITY ?? ''}:${t.MERGE_GROUP_ID ?? ''}:${t.LABEL_ID ?? ''}`)
+      .map((t) => `${t.TABLE_NUM}:${t.TABLE_TYPE}:${t.X_POS}:${t.Y_POS}:${t.TABLE_CAPACITY ?? t.SEAT_CAPACITY ?? ''}:${t.MERGE_GROUP_ID ?? ''}:${t.LABEL_ID ?? ''}`)
       .sort()
       .join('|')
   }, [])
 
   // Auto-save floor layout to database without burning egress
   const performAutoSave = useCallback(
-    async (tablesToSave?: TableLayoutInfo[], restTablesToSave?: RestaurantTableData[]) => {
+    async (tablesToSave?: TableLayoutInfo[], _restTablesToSave?: RestaurantTableData[]) => {
       const presetId = activePresetIdRef.current
       if (!presetId) return
 
       const targetLayout = tablesToSave ?? layoutTablesRef.current
-      const targetRest = restTablesToSave ?? restaurantTablesRef.current
       const currentHash = serializeLayout(targetLayout)
 
       // Egress Protection: If layout hasn't changed from last saved state, skip database write completely!
@@ -360,13 +344,10 @@ export default function TableManager() {
       try {
         lastMutationTimeRef.current = Date.now()
         const capacityMap = new Map<number, number>()
-        for (const r of targetRest) {
-          capacityMap.set(r.TABLE_NUM, r.GUEST_CAPACITY)
-        }
         for (const t of targetLayout) {
-          if (!capacityMap.has(t.TABLE_NUM)) {
-            capacityMap.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
-          }
+          const hardcodedMax = TABLE_TYPE_MAX_CAPACITIES[t.TABLE_TYPE] ?? 14
+          const cap = Math.min(t.TABLE_CAPACITY ?? t.SEAT_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4, hardcodedMax)
+          capacityMap.set(t.TABLE_NUM, cap)
         }
 
         await savePresetLayout(presetId, targetLayout, capacityMap, activePresetMaxPaxRef.current)
@@ -449,7 +430,7 @@ export default function TableManager() {
     const map = new Map<number, number>()
     for (const t of layoutTables) {
       const defaultCap = calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE)
-      const base = t.TABLE_CAPACITY ?? defaultCap
+      const base = t.TABLE_CAPACITY ?? t.SEAT_CAPACITY ?? defaultCap
       map.set(t.TABLE_NUM, base)
     }
     return map
@@ -526,7 +507,7 @@ export default function TableManager() {
     const baseMap = new Map<number, number>()
     for (const t of newLayout) {
       const defaultCap = calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE)
-      const base = baseCaps?.get(t.TABLE_NUM) ?? t.TABLE_CAPACITY ?? defaultCap
+      const base = baseCaps?.get(t.TABLE_NUM) ?? t.TABLE_CAPACITY ?? t.SEAT_CAPACITY ?? defaultCap
       baseMap.set(t.TABLE_NUM, base)
     }
 
@@ -576,6 +557,7 @@ export default function TableManager() {
         fetchAllLayoutPresets(),
         fetchLiveRestaurantTables(),
         fetchActiveLabels(),
+        syncTableTypesFromDb(),
       ])
       setPresets(allPresets)
       setActiveLabels(labelsData)
@@ -857,20 +839,6 @@ export default function TableManager() {
       )
       return
     }
-    if (isDirty) {
-      setConfirmModal({
-        isOpen: true,
-        title: 'Unsaved Changes',
-        message: 'You have unsaved changes on the current layout. Discard changes and switch preset?',
-        confirmLabel: 'Discard & Switch',
-        variant: 'warning',
-        onConfirm: () => {
-          setConfirmModal((prev) => ({ ...prev, isOpen: false }))
-          void performSelectPreset(presetId)
-        },
-      })
-      return
-    }
     void performSelectPreset(presetId)
   }
 
@@ -1057,7 +1025,8 @@ export default function TableManager() {
       return
     }
 
-    const assignedCapacity = Math.min(typeConfig.defaultCapacity, remainingVenueCap)
+    const hardcodedMax = TABLE_TYPE_MAX_CAPACITIES[type] ?? 14
+    const assignedCapacity = Math.min(typeConfig.defaultCapacity, remainingVenueCap, hardcodedMax)
 
     // Consecutive TABLE_NUM (1..N)
     const nextTableNum = layoutTables.length + 1
@@ -1301,25 +1270,26 @@ export default function TableManager() {
     lastMutationTimeRef.current = Date.now()
     const target = layoutTables.find((t) => t.TABLE_NUM === tableNum)
     if (!target) return
-    const maxCapacity = TABLE_TYPES[target.TABLE_TYPE]?.defaultCapacity || 4
+    const hardcodedMax = TABLE_TYPE_MAX_CAPACITIES[target.TABLE_TYPE] ?? 14
+    const maxCapacity = hardcodedMax
 
     // Check remaining venue capacity
     const otherTablesCap = layoutTables
       .filter((t) => t.TABLE_NUM !== tableNum)
       .reduce((sum, t) => {
-        return sum + (t.TABLE_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
+        return sum + (t.TABLE_CAPACITY ?? t.SEAT_CAPACITY ?? TABLE_TYPES[t.TABLE_TYPE]?.defaultCapacity ?? 4)
       }, 0)
 
     const venueMaxForThisTable = Math.max(1, activePresetMaxPax - otherTablesCap)
     const clampedSeats = Math.max(1, Math.min(maxCapacity, venueMaxForThisTable, seats))
 
     const updatedLayout = layoutTables.map((t) =>
-      t.TABLE_NUM === tableNum ? { ...t, TABLE_CAPACITY: clampedSeats } : t,
+      t.TABLE_NUM === tableNum ? { ...t, TABLE_CAPACITY: clampedSeats, SEAT_CAPACITY: clampedSeats } : t,
     )
     const suppMap = calculateSuppressionForLayout(updatedLayout)
     const baseCaps = new Map<number, number>()
     for (const t of updatedLayout) {
-      baseCaps.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE))
+      baseCaps.set(t.TABLE_NUM, t.TABLE_CAPACITY ?? t.SEAT_CAPACITY ?? calculateTableBaseCapacity(t.TABLE_NUM, t.TABLE_TYPE))
     }
     const updatedRest = syncRestaurantTablesWithLayout(
       updatedLayout,
@@ -1332,7 +1302,7 @@ export default function TableManager() {
     setRestaurantTables(updatedRest)
 
     try {
-      await updateTableCapacity(tableNum, clampedSeats)
+      await updateTableCapacity(tableNum, clampedSeats, target.TABLE_ID)
       scheduleAutoSave(updatedLayout, updatedRest, 200)
     } catch (err) {
       console.error('Failed to update table capacity:', err)
@@ -2369,19 +2339,6 @@ export default function TableManager() {
 
   return (
     <div className="table-manager-page-container staff-page flex flex-row h-full w-full overflow-hidden bg-[#F1F6F9] p-0 select-none">
-      {/* Toast Notification */}
-      {toast && (
-        <div
-          className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-2xl shadow-xl border text-xs font-black flex items-center gap-2 animate-in slide-in-from-top-2 duration-150 ${toast.type === 'error'
-            ? 'bg-rose-700 text-white border-rose-500'
-            : toast.type === 'info'
-              ? 'bg-[#14274E] text-white border-slate-700'
-              : 'bg-emerald-700 text-white border-emerald-500'
-            }`}
-        >
-          <span>{toast.message}</span>
-        </div>
-      )}
 
       {/* ── Left Div: inner-table-manager-container ── */}
       <div className="inner-table-manager-container flex-1 min-w-0 h-full flex flex-col overflow-hidden">
@@ -2391,7 +2348,7 @@ export default function TableManager() {
         </div>
 
         {/* Top: table-manager-header (Preset Dropdown on left & Save Layout / Discard Changes / Edit Layout on right) */}
-        <div className="px-5 pb-1 shrink-0">
+        <div className="px-5 pb-1 shrink-0 relative z-40">
           <TableManagerHeader
             presets={presets}
             activePresetId={activePresetId}
@@ -2420,21 +2377,6 @@ export default function TableManager() {
                 )
                 return
               }
-              if (isDirty) {
-                setConfirmModal({
-                  isOpen: true,
-                  title: 'Unsaved Changes',
-                  message: 'You have unsaved changes on the current layout. Discard changes and create a new preset?',
-                  confirmLabel: 'Discard & Create',
-                  variant: 'warning',
-                  onConfirm: () => {
-                    setConfirmModal((prev) => ({ ...prev, isOpen: false }))
-                    setIsDirty(false)
-                    setNewPresetModalOpen(true)
-                  },
-                })
-                return
-              }
               setNewPresetModalOpen(true)
             }}
             isEditMode={true}
@@ -2452,7 +2394,7 @@ export default function TableManager() {
         {/* Floor Layout Canvas (Admin Editor) */}
         <div
           ref={workspaceRef}
-          className="layout-workspace-wrapper flex-1 min-h-0 w-full h-full flex items-center justify-center p-3 sm:p-4 overflow-hidden relative select-none"
+          className="layout-workspace-wrapper flex-1 min-h-0 w-full h-full flex items-center justify-center p-3 sm:p-4 overflow-hidden relative z-0 select-none"
         >
           {/* Grid View Canvas Container (Tight card wrapping grid) */}
           <div
@@ -2465,7 +2407,10 @@ export default function TableManager() {
             onMouseDown={handleCanvasMouseDown}
           >
             {/* Upper Left: Help Guide & Sliding Add Table Controls */}
-            <div className="absolute top-3.5 left-3.5 z-30 flex items-center gap-2">
+            <div
+              className="absolute top-3.5 left-3.5 z-40 flex items-center gap-2"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
               {/* Question Mark icon with hover tooltip */}
               <div className="group relative">
                 <button
@@ -2507,10 +2452,10 @@ export default function TableManager() {
               {isEditMode && (
                 <div className="flex items-center">
                   <div
-                    className={`overflow-hidden transition-all duration-300 ease-in-out ${
+                    className={`transition-all duration-300 ease-in-out ${
                       isAddTableVisible
-                        ? 'max-w-[340px] opacity-100'
-                        : 'max-w-0 opacity-0 pointer-events-none'
+                        ? 'max-w-[340px] opacity-100 overflow-visible'
+                        : 'max-w-0 opacity-0 pointer-events-none overflow-hidden'
                     }`}
                   >
                     <FloatingLayoutControls
@@ -2538,40 +2483,54 @@ export default function TableManager() {
               )}
             </div>
 
-            {/* Two Simple Merge Buttons in upper right corner (When >= 2 tables selected) */}
-            {!isQrPrintMode && selectedTableNums.size >= 2 && (
-              <div className="absolute top-3.5 right-3.5 z-30 animate-in fade-in zoom-in-95 duration-150 flex items-center gap-2">
-                {/* Merge Temporary Button */}
-                <div className="relative group">
-                  <button
-                    type="button"
-                    onClick={() => handleMergeSelectedTables('TEMPORARY')}
-                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-lg hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-102 active:scale-98 transition-all font-bold text-xs cursor-pointer"
-                  >
-                    <GitMerge className="w-3.5 h-3.5 text-[#E9C46A]" />
-                    <span>Merge Temporary</span>
-                  </button>
-                  <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-150 absolute top-full right-0 mt-1.5 w-52 p-2.5 rounded-xl bg-slate-900 text-slate-200 text-[11px] shadow-2xl border border-white/10 z-50 text-center leading-snug">
-                    This merge disappears once the table bills out.
-                  </div>
+            {/* Upper Right Corner of Layout Grid: Changes Saving Indicator & Merge Buttons */}
+            <div className="absolute top-3.5 right-3.5 z-30 flex items-center gap-2 pointer-events-auto">
+              {/* Saving Indicator when changes are made */}
+              {isSaving && (
+                <div
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/95 backdrop-blur-md text-[#14274E] border border-slate-200/90 shadow-sm text-xs font-black select-none animate-in fade-in zoom-in-95 duration-150"
+                  title="Saving layout changes..."
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-[#14274E] animate-spin" />
+                  <span>Saving...</span>
                 </div>
+              )}
 
-                {/* Merge Continouous Button */}
-                <div className="relative group">
-                  <button
-                    type="button"
-                    onClick={() => handleMergeSelectedTables('CONTINOUOUS')}
-                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-lg hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-102 active:scale-98 transition-all font-bold text-xs cursor-pointer"
-                  >
-                    <GitMerge className="w-3.5 h-3.5 text-[#E9C46A]" />
-                    <span>Merge Continouous</span>
-                  </button>
-                  <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-150 absolute top-full right-0 mt-1.5 w-52 p-2.5 rounded-xl bg-slate-900 text-slate-200 text-[11px] shadow-2xl border border-white/10 z-50 text-center leading-snug">
-                    This merge doesnt disappear when the table bills out.
+              {/* Two Simple Merge Buttons in upper right corner (When >= 2 tables selected) */}
+              {!isQrPrintMode && selectedTableNums.size >= 2 && (
+                <div className="animate-in fade-in zoom-in-95 duration-150 flex items-center gap-2">
+                  {/* Merge Temporary Button */}
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      onClick={() => handleMergeSelectedTables('TEMPORARY')}
+                      className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-lg hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-102 active:scale-98 transition-all font-bold text-xs cursor-pointer"
+                    >
+                      <GitMerge className="w-3.5 h-3.5 text-[#E9C46A]" />
+                      <span>Merge Temporary</span>
+                    </button>
+                    <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-150 absolute top-full right-0 mt-1.5 w-52 p-2.5 rounded-xl bg-slate-900 text-slate-200 text-[11px] shadow-2xl border border-white/10 z-50 text-center leading-snug">
+                      This merge disappears once the table bills out.
+                    </div>
+                  </div>
+
+                  {/* Merge Continouous Button */}
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      onClick={() => handleMergeSelectedTables('CONTINOUOUS')}
+                      className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#14274E] to-[#1E3A6D] text-[#E9C46A] border border-[#E9C46A]/40 shadow-lg hover:from-[#1E3A6D] hover:to-[#27477D] hover:scale-102 active:scale-98 transition-all font-bold text-xs cursor-pointer"
+                    >
+                      <GitMerge className="w-3.5 h-3.5 text-[#E9C46A]" />
+                      <span>Merge Continouous</span>
+                    </button>
+                    <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-150 absolute top-full right-0 mt-1.5 w-52 p-2.5 rounded-xl bg-slate-900 text-slate-200 text-[11px] shadow-2xl border border-white/10 z-50 text-center leading-snug">
+                      This merge doesnt disappear when the table bills out.
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Floor Grid: 18x12 blocks (17x11 playable) with half-cell extension on all 4 sides */}
             <div
@@ -2928,21 +2887,6 @@ export default function TableManager() {
         variant={confirmModal.variant}
         onConfirm={confirmModal.onConfirm}
         onCancel={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
-      />
-
-      {/* Navigation Guard Modal — blocks page changes when unsaved edits exist */}
-      <ConfirmModal
-        isOpen={blocker.state === 'blocked'}
-        title="Unsaved Changes"
-        message="You have unsaved layout changes. If you leave this page, your changes will be lost. Do you want to discard them and leave?"
-        confirmLabel="Discard & Leave"
-        cancelLabel="Stay on Page"
-        variant="warning"
-        onConfirm={() => {
-          setIsDirty(false)
-          blocker.proceed?.()
-        }}
-        onCancel={() => blocker.reset?.()}
       />
 
       {/* In-App Rename / Edit Preset Modal */}

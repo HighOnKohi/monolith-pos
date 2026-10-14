@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Printer,
   X,
-  RefreshCw,
 } from 'lucide-react'
 import type { TableLayoutPreset } from '@/services/tableLayoutService'
 
@@ -43,14 +42,14 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   isBusinessDayOpen = false,
   totalCapacity = 0,
   maxVenueCapacity = 50,
-  isDirty = false,
+  isDirty: _isDirty = false,
   onSelectPreset,
   onRenamePreset,
   onDeletePreset,
   onOpenNewPresetModal,
   onOpenAutoAllocate: _onOpenAutoAllocate,
   isEditMode = true,
-  isSaving = false,
+  isSaving: _isSaving = false,
   isQrPrintMode = false,
   selectedPrintCount = 0,
   onToggleQrPrintMode,
@@ -80,11 +79,11 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
   }, [isDropdownOpen])
 
   return (
-    <div className="table-manager-header flex items-center justify-between gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/90 shadow-2xs shrink-0 select-none relative z-20">
+    <div className="table-manager-header flex items-center justify-between gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/90 shadow-2xs shrink-0 select-none relative z-40">
       {/* Left side: Preset dropdown & Venue Capacity Counter */}
       <div className="flex items-center gap-3">
         {/* (a) Preset dropdown */}
-        <div className="relative min-w-[220px] z-30" ref={dropdownRef}>
+        <div className="relative min-w-[220px] z-50" ref={dropdownRef}>
           <button
             type="button"
             onClick={() => {
@@ -99,7 +98,7 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
                 ? 'Locked: Preset cannot be switched while Business Day is in progress'
                 : undefined
             }
-            className={`w-full min-w-[220px] px-3.5 py-2.5 bg-white border border-slate-300 text-xs font-bold text-[#14274E] flex items-center justify-between gap-2 shadow-xs transition-opacity ${
+            className={`w-full min-w-[220px] px-3.5 py-2.5 bg-white border border-slate-300 text-xs font-bold text-[#14274E] flex items-center justify-between gap-2 shadow-xs transition-all duration-200 ${
               isEventActive || isBusinessDayOpen || isQrPrintMode
                 ? 'opacity-50 cursor-not-allowed'
                 : 'hover:bg-slate-50 cursor-pointer'
@@ -123,96 +122,100 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
           </button>
 
         {/* Seamlessly Connected Dropdown Menu without margins and without rounded corners on options */}
-        {isDropdownOpen && (
-          <div className="absolute top-full left-0 w-full min-w-[220px] z-50 bg-white border border-slate-300 border-t-0 rounded-b-xl shadow-xl overflow-hidden animate-in fade-in duration-100">
-            <div className="max-h-60 overflow-y-auto p-0 m-0 divide-y divide-slate-100">
-              {presets.map((preset) => {
-                const isSelected = preset.LAYOUT_PRESET_ID === activePresetId
-                return (
-                  <div
-                    key={preset.LAYOUT_PRESET_ID}
-                    onClick={() => {
-                      if (isQrPrintMode) return
-                      onSelectPreset(preset.LAYOUT_PRESET_ID)
-                      setIsDropdownOpen(false)
-                    }}
-                    className={`group w-full px-3.5 py-2.5 text-xs font-bold rounded-none m-0 flex items-center justify-between gap-2 cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'bg-[#14274E] text-white'
-                        : 'text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    <span className="truncate flex-1 text-left">
-                      {preset.PRESET_NAME}{' '}
-                      <span className={isSelected ? 'text-slate-200 font-normal text-[11px]' : 'text-slate-400 font-normal text-[11px]'}>
-                        ({preset.MAX_PAX || 50} Pax)
-                      </span>
+        <div
+          className={`absolute top-full left-0 w-full min-w-[220px] z-50 bg-white border border-slate-300 border-t-0 rounded-b-xl shadow-xl overflow-hidden transition-all duration-300 ease-in-out origin-top ${
+            isDropdownOpen
+              ? 'max-h-96 opacity-100 translate-y-0 pointer-events-auto'
+              : 'max-h-0 opacity-0 -translate-y-2 pointer-events-none'
+          }`}
+        >
+          <div className="max-h-60 overflow-y-auto p-0 m-0 divide-y divide-slate-100">
+            {presets.map((preset) => {
+              const isSelected = preset.LAYOUT_PRESET_ID === activePresetId
+              return (
+                <div
+                  key={preset.LAYOUT_PRESET_ID}
+                  onClick={() => {
+                    if (isQrPrintMode) return
+                    onSelectPreset(preset.LAYOUT_PRESET_ID)
+                    setIsDropdownOpen(false)
+                  }}
+                  className={`group w-full px-3.5 py-2.5 text-xs font-bold rounded-none m-0 flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+                    isSelected
+                      ? 'bg-[#14274E] text-white'
+                      : 'text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <span className="truncate flex-1 text-left">
+                    {preset.PRESET_NAME}{' '}
+                    <span className={isSelected ? 'text-slate-200 font-normal text-[11px]' : 'text-slate-400 font-normal text-[11px]'}>
+                      ({preset.MAX_PAX || 50} Pax)
                     </span>
+                  </span>
 
-                    {/* Hover Action Buttons (Rename & Delete) */}
-                    {!isEventActive && !isBusinessDayOpen && !isQrPrintMode && (
-                      <div
-                        className={`flex items-center gap-1 transition-opacity ${
-                          isSelected ? 'opacity-90' : 'opacity-0 group-hover:opacity-100'
+                  {/* Hover Action Buttons (Rename & Delete) */}
+                  {!isEventActive && !isBusinessDayOpen && !isQrPrintMode && (
+                    <div
+                      className={`flex items-center gap-1 transition-opacity ${
+                        isSelected ? 'opacity-90' : 'opacity-0 group-hover:opacity-100'
+                      }`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsDropdownOpen(false)
+                          onRenamePreset(preset.LAYOUT_PRESET_ID, preset.PRESET_NAME)
+                        }}
+                        title="Rename Preset"
+                        className={`p-1 rounded-sm transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'hover:bg-white/20 text-slate-200'
+                            : 'hover:bg-slate-200 text-slate-500 hover:text-slate-800'
                         }`}
-                        onClick={(e) => e.stopPropagation()}
                       >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+
+                      {presets.length > 1 && (
                         <button
                           type="button"
                           onClick={() => {
                             setIsDropdownOpen(false)
-                            onRenamePreset(preset.LAYOUT_PRESET_ID, preset.PRESET_NAME)
+                            onDeletePreset(preset.LAYOUT_PRESET_ID)
                           }}
-                          title="Rename Preset"
+                          title="Delete Preset"
                           className={`p-1 rounded-sm transition-colors cursor-pointer ${
                             isSelected
-                              ? 'hover:bg-white/20 text-slate-200'
-                              : 'hover:bg-slate-200 text-slate-500 hover:text-slate-800'
+                              ? 'hover:bg-rose-600 text-rose-300 hover:text-white'
+                              : 'hover:bg-rose-100 text-slate-400 hover:text-rose-600'
                           }`}
                         >
-                          <Pencil className="w-3 h-3" />
+                          <Trash2 className="w-3 h-3" />
                         </button>
-
-                        {presets.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsDropdownOpen(false)
-                              onDeletePreset(preset.LAYOUT_PRESET_ID)
-                            }}
-                            title="Delete Preset"
-                            className={`p-1 rounded-sm transition-colors cursor-pointer ${
-                              isSelected
-                                ? 'hover:bg-rose-600 text-rose-300 hover:text-white'
-                                : 'hover:bg-rose-100 text-slate-400 hover:text-rose-600'
-                            }`}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-
-            {/* Dropdown Footer: Create New Preset */}
-            {!isEventActive && !isBusinessDayOpen && !isQrPrintMode && (
-              <button
-                type="button"
-                onClick={() => {
-                  setIsDropdownOpen(false)
-                  onOpenNewPresetModal()
-                }}
-                className="w-full px-3.5 py-2.5 text-left text-xs font-black text-[#14274E] bg-slate-50 hover:bg-slate-100 border-t border-slate-200 flex items-center gap-2 cursor-pointer transition-colors rounded-none m-0"
-              >
-                <Plus className="w-3.5 h-3.5 text-slate-600" />
-                <span>Create a new Preset</span>
-              </button>
-            )}
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
-        )}
+
+          {/* Dropdown Footer: Create New Preset */}
+          {!isEventActive && !isBusinessDayOpen && !isQrPrintMode && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsDropdownOpen(false)
+                onOpenNewPresetModal()
+              }}
+              className="w-full px-3.5 py-2.5 text-left text-xs font-black text-[#14274E] bg-slate-50 hover:bg-slate-100 border-t border-slate-200 flex items-center gap-2 cursor-pointer transition-colors rounded-none m-0"
+            >
+              <Plus className="w-3.5 h-3.5 text-slate-600" />
+              <span>Create a new Preset</span>
+            </button>
+          )}
+        </div>
         </div>
 
         {/* Venue Capacity Counter Badge: 0/50 */}
@@ -290,25 +293,6 @@ export const TableManagerHeader: React.FC<TableManagerHeaderProps> = memo(({
               <Printer className="w-3.5 h-3.5 text-[#14274E]" />
               <span>Print All QRs</span>
             </button>
-
-            {/* Auto-Save Status Indicator */}
-            {isSaving ? (
-              <div
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-50 text-slate-600 border border-slate-200 rounded-xl text-xs font-black shadow-2xs select-none"
-                title="Saving layout changes..."
-              >
-                <RefreshCw className="w-3.5 h-3.5 text-slate-500 animate-spin" />
-                <span>Saving...</span>
-              </div>
-            ) : isDirty ? (
-              <div
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-black shadow-2xs select-none"
-                title="Changes will be saved automatically"
-              >
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                <span>Unsaved changes</span>
-              </div>
-            ) : null}
           </div>
         )}
       </div>

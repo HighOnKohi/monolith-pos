@@ -40,8 +40,6 @@ import {
   Unlink,
   Minus,
   Plus,
-  AlertCircle,
-  Check,
   Receipt,
   LayoutGrid,
   CalendarClock,
@@ -144,11 +142,8 @@ export default function ReceptionistInterface() {
 
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // ── Toast ──
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null)
-  function showToast(text: string, type: 'success' | 'error' | 'info' = 'success') {
-    setToastMessage({ text, type })
-    setTimeout(() => setToastMessage(null), 3000)
+  function showToast(_text: string, _type: 'success' | 'error' | 'info' = 'success') {
+    // Popup notifications disabled
   }
 
   // ── Labels Map ──
@@ -1328,21 +1323,6 @@ export default function ReceptionistInterface() {
 
   return (
     <div className="receptionist-interface-page staff-page select-none">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div
-          className={`fixed top-4 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-xl text-xs font-bold shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-150 ${
-            toastMessage.type === 'error'
-              ? 'bg-[#EF4444] text-white'
-              : toastMessage.type === 'info'
-                ? 'bg-[#14274E] text-[#E9C46A]'
-                : 'bg-emerald-600 text-white'
-          }`}
-        >
-          {toastMessage.type === 'error' ? <AlertCircle className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
-          <span>{toastMessage.text}</span>
-        </div>
-      )}
 
       {/* ── Main Workspace Body: Two Side-by-Side Containers with gaps on all sides ── */}
       <div className="receptionist-interface-layout">
@@ -1746,9 +1726,9 @@ export default function ReceptionistInterface() {
                 {/* ── TAB 1: TABLE CONFIGURATIONS ── */}
                 {sidebarTab === 'table' && (
                   <div className="flex flex-col gap-3.5 flex-1">
-                    {/* Table Label Selector with Priority Tooltip */}
+                    {/* Table Label Selector with Priority Tooltip (Short width ~50%) */}
                     <div className="flex items-center gap-2">
-                      <div className="flex-1 min-w-0">
+                      <div className="w-1/2 min-w-[140px]">
                         <LabelSelector
                           tableId={selectedTable.TABLE_ID ?? selectedTable.TABLE_NUM}
                           currentLabelId={selectedTable.LABEL_ID ?? null}

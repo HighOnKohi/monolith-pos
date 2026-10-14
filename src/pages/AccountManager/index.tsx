@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  CheckCircle2,
-  AlertCircle,
   Users,
   ShieldCheck,
 } from 'lucide-react'
@@ -19,6 +17,7 @@ import {
   toggleStaffCodeStatus,
   deleteStaffCode,
   endStaffShiftManually,
+  endAllStaffShiftsManually,
 } from '@/services/staffCodeService'
 import {
   sanitizeTerminalSessions,
@@ -65,18 +64,9 @@ export default function AccountManagerPage() {
     sortOrder: 'asc',
   })
 
-  // ── Toast Notification State ──
-  const [toast, setToast] = useState<{
-    message: string
-    type: 'success' | 'error' | 'info'
-  } | null>(null)
-
   const showToast = useCallback(
-    (message: string, type: 'success' | 'error' | 'info' = 'success') => {
-      setToast({ message, type })
-      setTimeout(() => {
-        setToast((curr) => (curr?.message === message ? null : curr))
-      }, 4000)
+    (_message: string, _type: 'success' | 'error' | 'info' = 'success') => {
+      // Popup notifications disabled
     },
     [],
   )
@@ -216,6 +206,31 @@ export default function AccountManagerPage() {
     })
   }
 
+  // ── Manual End All Shifts ──
+  const handleEndAllShifts = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'End All Active Shifts',
+      description: `Are you sure you want to end all active shifts (${summaryStats.ongoingShiftsCount} staff on duty)? This will record shift end timestamps, calculate final shift metrics, and log out operational terminal sessions across the network.`,
+      isDestructive: true,
+      confirmText: 'End All Shifts Now',
+      action: async () => {
+        setConfirmLoading(true)
+        try {
+          const endedCount = await endAllStaffShiftsManually()
+          showToast(`Successfully ended ${endedCount} active staff shift(s).`, 'success')
+          await loadData()
+        } catch (err: unknown) {
+          console.error('[AccountManager] End all shifts error:', err)
+          showToast('Failed to end all shifts. Please try again.', 'error')
+        } finally {
+          setConfirmLoading(false)
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }))
+        }
+      },
+    })
+  }
+
   // ── Quick Toggle Status ──
   const handleToggleStatus = (item: StaffCodeItem) => {
     const isActivating = item.codeStatus !== 'ACTIVE'
@@ -274,25 +289,6 @@ export default function AccountManagerPage() {
 
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 bg-slate-50/50 min-h-screen">
-      {/* ── Toast Notification Banner ── */}
-      {toast && (
-        <div
-          className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-2xl shadow-xl border text-xs font-bold animate-in slide-in-from-top duration-200 ${
-            toast.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-              : toast.type === 'error'
-                ? 'bg-rose-50 border-rose-200 text-rose-800'
-                : 'bg-blue-50 border-blue-200 text-blue-800'
-          }`}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          ) : (
-            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-          )}
-          <span>{toast.message}</span>
-        </div>
-      )}
 
       {/* ── Top Sub-Tab Switcher: Staff Accounts vs Operational Audit & History ── */}
       <div className="no-print flex items-center bg-slate-200/70 p-1 rounded-2xl w-fit gap-1 border border-slate-200">
@@ -333,6 +329,8 @@ export default function AccountManagerPage() {
             onFilterChange={handleFilterChange}
             onClearFilters={handleClearFilters}
             onAddCode={handleAddCode}
+            onEndAllShifts={handleEndAllShifts}
+            ongoingShiftsCount={summaryStats.ongoingShiftsCount}
           />
 
           {/* ── Staff Codes Table ── */}

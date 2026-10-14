@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Loader2, RotateCcw } from 'lucide-react'
+import { Loader2, RotateCcw, Package } from 'lucide-react'
 import {
   ClockFilledIcon,
   ChefHatFilledIcon,
@@ -22,6 +22,7 @@ import {
 } from '@/services/dispatcherService'
 import type { OrderStatus } from '@/types/order'
 import { CancelOrderModal } from '@/components/dispatcher/CancelOrderModal'
+import { DispatcherStockModal } from '@/components/dispatcher/DispatcherStockModal'
 import { DispatcherStaffGate } from '@/components/dispatcher/DispatcherStaffGate'
 import { DispatcherShiftHeaderBar } from '@/components/dispatcher/DispatcherShiftHeaderBar'
 import { getActiveDispatcherShift, type DispatcherShift } from '@/services/dispatcherShiftService'
@@ -61,6 +62,7 @@ export default function DispatcherInterface() {
   const ordersRef = useRef<DispatcherOrder[]>([])
   const [activeTableStage, setActiveTableStage] = useState<TableStage>('preparing')
   const [rejectingOrder, setRejectingOrder] = useState<DispatcherOrder | null>(null)
+  const [isStockModalOpen, setIsStockModalOpen] = useState(false)
 
   // Dispatcher Shift Session State
   const [dispatcherShift, setDispatcherShift] = useState<DispatcherShift | null>(null)
@@ -110,7 +112,6 @@ export default function DispatcherInterface() {
   }, [restoreDispatcherSession])
 
   const [isLoading, setIsLoading] = useState(false)
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [undoHistory, setUndoHistory] = useState<
     Array<{ orderId: number; orderItemId: number; itemId: string; itemName: string; timestamp: number }>
   >([])
@@ -119,9 +120,8 @@ export default function DispatcherInterface() {
     ordersRef.current = orders
   }, [orders])
 
-  function showToast(text: string, type: 'success' | 'error' | 'info' = 'success') {
-    setToastMessage({ text, type })
-    setTimeout(() => setToastMessage(null), 3000)
+  function showToast(_text: string, _type: 'success' | 'error' | 'info' = 'success') {
+    // Popup notifications disabled
   }
 
   // Helper to merge and apply active optimistic overrides onto raw database order data
@@ -779,21 +779,6 @@ export default function DispatcherInterface() {
         </div>
       )}
 
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div
-          className={[
-            'fixed top-5 right-5 z-50 px-4 py-2.5 rounded-2xl shadow-xl border text-xs sm:text-sm font-black flex items-center gap-2 animate-bounce-short',
-            toastMessage.type === 'success'
-              ? 'bg-[#14274E] text-[#E9C46A] border-[#E9C46A]/40'
-              : toastMessage.type === 'error'
-                ? 'bg-rose-700 text-white border-rose-500'
-                : 'bg-slate-800 text-white border-slate-600',
-          ].join(' ')}
-        >
-          <span>{toastMessage.text}</span>
-        </div>
-      )}
 
       {/* ── Dispatcher Stage Tabs (Segmented Style with Sliding Indicator) ── */}
       <div className="dispatcher-tabs-bar relative">
@@ -852,12 +837,23 @@ export default function DispatcherInterface() {
         </nav>
 
         {/* Action Controls in Header */}
-        <div className="hidden sm:flex absolute right-6 items-center gap-2">
+        <div className="flex absolute right-6 items-center gap-2">
+          {/* Stock Management Button */}
+          <button
+            type="button"
+            onClick={() => setIsStockModalOpen(true)}
+            className="px-3.5 py-1.5 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-[#E9C46A] text-xs font-black flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer active:scale-95"
+            title="Quickly mark items out of stock or available"
+          >
+            <Package className="w-3.5 h-3.5" />
+            <span>Stock Management</span>
+          </button>
+
           {undoHistory.length > 0 && (
             <button
               type="button"
               onClick={handleGlobalUndo}
-              className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-black flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer active:scale-95"
+              className="hidden sm:flex px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-black items-center gap-1.5 shadow-2xs transition-all cursor-pointer active:scale-95"
               title="Undo the most recent item marked done across orders"
             >
               <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
@@ -1197,6 +1193,12 @@ export default function DispatcherInterface() {
           onConfirm={handleRejectOrder}
         />
       )}
+
+      {/* Stock Management Modal */}
+      <DispatcherStockModal
+        isOpen={isStockModalOpen}
+        onClose={() => setIsStockModalOpen(false)}
+      />
     </div>
   )
 }
