@@ -293,7 +293,6 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
           ITEM_NAME,
           ITEM_PRICE,
           CATEGORY_ID,
-          IS_ITEM_GROUP,
           Menu_Categories (
             CATEGORY_ID,
             CATEGORY_NAME

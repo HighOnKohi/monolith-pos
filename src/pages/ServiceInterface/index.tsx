@@ -869,7 +869,7 @@ export default function CashierPage() {
 
 
   return (
-    <div className="service-page-container service-interface-page-container">
+    <div className="service-page-container service-interface-page-container relative" id="service-interface-root">
 
       <div className="service-interface-layout">
         <div className="inner-service-interface-container">

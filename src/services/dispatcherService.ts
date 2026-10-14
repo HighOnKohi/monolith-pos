@@ -6,6 +6,13 @@ import { fetchActiveLabels, type TableLabel } from '@/services/tableLabelService
 import { logOrderEvent } from '@/services/orderLogsService'
 import { broadcastMenuItemStatus } from '@/hooks/useRealtimeMenu'
 import { logCashierAction } from '@/services/cashierAuditService'
+import {
+  incrementDispatcherAccepted,
+  incrementDispatcherCooked,
+  incrementDispatcherCompleted,
+  incrementDispatcherCancelled,
+  recordDispatcherHandledOrder,
+} from './dispatcherShiftService'
 
 export type DispatcherOrderItem = Omit<OrderItem, 'quantity'> & {
   rejectionReason?: 'only_1_left' | 'only_2_left' | 'only_3_left' | 'only_4_left' | 'only_5_left' | 'unavailable' | null
@@ -310,11 +317,10 @@ export async function fetchOrderViewerData(): Promise<ViewerOrderData[]> {
   })
 
   // Step 4: fetch tables and active labels for display labels and priority tiers
-  const [{ data: tablesData }, activeLabels] = await Promise.all([
-    supabase.schema('tables').from('Restaurant_Tables').select('*'),
+  const [allTables, activeLabels] = await Promise.all([
+    fetchAllTables().catch(() => [] as TableData[]),
     fetchActiveLabels().catch(() => []),
   ])
-  const allTables = (tablesData as TableData[]) ?? []
   const labelMap = new Map<number, TableLabel>(activeLabels.map((l) => [l.LABEL_ID, l]))
 
   // Group items by order and name
@@ -350,7 +356,7 @@ export async function fetchOrderViewerData(): Promise<ViewerOrderData[]> {
   })
 }
 
-export async function moveOrderToCooking(orderId: number): Promise<void> {
+export async function moveOrderToCooking(orderId: number, orderData?: Partial<DispatcherOrder>): Promise<void> {
   // Ensure ORDER_STATUS is PREPARING
   const { error } = await supabase
     .from('Restaurant_Orders')
@@ -369,7 +375,18 @@ export async function moveOrderToCooking(orderId: number): Promise<void> {
 
   if (itemError) throw itemError
 
-  void import('@/services/dispatcherShiftService').then((m) => m.incrementDispatcherAccepted())
+  try {
+    void incrementDispatcherAccepted()
+    recordDispatcherHandledOrder(orderId, 'ACCEPTED', orderData ? {
+      tableId: orderData.tableId,
+      tableNum: orderData.tableNum,
+      tableDisplay: orderData.tableDisplay,
+      items: orderData.items?.map((it) => ({ name: it.name || `Item #${it.itemId}`, quantity: 1 })),
+      totalBill: orderData.totalBill,
+    } : undefined)
+  } catch (shiftErr) {
+    console.warn('[moveOrderToCooking] Dispatcher shift record error:', shiftErr)
+  }
 
   logOrderEvent(orderId, {
     eventType: 'STATUS_COOKING',
@@ -381,7 +398,7 @@ export async function moveOrderToCooking(orderId: number): Promise<void> {
   broadcastOrderUpdate({ type: 'tables' })
 }
 
-export async function moveOrderToReady(orderId: number): Promise<void> {
+export async function moveOrderToReady(orderId: number, orderData?: Partial<DispatcherOrder>): Promise<void> {
   // Ensure all non-cancelled items are set to DONE
   const { error: itemsError } = await supabase
     .from('Order_Items')
@@ -399,7 +416,18 @@ export async function moveOrderToReady(orderId: number): Promise<void> {
 
   if (orderError) throw orderError
 
-  void import('@/services/dispatcherShiftService').then((m) => m.incrementDispatcherCooked())
+  try {
+    void incrementDispatcherCooked()
+    recordDispatcherHandledOrder(orderId, 'COOKED', orderData ? {
+      tableId: orderData.tableId,
+      tableNum: orderData.tableNum,
+      tableDisplay: orderData.tableDisplay,
+      items: orderData.items?.map((it) => ({ name: it.name || `Item #${it.itemId}`, quantity: 1 })),
+      totalBill: orderData.totalBill,
+    } : undefined)
+  } catch (shiftErr) {
+    console.warn('[moveOrderToReady] Dispatcher shift record error:', shiftErr)
+  }
 
   logOrderEvent(orderId, {
     eventType: 'STATUS_READY',
@@ -425,7 +453,7 @@ export async function updateOrderItemStatus(
   broadcastOrderUpdate({ type: 'tables' })
 }
 
-export async function moveOrderToCompleted(orderId: number): Promise<void> {
+export async function moveOrderToCompleted(orderId: number, orderData?: Partial<DispatcherOrder>): Promise<void> {
   // Step: "Mark as Complete" -> ORDER_STATUS = COMPLETED, ITEM_STATUS = DONE (shows in Cashier)
   const { error: itemError } = await supabase
     .from('Order_Items')
@@ -442,7 +470,18 @@ export async function moveOrderToCompleted(orderId: number): Promise<void> {
 
   if (orderError) throw orderError
 
-  void import('@/services/dispatcherShiftService').then((m) => m.incrementDispatcherCompleted())
+  try {
+    void incrementDispatcherCompleted()
+    recordDispatcherHandledOrder(orderId, 'SENT', orderData ? {
+      tableId: orderData.tableId,
+      tableNum: orderData.tableNum,
+      tableDisplay: orderData.tableDisplay,
+      items: orderData.items?.map((it) => ({ name: it.name || `Item #${it.itemId}`, quantity: 1 })),
+      totalBill: orderData.totalBill,
+    } : undefined)
+  } catch (shiftErr) {
+    console.warn('[moveOrderToCompleted] Dispatcher shift record error:', shiftErr)
+  }
 
   logOrderEvent(orderId, {
     eventType: 'STATUS_COMPLETED',
@@ -491,9 +530,21 @@ export async function updateItemCookingCount(
 
 export async function rejectOrderItems(
   orderId: number,
-  itemRejections: Array<{ orderItemId: number; itemId: string; reason: string }>
+  itemRejections: Array<{ orderItemId: number; itemId: string; reason: string }>,
+  orderData?: Partial<DispatcherOrder>,
 ): Promise<void> {
-  void import('@/services/dispatcherShiftService').then((m) => m.incrementDispatcherCancelled())
+  try {
+    void incrementDispatcherCancelled()
+    recordDispatcherHandledOrder(orderId, 'CANCELLED', orderData ? {
+      tableId: orderData.tableId,
+      tableNum: orderData.tableNum,
+      tableDisplay: orderData.tableDisplay,
+      items: orderData.items?.map((it) => ({ name: it.name || `Item #${it.itemId}`, quantity: 1 })),
+      totalBill: orderData.totalBill,
+    } : undefined)
+  } catch (shiftErr) {
+    console.warn('[rejectOrderItems] Dispatcher shift record error:', shiftErr)
+  }
   // Update each rejected item with its rejection reason
   for (const rejection of itemRejections) {
     const { error } = await supabase
@@ -653,14 +704,19 @@ export function broadcastOrderUpdate(detail: { type?: 'tables' | 'tickets' | 'al
     console.warn('[broadcastOrderUpdate] BroadcastChannel error:', err)
   }
 
-  // 3. Broadcast across devices via Supabase channel
+  // 3. Broadcast across devices via Supabase channel (only when WebSocket is connected)
   try {
     const liveChannel = supabase.channel(SUPABASE_ORDER_BROADCAST_CHANNEL)
-    void liveChannel.send({
-      type: 'broadcast',
-      event: 'order_update',
-      payload: detail,
-    })
+    const canPush = Boolean((liveChannel as any)?.channelAdapter?.canPush?.())
+    if (canPush) {
+      void liveChannel
+        .send({
+          type: 'broadcast',
+          event: 'order_update',
+          payload: detail || {},
+        })
+        .catch(() => {})
+    }
   } catch {
     // Non-blocking if offline or channel not subscribed
   }

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { BarChart3 } from 'lucide-react'
 import { useCashierSession } from '@/hooks/useCashierSession'
-import { EndOfShiftModal } from './EndOfShiftModal'
+import { CashierShiftSummaryModal } from './CashierShiftSummaryModal'
 import { UnifiedShiftHeaderBar } from '@/components/common/UnifiedShiftHeaderBar'
 
 interface CashierShiftHeaderBarProps {
@@ -9,22 +9,24 @@ interface CashierShiftHeaderBarProps {
 }
 
 export function CashierShiftHeaderBar({ className = '' }: CashierShiftHeaderBarProps) {
-  const { shift, staff } = useCashierSession()
-  const [showModal, setShowModal] = useState(false)
-  const [isEndShiftFlow, setIsEndShiftFlow] = useState(false)
+  const { shift, staff, finalizeShift, clearSession, getShiftSummary } = useCashierSession()
+  const [showSummaryModal, setShowSummaryModal] = useState(false)
 
   if (!shift) return null
 
   const cashierName = staff?.staffName || shift.staffName || `Staff #${shift.staffId}`
 
-  const handleOpenSummary = () => {
-    setIsEndShiftFlow(false)
-    setShowModal(true)
-  }
-
-  const handleOpenEndShift = () => {
-    setIsEndShiftFlow(true)
-    setShowModal(true)
+  const handleEndShift = async () => {
+    try {
+      const summary = await getShiftSummary().catch(() => null)
+      await finalizeShift({
+        totalEarning: summary?.grossRevenue || shift.totalEarning || 0,
+        totalTablesHandled: summary?.tablesHandled || shift.totalTablesHandled || 0,
+      })
+      clearSession()
+    } catch (err) {
+      console.error('[CashierShiftHeaderBar] Failed to end cashier shift:', err)
+    }
   }
 
   return (
@@ -33,12 +35,14 @@ export function CashierShiftHeaderBar({ className = '' }: CashierShiftHeaderBarP
         role="CASHIER"
         staffName={cashierName}
         startedAt={shift.startedAt}
-        onEndShiftClick={handleOpenEndShift}
+        onEndShift={handleEndShift}
+        confirmTitle="Conclude Cashier Shift"
+        confirmMessage={`End cashier shift for ${cashierName}?`}
         className={className}
         extraActions={
           <button
             type="button"
-            onClick={handleOpenSummary}
+            onClick={() => setShowSummaryModal(true)}
             className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200/80 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
             title="View current shift performance & breakdown"
           >
@@ -48,11 +52,11 @@ export function CashierShiftHeaderBar({ className = '' }: CashierShiftHeaderBarP
         }
       />
 
-      {/* Rich End of Shift Summary Modal */}
-      <EndOfShiftModal
-        isOpen={showModal}
-        onClose={() => setShowModal(false)}
-        isEndShiftFlow={isEndShiftFlow}
+      {/* Revamped Simplified Cashier Shift Summary Modal */}
+      <CashierShiftSummaryModal
+        isOpen={showSummaryModal}
+        onClose={() => setShowSummaryModal(false)}
+        shift={shift}
       />
     </>
   )

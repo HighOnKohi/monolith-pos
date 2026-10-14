@@ -4,6 +4,9 @@ import type {
   ServiceShift,
   ServiceStaffValidationResult,
   ServiceShiftSummaryMetrics,
+  ServiceShiftPunchedOrder,
+  ServiceShiftPunchedTable,
+  ServiceShiftDetailedSummary,
 } from '@/types/serviceShift'
 import { fetchStaffCodes } from './staffCodeService'
 import { logCashierAction } from './cashierAuditService'
@@ -72,21 +75,9 @@ export async function validateServiceStaff(staffId: number): Promise<ServiceStaf
       .maybeSingle()
 
     if (error || !data) {
-      const { data: pubData } = await supabase
-        .from('Staff_Codes')
-        .select('*')
-        .eq('CODE_ID', staffId)
-        .maybeSingle()
-
-      if (pubData) {
-        staff = {
-          codeId: Number(pubData.CODE_ID),
-          staffName: String(pubData.STAFF_NAME || 'Staff'),
-          staffRole: String(pubData.STAFF_ROLE || 'STAFF').toUpperCase() as StaffCodeItem['staffRole'],
-          shiftStatus: 'ENDED',
-          codeStatus: String(pubData.STATUS || 'ACTIVE').toUpperCase() as StaffCodeItem['codeStatus'],
-          status: String(pubData.STATUS || 'ACTIVE').toUpperCase() as StaffCodeItem['status'],
-        }
+      return {
+        valid: false,
+        error: `Staff code #${staffId} not found. Please verify with management.`,
       }
     } else {
       staff = {
@@ -215,15 +206,11 @@ export async function startServiceShift(staffId: number): Promise<ServiceShift> 
       SHIFT_START: now,
       SHIFT_END: null,
     }
-    const { error: codeErr } = await supabase
+    await supabase
       .schema('staff')
       .from('Staff_Codes')
       .update(codePayload)
       .eq('CODE_ID', staffId)
-
-    if (codeErr) {
-      await supabase.from('Staff_Codes').update(codePayload).eq('CODE_ID', staffId)
-    }
   } catch (err) {
     console.warn('[serviceShiftService] Update Staff_Codes shift error:', err)
   }
@@ -457,9 +444,62 @@ export async function endServiceShift(
 /**
  * Increments total orders punched and order value in Service_Staff when a server punches an order.
  */
-export async function recordServiceOrderPunched(amount = 1, orderValue = 0): Promise<void> {
+export async function recordServiceOrderPunched(
+  amount = 1,
+  orderValue = 0,
+  orderInfo?: {
+    orderId?: number
+    tableId?: number
+    tableNum?: number
+    totalBill?: number
+    items?: Array<{ name: string; quantity: number; price?: number }>
+  },
+): Promise<void> {
   const terminalSession = getTerminalSession('SERVICE')
-  const staffId = terminalSession?.staffId
+  const staffId =
+    terminalSession?.staffId ||
+    Number(localStorage.getItem('monolith_service_staff_id')) ||
+    null
+
+  const shiftId =
+    terminalSession?.shiftId ||
+    Number(localStorage.getItem('monolith_service_shift_id')) ||
+    staffId
+
+  if (shiftId) {
+    try {
+      const key = `monolith_service_shift_${shiftId}_orders`
+      const raw = localStorage.getItem(key)
+      const list = raw ? JSON.parse(raw) : []
+      if (orderInfo?.orderId) {
+        list.push({
+          orderId: orderInfo.orderId,
+          tableId: orderInfo.tableId,
+          tableNum: orderInfo.tableNum || orderInfo.tableId,
+          tableDisplay: `Table ${orderInfo.tableNum || orderInfo.tableId}`,
+          totalBill: orderInfo.totalBill ?? orderValue,
+          time: new Date().toISOString(),
+          status: 'REQUESTED',
+          items: orderInfo.items || [],
+        })
+        localStorage.setItem(key, JSON.stringify(list))
+      }
+    } catch {
+      // non-blocking
+    }
+
+    try {
+      const metricsKey = `monolith_service_shift_${shiftId}_metrics`
+      const rawMetrics = localStorage.getItem(metricsKey)
+      const counts = rawMetrics ? JSON.parse(rawMetrics) : { totalOrdersPunched: 0, totalPunchedOrdersValue: 0 }
+      counts.totalOrdersPunched = (Number(counts.totalOrdersPunched) || 0) + amount
+      counts.totalPunchedOrdersValue = (Number(counts.totalPunchedOrdersValue) || 0) + orderValue
+      localStorage.setItem(metricsKey, JSON.stringify(counts))
+    } catch {
+      // non-blocking
+    }
+  }
+
   if (!staffId) return
 
   try {
@@ -476,14 +516,6 @@ export async function recordServiceOrderPunched(amount = 1, orderValue = 0): Pro
 
     if (schemaData) {
       currentRecord = schemaData as Record<string, unknown>
-    } else {
-      const { data: pubData } = await supabase
-        .from('Service_Staff')
-        .select('*')
-        .eq('STAFF_ID', staffId)
-        .limit(1)
-        .maybeSingle()
-      if (pubData) currentRecord = pubData as Record<string, unknown>
     }
 
     const currentPunched = Number(currentRecord?.TOTAL_ORDERS_PUNCHED || 0)
@@ -491,14 +523,25 @@ export async function recordServiceOrderPunched(amount = 1, orderValue = 0): Pro
     const newPunched = currentPunched + amount
     const newVal = currentVal + Number(orderValue || 0)
 
-    await supabase
-      .schema('staff')
-      .from('Service_Staff')
-      .update({
-        TOTAL_ORDERS_PUNCHED: newPunched,
-        TOTAL_PUNCHED_ORDERS_VALUE: newVal,
-      })
-      .eq('STAFF_ID', staffId)
+    if (currentRecord) {
+      await supabase
+        .schema('staff')
+        .from('Service_Staff')
+        .update({
+          TOTAL_ORDERS_PUNCHED: newPunched,
+          TOTAL_PUNCHED_ORDERS_VALUE: newVal,
+        })
+        .eq('STAFF_ID', staffId)
+    } else {
+      await supabase
+        .schema('staff')
+        .from('Service_Staff')
+        .insert({
+          STAFF_ID: staffId,
+          TOTAL_ORDERS_PUNCHED: newPunched,
+          TOTAL_PUNCHED_ORDERS_VALUE: newVal,
+        })
+    }
   } catch (err) {
     console.warn('[serviceShiftService] recordServiceOrderPunched error:', err)
   }
@@ -510,28 +553,100 @@ export async function calculateServiceShiftMetrics(
   startedAt: string,
   staffId?: number,
 ): Promise<ServiceShiftSummaryMetrics> {
+  const summary = await getServiceShiftDetailedSummary(staffId || 0, startedAt)
+  return summary.metrics
+}
+
+/**
+ * Authoritatively retrieves comprehensive shift details for the Service interface,
+ * including metrics (with total value punched), orders punched list, and tables list.
+ */
+export async function getServiceShiftDetailedSummary(
+  staffId: number,
+  startedAt: string,
+): Promise<ServiceShiftDetailedSummary> {
   const startTime = new Date(startedAt).getTime()
   const nowTime = Date.now()
   const durationMinutes = Math.max(1, Math.round((nowTime - startTime) / 60000))
 
-  const orderIds = new Set<number>()
-  const tableIds = new Set<number>()
+  const ordersMap = new Map<number, ServiceShiftPunchedOrder>()
+  const tableOrderIds = new Set<number>()
 
   // 1. Query active Restaurant_Orders created during this shift
   try {
     const { data: activeOrders, error: activeErr } = await supabase
       .from('Restaurant_Orders')
-      .select('ORDER_ID, TABLE_ID, TIME, STAFF_ID')
+      .select('ORDER_ID, TABLE_ID, TOTAL_BILL, TIME, ORDER_STATUS, STAFF_ID')
       .gte('TIME', startedAt)
 
     if (!activeErr && activeOrders) {
+      const activeIds: number[] = []
       for (const o of activeOrders) {
         if (staffId && o.STAFF_ID != null && Number(o.STAFF_ID) !== staffId) {
           continue
         }
-        if (o.ORDER_ID) {
-          orderIds.add(Number(o.ORDER_ID))
-          if (o.TABLE_ID) tableIds.add(Number(o.TABLE_ID))
+        const oId = Number(o.ORDER_ID)
+        activeIds.push(oId)
+        tableOrderIds.add(oId)
+      }
+
+      // Fetch items for these active orders
+      if (activeIds.length > 0) {
+        const { data: activeItems } = await supabase
+          .from('Order_Items')
+          .select(`
+            ORDER_ID,
+            ITEM_ID,
+            Menu_Items (
+              ITEM_NAME,
+              ITEM_PRICE
+            )
+          `)
+          .in('ORDER_ID', activeIds)
+
+        const itemsByOrder = new Map<number, Map<string, { quantity: number; price: number }>>()
+        if (activeItems) {
+          for (const item of activeItems as any[]) {
+            const oid = Number(item.ORDER_ID)
+            const rawMenu = item.Menu_Items
+            const menuObj = Array.isArray(rawMenu) ? rawMenu[0] : rawMenu
+            const name = String(menuObj?.ITEM_NAME || `Item #${item.ITEM_ID}`)
+            const price = Number(menuObj?.ITEM_PRICE || 0)
+
+            if (!itemsByOrder.has(oid)) itemsByOrder.set(oid, new Map())
+            const map = itemsByOrder.get(oid)!
+            if (!map.has(name)) {
+              map.set(name, { quantity: 1, price })
+            } else {
+              map.get(name)!.quantity += 1
+            }
+          }
+        }
+
+        for (const o of activeOrders) {
+          const oId = Number(o.ORDER_ID)
+          if (!tableOrderIds.has(oId)) continue
+          const tId = Number(o.TABLE_ID)
+          const itemMap = itemsByOrder.get(oId)
+          const itemsList: Array<{ name: string; quantity: number; price?: number }> = itemMap
+            ? Array.from(itemMap.entries()).map(([name, data]) => ({
+                name,
+                quantity: data.quantity,
+                price: data.price,
+              }))
+            : []
+
+          ordersMap.set(oId, {
+            orderId: oId,
+            tableId: tId,
+            tableNum: tId,
+            tableDisplay: `Table ${tId}`,
+            totalBill: Number(o.TOTAL_BILL || 0),
+            time: String(o.TIME || startedAt),
+            status: String(o.ORDER_STATUS || 'REQUESTED'),
+            itemCount: itemsList.reduce((sum, it) => sum + it.quantity, 0),
+            items: itemsList,
+          })
         }
       }
     }
@@ -539,12 +654,12 @@ export async function calculateServiceShiftMetrics(
     console.warn('[serviceShiftService] Restaurant_Orders metrics lookup error:', err)
   }
 
-  // 2. Query system_history.Order_History (orders settled/completed during this shift)
+  // 2. Query system_history.Order_History for orders settled/completed during this shift
   try {
     const { data: histOrders, error: histErr } = await supabase
       .schema('system_history')
       .from('Order_History')
-      .select('ORIGINAL_ORDER_ID, ORDER_ID, TABLE_ID, TIME, COMPLETED_AT, FROM_SERVICE_ID')
+      .select('ORIGINAL_ORDER_ID, ORDER_ID, TABLE_ID, TABLE_NUM, TOTAL_BILL, TIME, COMPLETED_AT, FROM_SERVICE_ID, ORDER_ITEMS')
       .or(`TIME.gte.${startedAt},COMPLETED_AT.gte.${startedAt}`)
 
     if (!histErr && histOrders) {
@@ -553,9 +668,32 @@ export async function calculateServiceShiftMetrics(
           continue
         }
         const oId = Number(c.ORIGINAL_ORDER_ID || c.ORDER_ID)
-        if (oId) {
-          orderIds.add(oId)
-          if (c.TABLE_ID) tableIds.add(Number(c.TABLE_ID))
+        if (oId && !ordersMap.has(oId)) {
+          const tId = Number(c.TABLE_ID || 0)
+          const tNum = Number(c.TABLE_NUM) || tId || 1
+          const parsedItems: Array<{ name: string; quantity: number; price?: number }> = []
+
+          if (Array.isArray(c.ORDER_ITEMS)) {
+            for (const it of c.ORDER_ITEMS as any[]) {
+              parsedItems.push({
+                name: String(it.item_name || it.itemName || 'Dish'),
+                quantity: Number(it.quantity || 1),
+                price: Number(it.price || it.unitPrice || 0),
+              })
+            }
+          }
+
+          ordersMap.set(oId, {
+            orderId: oId,
+            tableId: tId,
+            tableNum: tNum,
+            tableDisplay: `Table ${tNum}`,
+            totalBill: Number(c.TOTAL_BILL || 0),
+            time: String(c.TIME || c.COMPLETED_AT || startedAt),
+            status: 'COMPLETED',
+            itemCount: parsedItems.reduce((sum, it) => sum + it.quantity, 0),
+            items: parsedItems,
+          })
         }
       }
     }
@@ -580,16 +718,34 @@ export async function calculateServiceShiftMetrics(
         }
         const desc = String(row.DESCRIPTION || '')
         const orderMatch = desc.match(/Order #(\d+)/i)
-        if (orderMatch) orderIds.add(Number(orderMatch[1]))
         const tableMatch = desc.match(/Table (\d+)/i)
-        if (tableMatch) tableIds.add(Number(tableMatch[1]))
+        const priceMatch = desc.match(/₱([\d,.]+)/i)
+
+        if (orderMatch) {
+          const oId = Number(orderMatch[1])
+          if (!ordersMap.has(oId)) {
+            const tNum = tableMatch ? Number(tableMatch[1]) : 1
+            const parsedVal = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, '')) : 0
+            ordersMap.set(oId, {
+              orderId: oId,
+              tableId: tNum,
+              tableNum: tNum,
+              tableDisplay: `Table ${tNum}`,
+              totalBill: parsedVal,
+              time: String(row.CREATED_AT || startedAt),
+              status: 'REQUESTED',
+              itemCount: 1,
+              items: [],
+            })
+          }
+        }
       }
     }
   } catch {
     // Non-blocking
   }
 
-  // 4. Fallback localStorage audit logs for instant reflection / offline mode
+  // 4. Fallback localStorage audit logs for offline/immediate reactivity
   try {
     const fallbackAudit = localStorage.getItem('monolith_cashier_audit_logs_fallback') || '[]'
     const logs = JSON.parse(fallbackAudit) as Array<{
@@ -598,6 +754,7 @@ export async function calculateServiceShiftMetrics(
       staffId?: number
       metadata?: Record<string, unknown>
       entityId?: string
+      description?: string
     }>
     for (const l of logs) {
       if (l.action === 'ORDER_CREATED' && new Date(l.createdAt).getTime() >= startTime) {
@@ -605,20 +762,133 @@ export async function calculateServiceShiftMetrics(
           continue
         }
         const oId = Number(l.metadata?.['order_id'] ?? l.entityId)
-        if (oId) orderIds.add(oId)
-        const tId = Number(l.metadata?.['table_id'])
-        if (tId) tableIds.add(tId)
+        if (oId && !ordersMap.has(oId)) {
+          const tId = Number(l.metadata?.['table_id'] || 1)
+          const val = Number(l.metadata?.['total_bill'] || 0)
+          ordersMap.set(oId, {
+            orderId: oId,
+            tableId: tId,
+            tableNum: tId,
+            tableDisplay: `Table ${tId}`,
+            totalBill: val,
+            time: l.createdAt,
+            status: 'REQUESTED',
+            itemCount: Number(l.metadata?.['items_count'] || 1),
+            items: [],
+          })
+        }
       }
     }
   } catch {
     // Ignore
   }
 
-  return {
-    ordersPunched: orderIds.size,
-    tablesServed: tableIds.size,
+  // 4b. Local buffered shift orders
+  const terminalSession = getTerminalSession('SERVICE')
+  const effectiveShiftId =
+    terminalSession?.shiftId ||
+    Number(localStorage.getItem('monolith_service_shift_id')) ||
+    staffId
+  if (effectiveShiftId) {
+    try {
+      const raw = localStorage.getItem(`monolith_service_shift_${effectiveShiftId}_orders`)
+      if (raw) {
+        const buffered = JSON.parse(raw) as Array<any>
+        for (const bo of buffered) {
+          const oId = Number(bo.orderId)
+          if (oId && !ordersMap.has(oId)) {
+            const parsedItems = Array.isArray(bo.items) ? bo.items : []
+            ordersMap.set(oId, {
+              orderId: oId,
+              tableId: Number(bo.tableId || 1),
+              tableNum: Number(bo.tableNum || bo.tableId || 1),
+              tableDisplay: String(bo.tableDisplay || `Table ${bo.tableNum || 1}`),
+              totalBill: Number(bo.totalBill || 0),
+              time: String(bo.time || new Date().toISOString()),
+              status: String(bo.status || 'REQUESTED'),
+              itemCount: parsedItems.reduce((s: number, it: any) => s + (Number(it.quantity) || 1), 0),
+              items: parsedItems,
+            })
+          }
+        }
+      }
+    } catch {
+      // non-blocking
+    }
+  }
+
+  // 5. Query Service_Staff for authoritative recorded totals if available
+  let recordedPunchedTotal = 0
+  let recordedPunchedCount = 0
+  if (effectiveShiftId) {
+    try {
+      const rawMetrics = localStorage.getItem(`monolith_service_shift_${effectiveShiftId}_metrics`)
+      if (rawMetrics) {
+        const parsed = JSON.parse(rawMetrics)
+        recordedPunchedTotal = Math.max(recordedPunchedTotal, Number(parsed.totalPunchedOrdersValue || 0))
+        recordedPunchedCount = Math.max(recordedPunchedCount, Number(parsed.totalOrdersPunched || 0))
+      }
+    } catch {}
+  }
+
+  if (staffId) {
+    try {
+      const { data: ssData } = await supabase
+        .schema('staff')
+        .from('Service_Staff')
+        .select('TOTAL_PUNCHED_ORDERS_VALUE, TOTAL_ORDERS_PUNCHED')
+        .eq('STAFF_ID', staffId)
+        .maybeSingle()
+
+      if (ssData) {
+        recordedPunchedTotal = Math.max(recordedPunchedTotal, Number(ssData.TOTAL_PUNCHED_ORDERS_VALUE || 0))
+        recordedPunchedCount = Math.max(recordedPunchedCount, Number(ssData.TOTAL_ORDERS_PUNCHED || 0))
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const ordersList = Array.from(ordersMap.values())
+  ordersList.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+
+  // Compute calculated sum of punched orders
+  const calculatedTotal = ordersList.reduce((sum, ord) => sum + ord.totalBill, 0)
+  const totalValuePunched = Math.max(calculatedTotal, recordedPunchedTotal)
+
+  // 6. Group orders by table for "Tables" mode
+  const tablesMap = new Map<number, ServiceShiftPunchedTable>()
+  for (const ord of ordersList) {
+    const key = ord.tableNum || ord.tableId
+    const existing = tablesMap.get(key) || {
+      tableId: ord.tableId,
+      tableNum: ord.tableNum,
+      tableDisplay: ord.tableDisplay,
+      ordersCount: 0,
+      totalValue: 0,
+      orders: [],
+    }
+    existing.ordersCount += 1
+    existing.totalValue += ord.totalBill
+    existing.orders.push(ord)
+    tablesMap.set(key, existing)
+  }
+
+  const tablesList = Array.from(tablesMap.values())
+  tablesList.sort((a, b) => a.tableNum - b.tableNum)
+
+  const metrics: ServiceShiftSummaryMetrics = {
+    ordersPunched: Math.max(ordersList.length, recordedPunchedCount),
+    tablesServed: tablesList.length,
+    totalValuePunched,
     durationMinutes,
     startedAt,
+  }
+
+  return {
+    metrics,
+    orders: ordersList,
+    tables: tablesList,
   }
 }
 

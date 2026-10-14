@@ -28,8 +28,13 @@ export function OrganizerRouteGuard({ children }: OrganizerRouteGuardProps) {
     return <OrganizerStaffGate />
   }
 
-  // When on /tables (Layout Manager), the shift header is docked inside inner-table-manager-container
-  if (location.pathname.startsWith('/tables')) {
+  // When on /tables (Layout Manager), /catalog (Menu Catalog), or /menu (Menu Manager),
+  // the shift header is docked inside the inner interface container, consistent with other POS interfaces
+  if (
+    location.pathname.startsWith('/tables') ||
+    location.pathname.startsWith('/catalog') ||
+    location.pathname.startsWith('/menu')
+  ) {
     return <>{children}</>
   }
 

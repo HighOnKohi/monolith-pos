@@ -971,7 +971,7 @@ export async function logOrderEvent(
       ORDER_ID: orderId,
       EVENT_TYPE: event.eventType,
       PREVIOUS_STATUS: event.previousStatus || null,
-      NEW_STATUS: event.newStatus,
+      NEW_STATUS: event.newStatus ?? event.previousStatus ?? event.eventType ?? 'RECORDED',
       ACTOR: resolvedActor,
       REASON: event.reason || null,
       METADATA: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : null,

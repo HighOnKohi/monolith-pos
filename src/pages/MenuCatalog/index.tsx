@@ -31,6 +31,7 @@ import { NewMenuCategoryModal, categoryIconMap, categoryIcons } from '@/componen
 import { NewMenuItemModal, type NewMenuItemForm } from '@/components/menu/NewMenuItemModal'
 import { MenuItemDetailSidebar } from '@/components/menu/MenuItemDetailSidebar'
 import { ConfirmModal } from '@/components/menu/ConfirmModal'
+import { OrganizerShiftHeaderBar } from '@/components/organizer/OrganizerShiftHeaderBar'
 
 export default function MenuCatalogPage() {
   const [items, setItems] = useState<MenuItem[]>([])
@@ -322,10 +323,15 @@ export default function MenuCatalogPage() {
   }
 
   return (
-    <div className="flex h-full bg-[#CBD5E1] p-3 sm:p-4 gap-3 sm:gap-4 overflow-hidden select-none">
+    <div className="flex h-full bg-[var(--interface-background,#dae2ef)] p-3 sm:p-4 gap-3 sm:gap-4 overflow-hidden select-none">
 
       {/* ── Main Workspace: Inner Menu Container ── */}
       <div className="flex-1 min-w-0 flex flex-col gap-3 h-full overflow-hidden">
+        {/* Organizer Shift Header Bar */}
+        <div className="shrink-0">
+          <OrganizerShiftHeaderBar />
+        </div>
+
         {/* Header Bar */}
         <div className="shrink-0">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">

@@ -409,7 +409,8 @@ export default function DispatcherInterface() {
       showToast(`Order #${orderId} completed → Moved to Done tab!`, 'success')
       try {
         await updateOrderItemStatus(finalItemId, 'DONE')
-        await moveOrderToReady(orderId)
+        const targetOrder = orders.find((o) => o.orderId === orderId)
+        await moveOrderToReady(orderId, targetOrder)
       } catch (err) {
         console.error('Failed to auto-move order to ready:', err)
         optimisticItemStatusesRef.current.delete(finalItemId)
@@ -599,7 +600,8 @@ export default function DispatcherInterface() {
     showToast(`Order #${orderId} completed → Moved to Done tab!`, 'success')
 
     try {
-      await moveOrderToReady(orderId)
+      const targetOrder = orders.find((o) => o.orderId === orderId)
+      await moveOrderToReady(orderId, targetOrder)
     } catch (err) {
       console.error('Failed to move order to ready:', err)
       optimisticOrderStatusesRef.current.delete(orderId)
@@ -635,7 +637,8 @@ export default function DispatcherInterface() {
     )
     showToast('Order moved to cooking', 'success')
 
-    void moveOrderToCooking(orderId).catch((err) => {
+    const targetOrder = orders.find((o) => o.orderId === orderId)
+    void moveOrderToCooking(orderId, targetOrder).catch((err) => {
       console.error('Failed to persist cooking status:', err)
       optimisticOrderStatusesRef.current.delete(orderId)
       showToast('Failed to move order', 'error')
@@ -668,9 +671,10 @@ export default function DispatcherInterface() {
         }
       }),
     )
-    showToast('Order marked as complete → Sent to Cashier', 'success')
+    showToast('Order marked as complete → Sent to Customer', 'success')
 
-    void moveOrderToCompleted(orderId).catch((err) => {
+    const targetOrder = orders.find((o) => o.orderId === orderId)
+    void moveOrderToCompleted(orderId, targetOrder).catch((err) => {
       console.error('Failed to persist completed status:', err)
       optimisticOrderStatusesRef.current.delete(orderId)
       showToast('Failed to complete order', 'error')
@@ -763,7 +767,7 @@ export default function DispatcherInterface() {
   const tableDoneCount = orders.filter((o) => ['READY', 'SERVED'].includes(o.orderStatus)).length
 
   return (
-    <div className="dispatcher-interface-container relative">
+    <div className="dispatcher-interface-container relative" id="dispatcher-interface-root">
       {/* Dispatcher Staff Access Gate (covers only this interface container) */}
       {!shiftLoading && !dispatcherShift && (
         <DispatcherStaffGate onSuccess={() => void restoreDispatcherSession()} />

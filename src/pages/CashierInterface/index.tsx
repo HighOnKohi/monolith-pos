@@ -1112,7 +1112,7 @@ export default function CashierInterface() {
   }
 
   return (
-    <div className="cashier-interface-page staff-page" onClick={handleBackgroundClick}>
+    <div className="cashier-interface-page staff-page relative" id="cashier-interface-root" onClick={handleBackgroundClick}>
 
       {error && <div className="ci-error">{error}</div>}
       <div className="cashier-interface-layout">

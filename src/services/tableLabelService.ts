@@ -293,13 +293,23 @@ export async function assignLabelToGroup(
 
   const { error } = await supabase
     .schema('tables')
-    .from('Restaurant_Tables')
+    .from('Active_Tables')
     .update({ LABEL_ID: labelId })
     .in('TABLE_ID', tableIds)
 
   if (error) {
-    console.error('[tableLabelService] Error assigning label to group:', error)
+    console.error('[tableLabelService] Error assigning label to group in Active_Tables:', error)
     throw error
+  }
+
+  try {
+    await supabase
+      .schema('tables')
+      .from('Table_Info')
+      .update({ LABEL_ID: labelId })
+      .in('TABLE_ID', tableIds)
+  } catch {
+    // Non-critical
   }
 
   // Broadcast

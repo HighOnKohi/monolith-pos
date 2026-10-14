@@ -127,7 +127,7 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   // ═══════════════════════════════════════════════════════════════════════════
   if (isQrPrintMode) {
     return (
-      <aside className="table-manager-sidebar w-[420px] max-w-[460px] min-w-[380px] shrink-0 h-full bg-white border-l border-slate-200 flex flex-col shadow-xs select-none z-20 overflow-hidden">
+      <aside className="table-manager-sidebar w-[420px] max-w-[460px] min-w-[380px] shrink-0 bg-white border border-slate-200/90 rounded-3xl flex flex-col shadow-xs select-none z-20 overflow-hidden">
         {/* QR Print Header */}
         <div className="p-4 border-b border-slate-100 bg-slate-50/70 shrink-0">
           <div className="flex items-center justify-between mb-1">
@@ -336,7 +336,7 @@ export const TableManagerSidebar: React.FC<TableManagerSidebarProps> = memo(({
   ]
 
   return (
-    <aside className="table-manager-sidebar w-[420px] max-w-[460px] min-w-[380px] shrink-0 h-full bg-white border-l border-slate-200 flex flex-col shadow-xs select-none z-20 overflow-hidden">
+    <aside className="table-manager-sidebar w-[420px] max-w-[460px] min-w-[380px] shrink-0 bg-white border border-slate-200/90 rounded-3xl flex flex-col shadow-xs select-none z-20 overflow-hidden">
       {/* ── 3-Tab Segmented Header: Table | Types | Labels ── */}
       <div className="p-3 border-b border-slate-100 bg-slate-50/80 shrink-0 flex items-center gap-2">
         <div className="flex-1 flex items-center gap-1 bg-slate-200/60 p-1 rounded-xl">

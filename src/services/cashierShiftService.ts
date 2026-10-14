@@ -774,3 +774,330 @@ export function mapDbRowToCashierShift(row: Record<string, unknown>, staff?: Sta
     staffRole: staff?.staffRole,
   }
 }
+
+// ─── Simplified & Revamped Cashier Shift Summary (Table & Payments Modes) ────
+
+export interface CashierShiftBilledOrder {
+  orderId: number
+  totalBill: number
+  subtotalBill: number
+  discountAmount: number
+  paymentMethod: string
+  items: Array<{ name: string; quantity: number; price?: number }>
+  completedAt: string
+}
+
+export interface CashierShiftTableItem {
+  tableKey: string
+  tableId: number
+  tableNum: number
+  tableDisplay: string
+  totalBilled: number
+  totalDiscounts: number
+  ordersCount: number
+  invoiceIds: number[]
+  receiptIds: number[]
+  paymentMethods: string[]
+  orders: CashierShiftBilledOrder[]
+  lastBilledAt: string
+}
+
+export interface CashierShiftPaymentItem {
+  receiptId: number
+  invoiceId: number
+  datePaid: string
+  timeFormatted: string
+  tableNum: number
+  tableDisplay: string
+  paymentType: string
+  amountReceived: number
+  changeGiven: number
+  netTotal: number
+  cashierName?: string
+}
+
+export interface CashierShiftRevampedSummary {
+  metrics: {
+    grossRevenue: number
+    completedOrdersCount: number
+    tablesHandled: number
+    totalDiscounts: number
+    durationMinutes: number
+    startedAt: string
+  }
+  tables: CashierShiftTableItem[]
+  payments: CashierShiftPaymentItem[]
+}
+
+export async function getCashierRevampedShiftSummary(
+  shift: CashierShift,
+): Promise<CashierShiftRevampedSummary> {
+  const startTime = shift.startedAt
+  const endTime = shift.endedAt || new Date().toISOString()
+  const durationMinutes = Math.max(
+    1,
+    Math.round((new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000),
+  )
+
+  // 1. Fetch completed orders from system_history.Order_History
+  let completedRows: Array<Record<string, unknown>> = []
+  try {
+    const { data: dbOrders, error: orderErr } = await supabase
+      .schema('system_history')
+      .from('Order_History')
+      .select('*')
+      .gte('COMPLETED_AT', startTime)
+      .lte('COMPLETED_AT', endTime)
+      .order('COMPLETED_AT', { ascending: false })
+
+    if (!orderErr && dbOrders && dbOrders.length > 0) {
+      completedRows = dbOrders.filter((o) => {
+        if (o.FROM_CASHIER_ID && Number(o.FROM_CASHIER_ID) === shift.staffId) return true
+        if (o.BUSINESS_DAY_ID && shift.businessDayId && Number(o.BUSINESS_DAY_ID) === shift.businessDayId) return true
+        return true
+      })
+    }
+  } catch (err) {
+    console.warn('[cashierShiftService] Error querying Order_History for revamped summary:', err)
+  }
+
+  // 2. Fetch receipts and invoices
+  const receiptsList: Array<Record<string, unknown>> = []
+  const invoicesMap = new Map<number, Record<string, unknown>>()
+  try {
+    const { data: recRows } = await supabase
+      .schema('orders')
+      .from('Order_Receipts')
+      .select('*')
+      .gte('DATE_PAID', startTime)
+      .lte('DATE_PAID', endTime)
+      .order('DATE_PAID', { ascending: false })
+
+    if (recRows && recRows.length > 0) {
+      receiptsList.push(...recRows)
+      const invIds = recRows.map((r) => Number(r.INVOICE_ID)).filter(Boolean)
+      if (invIds.length > 0) {
+        const { data: invRows } = await supabase
+          .schema('orders')
+          .from('Order_Invoices')
+          .select('*')
+          .in('INVOICE_ID', invIds)
+
+        if (invRows) {
+          for (const inv of invRows) {
+            invoicesMap.set(Number(inv.INVOICE_ID), inv)
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[cashierShiftService] Error querying receipts & invoices:', err)
+  }
+
+  // 3. Group by table for "Table" Mode
+  const tablesMap = new Map<string, CashierShiftTableItem>()
+  let grossRevenue = 0
+  let totalDiscounts = 0
+  let completedOrdersCount = 0
+
+  for (const row of completedRows) {
+    const total = Number(row['TOTAL_BILL'] || row['TOTAL_AMOUNT'] || 0)
+    const subtotal = Number(row['SUBTOTAL_BILL'] || total)
+    const discount = Number(row['DISCOUNT_AMOUNT'] || Math.max(subtotal - total, 0))
+    const oId = Number(row['ORIGINAL_ORDER_ID'] || row['ORDER_ID'] || 0)
+    const tId = Number(row['TABLE_ID'] || 0)
+    const tNum = Number(row['TABLE_NUM']) || tId || 1
+    const tDisplay = `Table ${tNum}`
+    const tKey = `tbl_${tNum}`
+    const pMethod = String(row['PAYMENT_METHOD'] || 'CASH').toUpperCase()
+    const invId = row['INVOICE_ID'] ? Number(row['INVOICE_ID']) : null
+    const recId = row['RECEIPT_ID'] ? Number(row['RECEIPT_ID']) : null
+    const time = String(row['COMPLETED_AT'] || row['TIME'] || startTime)
+
+    grossRevenue += total
+    totalDiscounts += discount
+    completedOrdersCount += 1
+
+    const parsedItems: Array<{ name: string; quantity: number; price?: number }> = []
+    if (Array.isArray(row['ORDER_ITEMS'])) {
+      for (const it of row['ORDER_ITEMS'] as any[]) {
+        parsedItems.push({
+          name: String(it.item_name || it.itemName || 'Dish'),
+          quantity: Number(it.quantity || 1),
+          price: Number(it.price || it.unitPrice || 0),
+        })
+      }
+    }
+
+    const billedOrder: CashierShiftBilledOrder = {
+      orderId: oId,
+      totalBill: total,
+      subtotalBill: subtotal,
+      discountAmount: discount,
+      paymentMethod: pMethod,
+      items: parsedItems,
+      completedAt: time,
+    }
+
+    const existingTable = tablesMap.get(tKey) || {
+      tableKey: tKey,
+      tableId: tId,
+      tableNum: tNum,
+      tableDisplay: tDisplay,
+      totalBilled: 0,
+      totalDiscounts: 0,
+      ordersCount: 0,
+      invoiceIds: [],
+      receiptIds: [],
+      paymentMethods: [],
+      orders: [],
+      lastBilledAt: time,
+    }
+
+    existingTable.totalBilled += total
+    existingTable.totalDiscounts += discount
+    existingTable.ordersCount += 1
+    existingTable.orders.push(billedOrder)
+    if (invId && !existingTable.invoiceIds.includes(invId)) existingTable.invoiceIds.push(invId)
+    if (recId && !existingTable.receiptIds.includes(recId)) existingTable.receiptIds.push(recId)
+    if (!existingTable.paymentMethods.includes(pMethod)) existingTable.paymentMethods.push(pMethod)
+    if (new Date(time).getTime() > new Date(existingTable.lastBilledAt).getTime()) {
+      existingTable.lastBilledAt = time
+    }
+
+    tablesMap.set(tKey, existingTable)
+  }
+
+  // Fallback if completedRows was empty but local audit has payments
+  if (tablesMap.size === 0) {
+    try {
+      const raw =
+        localStorage.getItem('monolith_action_history_fallback') ||
+        localStorage.getItem('monolith_cashier_audit_logs_fallback')
+      if (raw) {
+        const localLogs = JSON.parse(raw) as Array<Record<string, unknown>>
+        const paymentLogs = localLogs.filter(
+          (l) =>
+            String(l['action'] || l['ACTION']) === 'PAYMENT_COMPLETED' &&
+            new Date(String(l['createdAt'] || '')).getTime() >= new Date(startTime).getTime(),
+        )
+        for (const p of paymentLogs) {
+          const meta = (p['metadata'] || p['METADATA'] || {}) as Record<string, unknown>
+          const total = Number(meta['total'] || meta['amount'] || 0)
+          const discount = Number(meta['custom_discount'] || 0)
+          const tableNums = (meta['table_nums'] as number[] | undefined) || [1]
+          const tNum = tableNums[0] || 1
+          const tKey = `tbl_${tNum}`
+          const method = String(meta['payment_method'] || 'CASH').toUpperCase()
+          const time = String(p['createdAt'] || startTime)
+
+          grossRevenue += total
+          totalDiscounts += discount
+          completedOrdersCount += 1
+
+          const existingTable = tablesMap.get(tKey) || {
+            tableKey: tKey,
+            tableId: tNum,
+            tableNum: tNum,
+            tableDisplay: `Table ${tNum}`,
+            totalBilled: 0,
+            totalDiscounts: 0,
+            ordersCount: 0,
+            invoiceIds: [],
+            receiptIds: [],
+            paymentMethods: [],
+            orders: [],
+            lastBilledAt: time,
+          }
+
+          existingTable.totalBilled += total
+          existingTable.totalDiscounts += discount
+          existingTable.ordersCount += 1
+          if (!existingTable.paymentMethods.includes(method)) existingTable.paymentMethods.push(method)
+          tablesMap.set(tKey, existingTable)
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const tablesList = Array.from(tablesMap.values())
+  tablesList.sort((a, b) => new Date(b.lastBilledAt).getTime() - new Date(a.lastBilledAt).getTime())
+
+  // 4. Construct Payments List hierarchied by time issued
+  const paymentsList: CashierShiftPaymentItem[] = []
+
+  for (const rec of receiptsList) {
+    const rId = Number(rec['RECEIPT_ID'])
+    const iId = Number(rec['INVOICE_ID'])
+    const inv = invoicesMap.get(iId)
+    const tNum = inv ? Number(inv['TABLE_NUM']) || 1 : 1
+    const pType = String(rec['PAYMENT_TYPE'] || 'CASH').toUpperCase()
+    const amtReceived = Number(rec['AMOUNT_RECEIVED'] || 0)
+    const chgGiven = Number(rec['CHANGE_GIVEN'] || 0)
+    const datePaid = String(rec['DATE_PAID'] || startTime)
+    const netTotal = inv ? Number(inv['TOTAL'] || 0) : Math.max(0, amtReceived - chgGiven)
+
+    const dateObj = new Date(datePaid)
+    const timeFormatted = !isNaN(dateObj.getTime())
+      ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : '—'
+
+    paymentsList.push({
+      receiptId: rId,
+      invoiceId: iId,
+      datePaid,
+      timeFormatted,
+      tableNum: tNum,
+      tableDisplay: `Table ${tNum}`,
+      paymentType: pType,
+      amountReceived: amtReceived,
+      changeGiven: chgGiven,
+      netTotal,
+      cashierName: shift.staffName || `Staff #${shift.staffId}`,
+    })
+  }
+
+  // If receiptsList from DB was empty, construct from tables orders or audit
+  if (paymentsList.length === 0) {
+    for (const tbl of tablesList) {
+      for (const ord of tbl.orders) {
+        const dateObj = new Date(ord.completedAt)
+        const timeFormatted = !isNaN(dateObj.getTime())
+          ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : '—'
+        paymentsList.push({
+          receiptId: tbl.receiptIds[0] || ord.orderId,
+          invoiceId: tbl.invoiceIds[0] || ord.orderId,
+          datePaid: ord.completedAt,
+          timeFormatted,
+          tableNum: tbl.tableNum,
+          tableDisplay: tbl.tableDisplay,
+          paymentType: ord.paymentMethod,
+          amountReceived: ord.totalBill,
+          changeGiven: 0,
+          netTotal: ord.totalBill,
+          cashierName: shift.staffName || `Staff #${shift.staffId}`,
+        })
+      }
+    }
+  }
+
+  // Sort hierarchied by time issued: latest first
+  paymentsList.sort((a, b) => new Date(b.datePaid).getTime() - new Date(a.datePaid).getTime())
+
+  return {
+    metrics: {
+      grossRevenue,
+      completedOrdersCount,
+      tablesHandled: tablesList.length,
+      totalDiscounts,
+      durationMinutes,
+      startedAt: startTime,
+    },
+    tables: tablesList,
+    payments: paymentsList,
+  }
+}
+

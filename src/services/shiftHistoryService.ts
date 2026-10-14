@@ -67,20 +67,7 @@ export async function ensureRoleStaffRecord(staffId: number, role: StaffRole): P
         .eq('STAFF_ID', staffId)
 
       const records = (data as Array<Record<string, unknown>>) || []
-      if (records.length === 0) {
-        await supabase
-          .schema('staff')
-          .from('Dispatcher_Staff')
-          .insert([
-            {
-              STAFF_ID: staffId,
-              ORDERS_ACCEPTED: 0,
-              ORDERS_COOKED: 0,
-              ORDERS_CANCELLED: 0,
-              ORDERS_COMPLETED: 0,
-            },
-          ])
-      } else if (records.length > 1) {
+      if (records.length > 1) {
         const duplicateIds = records.slice(1).map((r) => r.DISPATCHER_ID).filter(Boolean)
         if (duplicateIds.length > 0) {
           await supabase
@@ -254,27 +241,45 @@ export async function recordShiftHistoryAndReset(
         .eq('STAFF_ID', staffId)
 
       const row = (dispRows?.[0] as Record<string, unknown>) || null
-      const accepted = Number(row?.ORDERS_ACCEPTED || 0)
-      const cooked = Number(row?.ORDERS_COOKED || 0)
-      const cancelled = Number(row?.ORDERS_CANCELLED || 0)
-      const completed = Number(row?.ORDERS_COMPLETED || 0)
+      let accepted = Number(row?.ORDERS_ACCEPTED || 0)
+      let cooked = Number(row?.ORDERS_COOKED || 0)
+      let cancelled = Number(row?.ORDERS_CANCELLED || 0)
+      let completed = Number(row?.ORDERS_COMPLETED || 0)
+
+      // Fallback to local session metrics if row not in database
+      if (typeof window !== 'undefined') {
+        try {
+          const session = JSON.parse(localStorage.getItem('monolith_session_dispatcher') || '{}')
+          if (session?.shiftId) {
+            const counts = JSON.parse(localStorage.getItem(`monolith_dispatcher_shift_${session.shiftId}_metrics`) || '{}')
+            accepted = Math.max(accepted, Number(counts.ORDERS_ACCEPTED || 0))
+            cooked = Math.max(cooked, Number(counts.ORDERS_COOKED || 0))
+            cancelled = Math.max(cancelled, Number(counts.ORDERS_CANCELLED || 0))
+            completed = Math.max(completed, Number(counts.ORDERS_COMPLETED || 0))
+          }
+        } catch {
+          // ignore
+        }
+      }
 
       historyPayload.ORDERS_ACCEPTED = accepted
       historyPayload.ORDERS_COOKED = cooked
       historyPayload.ORDERS_CANCELLED = cancelled
       historyPayload.ORDERS_COMPLETED = completed
 
-      // Reset Dispatcher_Staff metrics to 0
-      await supabase
-        .schema('staff')
-        .from('Dispatcher_Staff')
-        .update({
-          ORDERS_ACCEPTED: 0,
-          ORDERS_COOKED: 0,
-          ORDERS_CANCELLED: 0,
-          ORDERS_COMPLETED: 0,
-        })
-        .eq('STAFF_ID', staffId)
+      if (row) {
+        // Reset Dispatcher_Staff metrics to 0
+        await supabase
+          .schema('staff')
+          .from('Dispatcher_Staff')
+          .update({
+            ORDERS_ACCEPTED: 0,
+            ORDERS_COOKED: 0,
+            ORDERS_CANCELLED: 0,
+            ORDERS_COMPLETED: 0,
+          })
+          .eq('STAFF_ID', staffId)
+      }
 
       if (dispRows && dispRows.length > 1) {
         const dupIds = dispRows.slice(1).map((r) => r.DISPATCHER_ID).filter(Boolean)

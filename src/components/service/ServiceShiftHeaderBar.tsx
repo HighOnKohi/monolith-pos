@@ -1,28 +1,8 @@
-import { useState, useEffect } from 'react'
-import {
-  Clock,
-  LogOut,
-  AlertTriangle,
-  ShoppingBag,
-  Grid,
-  X,
-  Loader2,
-  BarChart3,
-  Utensils,
-} from 'lucide-react'
+import { useState } from 'react'
+import { BarChart3 } from 'lucide-react'
 import { useServiceSession } from '@/hooks/useServiceSession'
-import type { ServiceShiftSummaryMetrics } from '@/types/serviceShift'
 import { UnifiedShiftHeaderBar } from '@/components/common/UnifiedShiftHeaderBar'
-
-function formatShiftTime(isoString?: string): string {
-  if (!isoString) return 'Just now'
-  try {
-    const d = new Date(isoString)
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return 'Active'
-  }
-}
+import { ServiceShiftSummaryModal } from './ServiceShiftSummaryModal'
 
 interface ServiceShiftHeaderBarProps {
   className?: string
@@ -31,38 +11,20 @@ interface ServiceShiftHeaderBarProps {
 export function ServiceShiftHeaderBar({ className = '' }: ServiceShiftHeaderBarProps) {
   const { shift, staff, endShift, getShiftMetrics } = useServiceSession()
   const [showSummaryModal, setShowSummaryModal] = useState(false)
-  const [showEndModal, setShowEndModal] = useState(false)
-  const [isEnding, setIsEnding] = useState(false)
-  const [metrics, setMetrics] = useState<ServiceShiftSummaryMetrics | null>(null)
-  const [loadingMetrics, setLoadingMetrics] = useState(false)
-
-  useEffect(() => {
-    if (showEndModal || showSummaryModal) {
-      setLoadingMetrics(true)
-      void getShiftMetrics()
-        .then((res) => setMetrics(res))
-        .catch(() => {})
-        .finally(() => setLoadingMetrics(false))
-    }
-  }, [showEndModal, showSummaryModal, getShiftMetrics])
 
   if (!shift) return null
 
   const serverName = staff?.staffName || shift.staffName || `Staff #${shift.staffId}`
-  const startTime = formatShiftTime(shift.startedAt)
 
-  const handleConfirmEndShift = async () => {
-    setIsEnding(true)
+  const handleEndShift = async () => {
     try {
+      const metrics = await getShiftMetrics().catch(() => null)
       await endShift({
         totalOrdersPunched: metrics?.ordersPunched ?? shift.totalOrdersPunched,
         totalTablesServed: metrics?.tablesServed ?? shift.totalTablesServed,
       })
-      setShowEndModal(false)
     } catch (err) {
       console.error('[ServiceShiftHeaderBar] Failed to end service shift:', err)
-    } finally {
-      setIsEnding(false)
     }
   }
 
@@ -72,7 +34,9 @@ export function ServiceShiftHeaderBar({ className = '' }: ServiceShiftHeaderBarP
         role="SERVICE"
         staffName={serverName}
         startedAt={shift.startedAt}
-        onEndShiftClick={() => setShowEndModal(true)}
+        onEndShift={handleEndShift}
+        confirmTitle="Conclude Service Shift"
+        confirmMessage={`End floor service shift for ${serverName}?`}
         className={className}
         extraActions={
           <button
@@ -87,228 +51,12 @@ export function ServiceShiftHeaderBar({ className = '' }: ServiceShiftHeaderBarP
         }
       />
 
-      {/* Service Shift Summary Modal */}
-      {showSummaryModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150"
-          onClick={() => setShowSummaryModal(false)}
-        >
-          <div
-            className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="bg-[#14274E] px-6 py-5 text-white flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-400 text-amber-950 flex items-center justify-center shadow-xs">
-                  <Utensils className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-base leading-tight">Service Shift Summary</h3>
-                  <p className="text-xs text-slate-300 mt-0.5">
-                    {serverName} (Staff ID: {shift.staffId})
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSummaryModal(false)}
-                className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
-                aria-label="Close summary"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-4">
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200/60">
-                  <span className="text-slate-500 font-bold flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-slate-400" />
-                    Shift Started
-                  </span>
-                  <span className="font-extrabold text-[#14274E]">{startTime}</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-2xs">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
-                      <ShoppingBag className="w-3 h-3 text-blue-500" />
-                      Orders Punched
-                    </span>
-                    <p className="text-base font-black text-[#14274E] mt-0.5">
-                      {loadingMetrics ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 mt-1" />
-                      ) : (
-                        metrics?.ordersPunched ?? shift.totalOrdersPunched
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-2xs">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
-                      <Grid className="w-3 h-3 text-purple-500" />
-                      Tables Served
-                    </span>
-                    <p className="text-base font-black text-purple-700 mt-0.5">
-                      {loadingMetrics ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 mt-1" />
-                      ) : (
-                        metrics?.tablesServed ?? shift.totalTablesServed
-                      )}
-                    </p>
-                  </div>
-                </div>
-
-                {metrics?.durationMinutes != null && (
-                  <p className="text-[11px] text-slate-400 font-semibold text-center pt-1">
-                    Shift duration: {metrics.durationMinutes} minute
-                    {metrics.durationMinutes !== 1 ? 's' : ''}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end">
-              <button
-                type="button"
-                onClick={() => setShowSummaryModal(false)}
-                className="px-4 py-2 rounded-xl bg-[#14274E] hover:bg-[#1E3A8A] text-white text-xs font-black transition-colors cursor-pointer"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* End Shift Confirmation Modal */}
-      {showEndModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-fade-in"
-          onClick={() => !isEnding && setShowEndModal(false)}
-        >
-          <div
-            className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-scale-up"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-rose-50 text-rose-600 border border-rose-100">
-                  <AlertTriangle className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-[#14274E]">End Service Shift</h3>
-                  <p className="text-[11px] font-semibold text-slate-400">Finalize floor service session &amp; lock interface</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={isEnding}
-                onClick={() => setShowEndModal(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-4">
-              <p className="text-xs text-slate-600 font-medium leading-relaxed">
-                Are you sure you want to conclude the service shift for{' '}
-                <strong className="text-[#14274E] font-black">{serverName}</strong> (Staff ID:{' '}
-                {shift.staffId})?
-              </p>
-
-              {/* Shift Summary Metrics */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200/60">
-                  <span className="text-slate-500 font-bold flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-slate-400" />
-                    Shift Started
-                  </span>
-                  <span className="font-extrabold text-[#14274E]">{startTime}</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-2xs">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
-                      <ShoppingBag className="w-3 h-3 text-blue-500" />
-                      Orders Punched
-                    </span>
-                    <p className="text-base font-black text-[#14274E] mt-0.5">
-                      {loadingMetrics ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 mt-1" />
-                      ) : (
-                        metrics?.ordersPunched ?? shift.totalOrdersPunched
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-2xs">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
-                      <Grid className="w-3 h-3 text-purple-500" />
-                      Tables Served
-                    </span>
-                    <p className="text-base font-black text-purple-700 mt-0.5">
-                      {loadingMetrics ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 mt-1" />
-                      ) : (
-                        metrics?.tablesServed ?? shift.totalTablesServed
-                      )}
-                    </p>
-                  </div>
-                </div>
-
-                {metrics?.durationMinutes != null && (
-                  <p className="text-[11px] text-slate-400 font-semibold text-center pt-1">
-                    Shift duration: {metrics.durationMinutes} minute
-                    {metrics.durationMinutes !== 1 ? 's' : ''}
-                  </p>
-                )}
-              </div>
-
-              <div className="bg-amber-50/80 border border-amber-200/70 rounded-xl p-3 text-[11px] font-semibold text-amber-800 leading-snug">
-                Notice: Ending this shift locks the service interface. An audit record will be logged.
-                The application session and any separate cashier shifts will remain active.
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
-              <button
-                type="button"
-                disabled={isEnding}
-                onClick={() => setShowEndModal(false)}
-                className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isEnding}
-                onClick={() => void handleConfirmEndShift()}
-                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-xs font-black transition-all flex items-center gap-2 shadow-sm shadow-rose-600/30 cursor-pointer disabled:opacity-50"
-              >
-                {isEnding ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Ending Shift...</span>
-                  </>
-                ) : (
-                  <>
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Confirm End Shift</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Revamped Service Shift Summary Modal */}
+      <ServiceShiftSummaryModal
+        isOpen={showSummaryModal}
+        onClose={() => setShowSummaryModal(false)}
+        shift={shift}
+      />
     </>
   )
 }

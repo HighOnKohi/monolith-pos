@@ -5,6 +5,8 @@ import { logOrderEvent } from '@/services/orderLogsService'
 import { broadcastOrderUpdate } from '@/services/dispatcherService'
 import { logCashierAction } from '@/services/cashierAuditService'
 import { broadcastMenuItemStatus } from '@/hooks/useRealtimeMenu'
+import { fetchTablesByIds } from '@/services/tableService'
+import { recordServiceOrderPunched } from '@/services/serviceShiftService'
 
 const DINING_TYPE_MAP: Record<DiningType, string> = {
   'dine-in': 'DINE-IN',
@@ -72,11 +74,11 @@ export async function createOrder(
     try {
       const { data: tRow } = await supabase
         .schema('tables')
-        .from('Restaurant_Tables')
-        .select('CURRENT_GUEST_COUNT')
+        .from('Active_Tables')
+        .select('SEATED_GUEST_COUNT')
         .eq('TABLE_ID', tableId)
         .maybeSingle()
-      partySize = Math.max(Number(tRow?.CURRENT_GUEST_COUNT) || 1, 1)
+      partySize = Math.max(Number(tRow?.SEATED_GUEST_COUNT) || 1, 1)
     } catch {
       partySize = 1
     }
@@ -227,14 +229,27 @@ export async function createOrder(
   }
 
   // Increment Service_Staff metric if service shift is active
-  void import('@/services/serviceShiftService').then((m) => m.recordServiceOrderPunched(1, total))
+  try {
+    void recordServiceOrderPunched(1, total, {
+      orderId,
+      tableId,
+      totalBill: total,
+      items: items.map((ci) => ({
+        name: ci.item.name,
+        quantity: ci.quantity,
+        price: ci.item.price,
+      })),
+    })
+  } catch (shiftErr) {
+    console.warn('[orderService] Service shift record error:', shiftErr)
+  }
 
   // 3. Mark table as OCCUPIED if it was not already occupied/has_request (unless preserving table status for advance orders)
   if (!options?.preserveTableStatus) {
     try {
       const { data: tableData } = await supabase
         .schema('tables')
-        .from('Restaurant_Tables')
+        .from('Active_Tables')
         .select('STATUS')
         .eq('TABLE_ID', tableId)
         .maybeSingle()
@@ -242,7 +257,7 @@ export async function createOrder(
       if (tableData && tableData.STATUS !== 'OCCUPIED' && tableData.STATUS !== 'HAS_REQUEST') {
         await supabase
           .schema('tables')
-          .from('Restaurant_Tables')
+          .from('Active_Tables')
           .update({ STATUS: 'OCCUPIED' })
           .eq('TABLE_ID', tableId)
       }
@@ -522,11 +537,11 @@ export async function createOrderFromExisting(order: Order): Promise<void> {
     try {
       const { data: tRow } = await supabase
         .schema('tables')
-        .from('Restaurant_Tables')
-        .select('CURRENT_GUEST_COUNT')
+        .from('Active_Tables')
+        .select('SEATED_GUEST_COUNT')
         .eq('TABLE_ID', order.tableId)
         .maybeSingle()
-      partySize = Math.max(Number(tRow?.CURRENT_GUEST_COUNT) || 1, 1)
+      partySize = Math.max(Number(tRow?.SEATED_GUEST_COUNT) || 1, 1)
     } catch {
       partySize = 1
     }
@@ -921,11 +936,8 @@ export async function settleTableOrders(
   const tableNumMap = new Map<number, number>()
   const tableGuestMap = new Map<number, number>()
   try {
-    const { data: tablesData } = await supabase
-      .from('Restaurant_Tables')
-      .select('TABLE_ID, TABLE_NUM, CURRENT_GUEST_COUNT')
-      .in('TABLE_ID', targetIds)
-    for (const t of tablesData ?? []) {
+    const tablesData = await fetchTablesByIds(targetIds)
+    for (const t of tablesData) {
       const tId = Number(t.TABLE_ID)
       tableNumMap.set(tId, Number(t.TABLE_NUM) || tId)
       tableGuestMap.set(tId, Number(t.CURRENT_GUEST_COUNT) || 1)
@@ -1047,8 +1059,8 @@ export async function settleTableOrders(
       ORIGINAL_ORDER_ID: oId,
       TABLE_ID: tId,
       BUSINESS_DAY_ID: safeOrderDay,
-      FROM_SERVICE_ID: null,
-      FROM_CASHIER_ID: safeOrderStaff,
+      FROM_SERVICE_ID: rawOrderStaff,
+      FROM_CASHIER_ID: attrStaffId ?? safeOrderStaff,
       TABLE_NUM: safeTableNum,
       ORDER_TYPE: String(o['ORDER_TYPE'] || 'DINE-IN'),
       REQUESTED_FROM: String(o['REQUESTED_FROM'] || 'Cashier'),

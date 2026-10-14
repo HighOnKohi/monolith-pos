@@ -2338,7 +2338,7 @@ export default function TableManager() {
 
 
   return (
-    <div className="table-manager-page-container staff-page flex flex-row h-full w-full overflow-hidden bg-[#F1F6F9] p-0 select-none">
+    <div className="table-manager-page-container staff-page flex flex-row h-full w-full overflow-hidden bg-[var(--interface-background,#dae2ef)] p-0 select-none">
 
       {/* ── Left Div: inner-table-manager-container ── */}
       <div className="inner-table-manager-container flex-1 min-w-0 h-full flex flex-col overflow-hidden">
