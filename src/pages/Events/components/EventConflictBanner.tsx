@@ -1,5 +1,5 @@
 import React from 'react'
-import { AlertCircle, Ban } from 'lucide-react'
+import { AlertCircle } from 'lucide-react'
 import type { EventConflict } from '@/types/event'
 import { formatEventDate, formatEventTime } from '../utils/eventUtils'
 
@@ -11,27 +11,30 @@ export const EventConflictBanner: React.FC<EventConflictBannerProps> = ({ confli
   if (conflicts.length === 0) return null
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs animate-in fade-in duration-200">
-      <Ban className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-      <div className="text-rose-900 space-y-1">
-        <p className="font-black text-rose-700 flex items-center gap-1.5">
-          <AlertCircle className="w-3.5 h-3.5 inline" />
-          Simultaneous Events Not Permitted
-        </p>
-        <p className="text-[11px] text-rose-800">
-          Another event is already scheduled at this time. Multiple events cannot occur simultaneously:
-        </p>
-        <ul className="space-y-1 pt-1">
-          {conflicts.map((c) => (
-            <li key={c.eventId} className="font-semibold text-rose-950 bg-white/80 px-2.5 py-1 rounded-lg border border-rose-200">
-              <span className="font-black text-rose-700">"{c.title}"</span> ·{' '}
-              {formatEventDate(c.startAt)} ({formatEventTime(c.startAt)} – {formatEventTime(c.endAt)})
-            </li>
-          ))}
-        </ul>
-        <p className="text-[11px] text-rose-700 font-bold pt-1">
-          Please adjust the event start or end time to resolve this conflict before saving.
-        </p>
+    <div className="w-full bg-rose-50 border border-rose-300 rounded-2xl shadow-xl p-3.5 flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0 space-y-2">
+        {conflicts.map((c) => {
+          const isBuffer = c.conflictType === 'buffer'
+          const conflictTitle = isBuffer ? '3-Hour Buffer Required' : 'Event Conflict'
+          const description = isBuffer && c.bufferReason
+            ? `${formatEventDate(c.startAt)} · ${c.bufferReason}`
+            : `${formatEventDate(c.startAt)} · ${formatEventTime(c.startAt)} – ${formatEventTime(c.endAt)}`
+
+          return (
+            <div key={c.eventId} className="space-y-0.5">
+              <p className="text-xs font-black uppercase tracking-wider text-rose-700">
+                {conflictTitle}
+              </p>
+              <p className="text-[11px] font-semibold text-rose-700 leading-snug">
+                {description}
+              </p>
+              <p className="text-xs font-black text-rose-950 truncate">
+                {c.title}
+              </p>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

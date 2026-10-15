@@ -287,11 +287,17 @@ export async function createEvent(
   const startAt = new Date(`${data.startDate}T${data.startTime}`).toISOString()
   const endAt = new Date(`${data.endDate}T${data.endTime}`).toISOString()
 
-  // 1. Prevention of multiple events at the same time
+  // 1. Prevention of multiple events at the same time and 3-hour buffer violations
   const conflicts = await checkEventConflicts(startAt, endAt)
   if (conflicts.length > 0) {
+    const first = conflicts[0]
+    if (first.conflictType === 'buffer') {
+      throw new Error(
+        `Cannot create event: 3-hour buffer required. ${first.bufferReason} ("${first.title}").`,
+      )
+    }
     throw new Error(
-      `Cannot create event: time overlaps with "${conflicts[0].title}". Simultaneous events are not permitted.`,
+      `Cannot create event: time overlaps with "${first.title}". Simultaneous events are not permitted.`,
     )
   }
 
@@ -304,8 +310,8 @@ export async function createEvent(
   }
 
   const maxPaxVal = data.maxPax
-    ? parseInt(data.maxPax, 10)
-    : (data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : 50)
+    ? Math.min(50, Math.max(1, parseInt(data.maxPax, 10)))
+    : (data.expectedAttendees ? Math.min(50, Math.max(1, parseInt(data.expectedAttendees, 10))) : 50)
 
   let notesVal = data.notes.trim() || null
   const tags: string[] = []
@@ -424,11 +430,17 @@ export async function updateEvent(
   const startAt = new Date(`${data.startDate}T${data.startTime}`).toISOString()
   const endAt = new Date(`${data.endDate}T${data.endTime}`).toISOString()
 
-  // 1. Prevention of multiple events at the same time
+  // 1. Prevention of multiple events at the same time and 3-hour buffer violations
   const conflicts = await checkEventConflicts(startAt, endAt, eventId)
   if (conflicts.length > 0) {
+    const first = conflicts[0]
+    if (first.conflictType === 'buffer') {
+      throw new Error(
+        `Cannot update event: 3-hour buffer required. ${first.bufferReason} ("${first.title}").`,
+      )
+    }
     throw new Error(
-      `Cannot update event: time overlaps with "${conflicts[0].title}". Simultaneous events are not permitted.`,
+      `Cannot update event: time overlaps with "${first.title}". Simultaneous events are not permitted.`,
     )
   }
 
@@ -441,8 +453,8 @@ export async function updateEvent(
   }
 
   const maxPaxVal = data.maxPax
-    ? parseInt(data.maxPax, 10)
-    : (data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : 50)
+    ? Math.min(50, Math.max(1, parseInt(data.maxPax, 10)))
+    : (data.expectedAttendees ? Math.min(50, Math.max(1, parseInt(data.expectedAttendees, 10))) : 50)
 
   let notesVal = data.notes.trim() || null
   const tags: string[] = []
@@ -931,22 +943,45 @@ export async function syncLayoutPresetsWithEvents(): Promise<void> {
   // No-op
 }
 
-// ─── Check Conflicts ───────────────────────────────────────────────────────────
+function extractDateAndDailyTime(isoString: string): { dateStr: string; timeStr: string } {
+  const d = new Date(isoString)
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return { dateStr, timeStr }
+}
+
+function timeToMinutes(timeStr: string): number {
+  const [h, m] = timeStr.split(':').map(Number)
+  return h * 60 + m
+}
+
+function formatTime(isoString: string): string {
+  const d = new Date(isoString)
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+}
 
 export async function checkEventConflicts(
   startAt: string,
   endAt: string,
   excludeEventId?: number,
 ): Promise<EventConflict[]> {
+  const newStart = extractDateAndDailyTime(startAt)
+  const newEnd = extractDateAndDailyTime(endAt)
+  const newStartMins = timeToMinutes(newStart.timeStr)
+  const newEndMins = timeToMinutes(newEnd.timeStr)
+
   try {
+    const dayStartAt = new Date(`${newStart.dateStr}T00:00:00`).toISOString()
+    const dayEndAt = new Date(`${newEnd.dateStr}T23:59:59.999`).toISOString()
+
     let query = supabase
       .from('Restaurant_Events')
       .select('EVENT_ID, TITLE, START_AT, END_AT')
       .is('DELETED_AT', null)
       .eq('IS_CANCELLED', false)
-      // Overlap condition: existing.start < new.end AND existing.end > new.start
-      .lt('START_AT', endAt)
-      .gt('END_AT', startAt)
+      // Check events spanning any dates of this event
+      .lte('START_AT', dayEndAt)
+      .gte('END_AT', dayStartAt)
 
     if (excludeEventId) {
       query = query.neq('EVENT_ID', excludeEventId)
@@ -956,32 +991,104 @@ export async function checkEventConflicts(
 
     if (error) throw error
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (data ?? []).map((row: any) => ({
-      eventId: row['EVENT_ID'],
-      title: row['TITLE'],
-      startAt: row['START_AT'],
-      endAt: row['END_AT'],
-    }))
+    const conflicts: EventConflict[] = []
+
+    for (const row of data ?? []) {
+      const eStart = extractDateAndDailyTime(row['START_AT'])
+      const eEnd = extractDateAndDailyTime(row['END_AT'])
+      const datesOverlap = newStart.dateStr <= eEnd.dateStr && newEnd.dateStr >= eStart.dateStr
+      if (!datesOverlap) continue
+
+      const eStartMins = timeToMinutes(eStart.timeStr)
+      const eEndMins = timeToMinutes(eEnd.timeStr)
+
+      // 1. Direct Time Overlap (Simultaneous / touching boundary)
+      const timesOverlap = newStartMins <= eEndMins && newEndMins >= eStartMins
+      if (timesOverlap) {
+        conflicts.push({
+          eventId: row['EVENT_ID'],
+          title: row['TITLE'],
+          startAt: row['START_AT'],
+          endAt: row['END_AT'],
+          conflictType: 'overlap',
+        })
+        continue
+      }
+
+      // 2. 3-Hour Buffer Violations (180 mins)
+      if (newStartMins > eEndMins && newStartMins - eEndMins < 180) {
+        conflicts.push({
+          eventId: row['EVENT_ID'],
+          title: row['TITLE'],
+          startAt: row['START_AT'],
+          endAt: row['END_AT'],
+          conflictType: 'buffer',
+          bufferReason: `Must start at least 3 hours after ${formatTime(row['END_AT'])}`,
+        })
+      } else if (newEndMins < eStartMins && eStartMins - newEndMins < 180) {
+        conflicts.push({
+          eventId: row['EVENT_ID'],
+          title: row['TITLE'],
+          startAt: row['START_AT'],
+          endAt: row['END_AT'],
+          conflictType: 'buffer',
+          bufferReason: `Must end at least 3 hours before ${formatTime(row['START_AT'])}`,
+        })
+      }
+    }
+
+    return conflicts
   } catch {
     // Check in fallback localStorage
     const fallbackAll = getFallbackEvents()
-    const newStart = new Date(startAt).getTime()
-    const newEnd = new Date(endAt).getTime()
+    const conflicts: EventConflict[] = []
 
-    return fallbackAll
-      .filter((e) => {
-        if (e.deletedAt || e.isCancelled) return false
-        if (excludeEventId && e.eventId === excludeEventId) return false
-        const eStart = new Date(e.startAt).getTime()
-        const eEnd = new Date(e.endAt).getTime()
-        return eStart < newEnd && eEnd > newStart
-      })
-      .map((e) => ({
-        eventId: e.eventId,
-        title: e.title,
-        startAt: e.startAt,
-        endAt: e.endAt,
-      }))
+    for (const e of fallbackAll) {
+      if (e.deletedAt || e.isCancelled) continue
+      if (excludeEventId && e.eventId === excludeEventId) continue
+      const eStart = extractDateAndDailyTime(e.startAt)
+      const eEnd = extractDateAndDailyTime(e.endAt)
+      const datesOverlap = newStart.dateStr <= eEnd.dateStr && newEnd.dateStr >= eStart.dateStr
+      if (!datesOverlap) continue
+
+      const eStartMins = timeToMinutes(eStart.timeStr)
+      const eEndMins = timeToMinutes(eEnd.timeStr)
+
+      // 1. Direct Overlap
+      const timesOverlap = newStartMins <= eEndMins && newEndMins >= eStartMins
+      if (timesOverlap) {
+        conflicts.push({
+          eventId: e.eventId,
+          title: e.title,
+          startAt: e.startAt,
+          endAt: e.endAt,
+          conflictType: 'overlap',
+        })
+        continue
+      }
+
+      // 2. 3-Hour Buffer Violations (180 mins)
+      if (newStartMins > eEndMins && newStartMins - eEndMins < 180) {
+        conflicts.push({
+          eventId: e.eventId,
+          title: e.title,
+          startAt: e.startAt,
+          endAt: e.endAt,
+          conflictType: 'buffer',
+          bufferReason: `Must start at least 3 hours after ${formatTime(e.endAt)}`,
+        })
+      } else if (newEndMins < eStartMins && eStartMins - newEndMins < 180) {
+        conflicts.push({
+          eventId: e.eventId,
+          title: e.title,
+          startAt: e.startAt,
+          endAt: e.endAt,
+          conflictType: 'buffer',
+          bufferReason: `Must end at least 3 hours before ${formatTime(e.startAt)}`,
+        })
+      }
+    }
+
+    return conflicts
   }
 }

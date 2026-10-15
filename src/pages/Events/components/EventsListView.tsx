@@ -1,12 +1,11 @@
 import React from 'react'
-import { Pencil, Trash2, MapPin, User2, Users, Clock, Layout } from 'lucide-react'
+import { Pencil, Trash2, MapPin, Users, CalendarDays } from 'lucide-react'
 import type { RestaurantEvent } from '@/types/event'
 import {
   deriveEventStatus,
   getEventStatusBadge,
   getCategoryColor,
-  formatEventDate,
-  formatEventTime,
+  formatEventDateDuration,
 } from '../utils/eventUtils'
 
 interface EventsListViewProps {
@@ -47,71 +46,55 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
   }
 
   return (
-    <div className="h-full space-y-3">
+    <div className="flex-1 min-h-0 flex flex-col h-full">
       {/* ── Desktop Table ── */}
-      <div className="hidden sm:block bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-        <table className="w-full text-left text-xs border-collapse">
-          <thead>
-            <tr className="border-b border-slate-100 bg-slate-50/70 text-[10px] font-black uppercase tracking-wider text-slate-400">
-              <th className="px-4 py-3 text-center">Event Name</th>
-              <th className="px-4 py-3 text-center">Date</th>
-              <th className="px-4 py-3 text-center">Time</th>
-              <th className="px-4 py-3 text-center">Location</th>
-              <th className="px-4 py-3 text-center">Category</th>
-              <th className="px-4 py-3 text-center">Guest Count</th>
-              <th className="px-4 py-3 text-center">Active</th>
-              <th className="px-4 py-3 text-right"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
+      <div className="hidden sm:flex flex-col flex-1 min-h-0 bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500 shadow-2xs">
+              <tr>
+                <th className="px-4 py-3 text-center bg-slate-50">Event Name</th>
+                <th className="px-4 py-3 text-center bg-slate-50">Date Duration</th>
+                <th className="px-4 py-3 text-center bg-slate-50">Location</th>
+                <th className="px-4 py-3 text-center bg-slate-50">Category</th>
+                <th className="px-4 py-3 text-center bg-slate-50">Guest Count</th>
+                <th className="px-4 py-3 text-center bg-slate-50">Active</th>
+                <th className="px-4 py-3 text-right bg-slate-50"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
             {events.map((event) => {
               const pax = event.maxPax ?? event.expectedAttendees ?? 50
+              const eventColor = event.color || getCategoryColor(event.category)
 
               return (
-                <tr key={event.eventId} onClick={() => onView(event)} className="hover:bg-slate-50/60 transition-colors cursor-pointer">
-                  {/* Event Name & Category Dot */}
+                <tr
+                  key={event.eventId}
+                  onClick={() => onView(event)}
+                  className="hover:bg-slate-50/70 transition-colors cursor-pointer border-l-4"
+                  style={{ borderLeftColor: eventColor }}
+                >
+                  {/* Event Name - with assigned color pip */}
                   <td className="px-4 py-3 text-center">
-                    <div className="flex items-center justify-center gap-2.5">
-                      <div className="text-center">
-                        <p
-                          className="font-bold text-[#14274E] truncate cursor-pointer hover:underline"
-                          onClick={() => onView(event)}
-                        >
-                          {event.title}
-                        </p>
-                        <div className="flex items-center justify-center gap-2 mt-0.5 flex-wrap">
-                          {event.organizer && (
-                            <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
-                              <User2 className="w-3 h-3" />
-                              {event.organizer}
-                            </span>
-                          )}
-                          {event.presetId && (
-                            <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
-                              <Layout className="w-2.5 h-2.5" /> Linked Layout
-                            </span>
-                          )}
-                          {event.menuPresetId && (
-                            <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
-                              Linked Menu
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                    <div className="flex items-center justify-center gap-2">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs ring-1 ring-black/5"
+                        style={{ backgroundColor: eventColor }}
+                        title={`Event color: ${eventColor}`}
+                      />
+                      <p
+                        className="font-bold text-[#14274E] truncate cursor-pointer hover:underline"
+                        onClick={() => onView(event)}
+                      >
+                        {event.title}
+                      </p>
                     </div>
                   </td>
 
-                  {/* Date */}
+                  {/* Date Duration */}
                   <td className="px-4 py-3 text-center">
                     <div className="font-bold text-slate-600 whitespace-nowrap">
-                      {formatEventDate(event.startAt)}
-                    </div>
-                  </td>
-
-                  {/* Time */}
-                  <td className="px-4 py-3 text-center">
-                    <div className="font-bold text-slate-600 whitespace-nowrap">
-                      {formatEventTime(event.startAt)} – {formatEventTime(event.endAt)}
+                      {formatEventDateDuration(event.startAt, event.endAt)}
                     </div>
                   </td>
 
@@ -122,11 +105,18 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                     </div>
                   </td>
 
-                  {/* Category */}
+                  {/* Category - styled with assigned event color */}
                   <td className="px-4 py-3 text-center">
-                    <div className="font-bold text-slate-600 whitespace-nowrap">
+                    <span
+                      className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold"
+                      style={{
+                        backgroundColor: `${eventColor}18`,
+                        color: eventColor,
+                        border: `1px solid ${eventColor}35`,
+                      }}
+                    >
                       {event.category}
-                    </div>
+                    </span>
                   </td>
 
                   {/* Guest Count */}
@@ -167,7 +157,11 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                       {canManageEvents && (
                         <>
                           <button
-                            onClick={() => onEdit(event)}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onEdit(event)
+                            }}
                             className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors cursor-pointer"
                             title="Edit event"
                             aria-label="Edit event"
@@ -175,7 +169,11 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => onDelete(event)}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onDelete(event)
+                            }}
                             className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
                             title="Delete event"
                             aria-label="Delete event"
@@ -191,10 +189,11 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* ── Mobile Card List ── */}
-      <div className="md:hidden divide-y divide-slate-100">
+      <div className="sm:hidden flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100 bg-white rounded-2xl border border-slate-200 shadow-xs">
         {events.map((event) => {
           const status = deriveEventStatus(event)
           const badge = getEventStatusBadge(status)
@@ -227,31 +226,20 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                   </div>
 
                   <div className="mt-1 space-y-0.5 text-xs text-slate-500">
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3 shrink-0" />
-                      <span>{formatEventDate(event.startAt)}, {formatEventTime(event.startAt)} – {formatEventTime(event.endAt)}</span>
+                    <div className="flex items-center gap-1 font-semibold text-slate-600">
+                      <CalendarDays className="w-3 h-3 shrink-0 text-slate-400" />
+                      <span>{formatEventDateDuration(event.startAt, event.endAt)}</span>
                     </div>
                     {event.location && (
                       <div className="flex items-center gap-1">
-                        <MapPin className="w-3 h-3 shrink-0" />
+                        <MapPin className="w-3 h-3 shrink-0 text-slate-400" />
                         <span>{event.location}</span>
                       </div>
                     )}
                     {(event.maxPax != null || event.expectedAttendees != null) && (
                       <div className="flex items-center gap-1">
-                        <Users className="w-3 h-3 shrink-0" />
-                        <span>{event.maxPax ?? event.expectedAttendees} Max Pax</span>
-                      </div>
-                    )}
-                    {event.presetId && (
-                      <div className="flex items-center gap-1 text-indigo-700 font-bold">
-                        <Layout className="w-3 h-3 shrink-0" />
-                        <span>Linked Layout</span>
-                      </div>
-                    )}
-                    {event.menuPresetId && (
-                      <div className="flex items-center gap-1 text-amber-700 font-bold">
-                        <span>Linked Menu Preset</span>
+                        <Users className="w-3 h-3 shrink-0 text-slate-400" />
+                        <span>{event.maxPax ?? event.expectedAttendees} Guests</span>
                       </div>
                     )}
                   </div>
@@ -292,6 +280,7 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                       {canManageEvents && (
                         <>
                           <button
+                            type="button"
                             onClick={() => onEdit(event)}
                             className="p-2 rounded-xl bg-slate-100 text-slate-600 cursor-pointer"
                             aria-label="Edit"
@@ -299,6 +288,7 @@ export const EventsListView: React.FC<EventsListViewProps> = ({
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                           <button
+                            type="button"
                             onClick={() => onDelete(event)}
                             className="p-2 rounded-xl bg-rose-50 text-rose-600 cursor-pointer"
                             aria-label="Delete"

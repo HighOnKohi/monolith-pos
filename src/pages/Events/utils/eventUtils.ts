@@ -106,6 +106,27 @@ export function formatEventDateRange(startAt: string, endAt: string): string {
   return `${formatEventDate(startAt)} – ${formatEventDate(endAt)}`
 }
 
+/**
+ * Formats event date duration without the year, e.g. "Sep 16 - Sep 20" or "Sep 16"
+ */
+export function formatEventDateDuration(startAt: string, endAt: string): string {
+  const start = new Date(startAt)
+  const end = new Date(endAt)
+  const startMonth = start.toLocaleDateString('en-US', { month: 'short' })
+  const startDay = start.getDate()
+  const endMonth = end.toLocaleDateString('en-US', { month: 'short' })
+  const endDay = end.getDate()
+
+  if (
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    startDay === endDay
+  ) {
+    return `${startMonth} ${startDay}`
+  }
+  return `${startMonth} ${startDay} - ${endMonth} ${endDay}`
+}
+
 // ─── ISO date/time helpers for form ───────────────────────────────────────────
 
 export function isoToDateInput(isoString: string): string {
@@ -257,7 +278,7 @@ export function filterEvents(
   const monthStartMs = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0).getTime()
   const monthEndMs = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).getTime()
 
-  return events.filter((event) => {
+  const filtered = events.filter((event) => {
     // 1. Status Filter
     if (filters.status !== 'All') {
       if (deriveEventStatus(event) !== filters.status) return false
@@ -308,4 +329,20 @@ export function filterEvents(
 
     return true
   })
+
+  // Sort by Guest Count (if selected) or Date (Nearest / Farthest)
+  filtered.sort((a, b) => {
+    if (filters.guestCount === 'asc' || filters.guestCount === 'desc') {
+      const paxA = a.maxPax ?? a.expectedAttendees ?? 0
+      const paxB = b.maxPax ?? b.expectedAttendees ?? 0
+      if (paxA !== paxB) {
+        return filters.guestCount === 'asc' ? paxA - paxB : paxB - paxA
+      }
+    }
+    const timeA = new Date(a.startAt).getTime()
+    const timeB = new Date(b.startAt).getTime()
+    return filters.sortOrder === 'farthest' ? timeB - timeA : timeA - timeB
+  })
+
+  return filtered
 }

@@ -500,6 +500,26 @@
     "check_constraints": "Restaurant_Events_EXPECTED_ATTENDEES_check: CHECK (((\"EXPECTED_ATTENDEES\" IS NULL) OR (\"EXPECTED_ATTENDEES\" >= 0))); events_category_check: CHECK ((\"CATEGORY\" = ANY (ARRAY['Private Event'::text, 'Birthday'::text, 'Corporate Event'::text, 'Meeting'::text, 'Reservation'::text, 'Catering'::text, 'Promotion'::text, 'Holiday'::text, 'Other'::text]))); events_end_after_start: CHECK ((\"END_AT\" >= \"START_AT\"))"
   },
   {
+    "schema_name": "events",
+    "table_name": "Restaurant_Events",
+    "column_name": "GENERATES_REVENUE",
+    "data_type": "boolean",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Restaurant_Events_pkey: PRIMARY KEY (\"EVENT_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": "Restaurant_Events_EXPECTED_ATTENDEES_check: CHECK (((\"EXPECTED_ATTENDEES\" IS NULL) OR (\"EXPECTED_ATTENDEES\" >= 0))); events_category_check: CHECK ((\"CATEGORY\" = ANY (ARRAY['Private Event'::text, 'Birthday'::text, 'Corporate Event'::text, 'Meeting'::text, 'Reservation'::text, 'Catering'::text, 'Promotion'::text, 'Holiday'::text, 'Other'::text]))); events_end_after_start: CHECK ((\"END_AT\" >= \"START_AT\"))"
+  },
+  {
+    "schema_name": "events",
+    "table_name": "Restaurant_Events",
+    "column_name": "REVENUE_EARNED",
+    "data_type": "double precision",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Restaurant_Events_pkey: PRIMARY KEY (\"EVENT_ID\")",
+    "foreign_key_relation": null,
+    "check_constraints": "Restaurant_Events_EXPECTED_ATTENDEES_check: CHECK (((\"EXPECTED_ATTENDEES\" IS NULL) OR (\"EXPECTED_ATTENDEES\" >= 0))); events_category_check: CHECK ((\"CATEGORY\" = ANY (ARRAY['Private Event'::text, 'Birthday'::text, 'Corporate Event'::text, 'Meeting'::text, 'Reservation'::text, 'Catering'::text, 'Promotion'::text, 'Holiday'::text, 'Other'::text]))); events_end_after_start: CHECK ((\"END_AT\" >= \"START_AT\"))"
+  },
+  {
     "schema_name": "menu",
     "table_name": "Item_Groups",
     "column_name": "ID",

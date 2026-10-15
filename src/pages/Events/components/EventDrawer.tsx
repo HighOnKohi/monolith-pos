@@ -1,26 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   X, Save, CalendarDays, MapPin, User2, Users, Phone, Mail,
-  Clock, FileText, Pencil, Trash2, Tag, Palette, BanIcon, Layout, UtensilsCrossed,
-  AlertTriangle, CheckCircle2,
+  Clock, Pencil, Trash2, Tag, Palette, BanIcon, Layout, UtensilsCrossed,
+  AlertTriangle, ChevronLeft, ChevronRight, ChevronDown, Check, Plus,
 } from 'lucide-react'
 import type { RestaurantEvent, EventFormData, EventConflict } from '@/types/event'
 import { EVENT_CATEGORIES, EVENT_FORM_DEFAULTS } from '@/types/event'
-import { checkEventConflicts, checkDuplicateEventTitle } from '@/services/eventService'
+import { checkEventConflicts } from '@/services/eventService'
 import {
   fetchAllLayoutPresets,
-  fetchCurrentTableSetup,
-  fetchPresetTableSetup,
   type TableLayoutPreset,
   type TableSetupBreakdown,
 } from '@/services/tableLayoutService'
-import { TableShapeIcon } from '@/pages/TableManager/components/TableVisual'
 import { fetchMenuPresets, type MenuPreset } from '@/services/menuService'
 import {
   deriveEventStatus,
   getEventStatusBadge,
   getCategoryColor,
-  formatEventDate,
   formatEventDuration,
   formatEventDateRange,
   isoToDateInput,
@@ -46,16 +42,20 @@ interface EventDrawerProps {
   onCancel: (event: RestaurantEvent) => void
 }
 
+// 7 preset colors so all circles + custom color picker fit on a single row
 const COLOR_PALETTE = [
-  '#14274E', // brand primary
-  '#6366f1', // indigo
-  '#ec4899', // pink
-  '#d97706', // amber
-  '#16a34a', // green
-  '#dc2626', // red
-  '#0891b2', // cyan
-  '#7c3aed', // violet
-  '',        // none (use category default)
+  '#14274E', // Navy
+  '#6366f1', // Indigo
+  '#ec4899', // Pink
+  '#d97706', // Amber
+  '#16a34a', // Green
+  '#dc2626', // Red
+  '#0891b2', // Cyan
+]
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
 ]
 
 interface FormErrors {
@@ -65,7 +65,6 @@ interface FormErrors {
   endDate?: string
   endTime?: string
   maxPax?: string
-  expectedAttendees?: string
   presetId?: string
   contactEmail?: string
 }
@@ -73,94 +72,436 @@ interface FormErrors {
 const FORM_LABEL_CLASS = 'block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1'
 const FORM_ERROR_CLASS = 'text-[10px] font-bold text-rose-600 mt-1'
 
-const TableSetupBreakdownSection: React.FC<{
-  title: string
-  badgeText: string
-  badgeVariant?: 'indigo' | 'emerald' | 'amber' | 'slate'
-  setup: TableSetupBreakdown | null
-  emptyMessage?: string
-}> = ({
-  title,
-  badgeText,
-  badgeVariant = 'indigo',
-  setup,
-  emptyMessage = 'No table details available for this layout.',
-}) => {
-  const badgeClasses = {
-    indigo: 'bg-indigo-100 text-indigo-700 border-indigo-200',
-    emerald: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-    amber: 'bg-amber-100 text-amber-700 border-amber-200',
-    slate: 'bg-slate-100 text-slate-700 border-slate-200',
-  }[badgeVariant]
+function formatEventFullDateRange(startDate: string, endDate: string): string {
+  if (!startDate || !endDate) return 'No dates selected'
+  const d1 = new Date(startDate + 'T00:00:00')
+  const d2 = new Date(endDate + 'T00:00:00')
+  const month1 = d1.toLocaleDateString('en-US', { month: 'long' })
+  const day1 = d1.getDate()
+  const month2 = d2.toLocaleDateString('en-US', { month: 'long' })
+  const day2 = d2.getDate()
+
+  if (startDate === endDate) {
+    return `${month1} ${day1}`
+  }
+  return `${month1} ${day1} - ${month2} ${day2}`
+}
+
+// ─── Custom Drawer Dropdown (Consistent with Filter & Preset Selectors) ──────
+
+interface DrawerDropdownOption {
+  value: string | number
+  label: string
+  sublabel?: string
+  disabled?: boolean
+  explanation?: string
+}
+
+interface DrawerDropdownProps {
+  id: string
+  value: string | number
+  options: DrawerDropdownOption[]
+  onChange: (value: any) => void
+  error?: boolean
+}
+
+function DrawerDropdown({
+  id,
+  value,
+  options,
+  onChange,
+  error = false,
+}: DrawerDropdownProps) {
+  const [isOpen, setIsOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
+  }, [])
+
+  const selectedOption = options.find((opt) => String(opt.value) === String(value)) ?? options[0]
 
   return (
-    <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-50 via-indigo-50/20 to-white border border-slate-200/90 shadow-2xs space-y-3">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <div className="p-2 rounded-xl bg-[#14274E]/5 text-[#14274E] shrink-0">
-            <Layout className="w-4 h-4 text-indigo-600" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h4 className="text-xs font-black text-[#14274E] uppercase tracking-wider">
-                {title}
-              </h4>
-              <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${badgeClasses}`}>
-                {badgeText}
-              </span>
-            </div>
-            <span className="text-[11px] font-bold text-slate-500">
-              {setup?.totalTables ?? 0} Tables •{' '}
-              <strong className="text-[#14274E]">
-                {setup?.totalSeats ?? 0} Total Seats
-              </strong>
+    <div ref={dropdownRef} className="relative w-full" id={id}>
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+          error
+            ? 'border-rose-400 bg-rose-50/50 text-rose-900'
+            : 'bg-slate-100 text-[#14274E] border-slate-300 hover:bg-slate-200 shadow-2xs'
+        }`}
+      >
+        <div className="flex items-center justify-between flex-1 min-w-0 pr-1">
+          <span className="truncate">{selectedOption?.label}</span>
+          {selectedOption?.sublabel && (
+            <span className="text-[10px] text-slate-400 font-bold shrink-0 ml-auto pl-2">
+              {selectedOption.sublabel}
             </span>
-          </div>
+          )}
         </div>
-      </div>
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-slate-500 shrink-0 ml-1 transition-transform duration-150 ${
+            isOpen ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
 
-      {/* Table Types Breakdown Grid */}
-      {setup && setup.byType && setup.byType.length > 0 ? (
-        <div className="space-y-1.5 pt-1">
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-            Tables per Type
-          </span>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {setup.byType.map((item) => (
-              <div
-                key={item.type}
-                className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-slate-200/80 shadow-2xs hover:border-slate-300 transition-colors"
-              >
-                <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0">
-                  <TableShapeIcon tableType={item.type} size={20} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <span className="block text-xs font-black text-[#14274E] leading-tight truncate">
-                    {item.name}
-                  </span>
-                  <div className="flex items-center gap-1.5 mt-0.5 text-[11px] font-bold text-slate-400">
-                    <span className="text-indigo-600 font-extrabold">{item.count}</span>{' '}
-                    <span>{item.count === 1 ? 'Table' : 'Tables'}</span>
-                    <span className="text-slate-300">•</span>
-                    <span className="text-slate-500 font-semibold">{item.totalSeats} seats</span>
+      {isOpen && (
+        <div className="absolute left-0 right-0 top-full mt-1.5 bg-white rounded-2xl shadow-xl border border-slate-200 p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150">
+          <div className="space-y-1 max-h-56 overflow-y-auto">
+            {options.map((option) => {
+              const isSelected = String(option.value) === String(value)
+              if (option.disabled) {
+                return (
+                  <div
+                    key={String(option.value)}
+                    title={option.explanation || 'Capacity is less than required for this event'}
+                    className="p-2 rounded-xl text-xs text-slate-400 opacity-40 cursor-not-allowed flex items-center justify-between hover:bg-slate-50 transition-colors"
+                  >
+                    <span className="truncate">{option.label}</span>
+                    {option.sublabel && (
+                      <span className="text-[10px] font-bold text-rose-500 shrink-0 ml-auto pl-2">
+                        {option.sublabel}
+                      </span>
+                    )}
                   </div>
-                </div>
-              </div>
-            ))}
+                )
+              }
+              return (
+                <button
+                  key={String(option.value)}
+                  type="button"
+                  onClick={() => {
+                    onChange(option.value)
+                    setIsOpen(false)
+                  }}
+                  className={`w-full flex items-center justify-between p-2 rounded-xl text-xs transition-colors cursor-pointer text-left ${
+                    isSelected
+                      ? 'bg-[#14274E] text-[#E9C46A] font-black shadow-xs'
+                      : 'hover:bg-slate-50 text-slate-700 font-bold'
+                  }`}
+                >
+                  <div className="flex items-center justify-between flex-1 min-w-0 pr-1">
+                    <span className="truncate">{option.label}</span>
+                    {option.sublabel && (
+                      <span
+                        className={`text-[11px] font-bold shrink-0 ml-auto pl-2 ${
+                          isSelected ? 'text-[#E9C46A]' : 'text-slate-400'
+                        }`}
+                      >
+                        {option.sublabel}
+                      </span>
+                    )}
+                  </div>
+                  {isSelected && <Check className="w-3.5 h-3.5 text-[#E9C46A] shrink-0 ml-1.5" />}
+                </button>
+              )
+            })}
           </div>
         </div>
-      ) : (
-        <p className="text-xs text-slate-400 italic">{emptyMessage}</p>
       )}
     </div>
   )
 }
 
+function isDateWithinRange(cellDateStr: string, startDate: string, endDate: string): boolean {
+  if (!startDate && !endDate) return true
+
+  const cellMs = new Date(cellDateStr + 'T00:00:00').getTime()
+
+  // Case 1: Exactly 1 date selected
+  if (startDate === endDate || !startDate || !endDate) {
+    const anchor = startDate || endDate
+    const anchorMs = new Date(anchor + 'T00:00:00').getTime()
+    const diffDays = Math.round(Math.abs(cellMs - anchorMs) / (1000 * 60 * 60 * 24))
+    return diffDays <= 6
+  }
+
+  // Case 2: Multi-day range already selected
+  if (cellDateStr === startDate || cellDateStr === endDate) return true
+
+  const startMs = new Date(startDate + 'T00:00:00').getTime()
+  const endMs = new Date(endDate + 'T00:00:00').getTime()
+
+  if (cellDateStr >= startDate && cellDateStr <= endDate) return true
+
+  if (cellDateStr < startDate) {
+    const diffDays = Math.round((endMs - cellMs) / (1000 * 60 * 60 * 24))
+    return diffDays <= 6
+  }
+
+  if (cellDateStr > endDate) {
+    const diffDays = Math.round((cellMs - startMs) / (1000 * 60 * 60 * 24))
+    return diffDays <= 6
+  }
+
+  return false
+}
+
+// ─── Mini Calendar Range Picker Component ─────────────────────────────────────
+
+interface MiniCalendarPickerProps {
+  startDate: string // 'YYYY-MM-DD'
+  endDate: string   // 'YYYY-MM-DD'
+  onSelectRange: (start: string, end: string) => void
+}
+
+function MiniCalendarPicker({
+  startDate,
+  endDate,
+  onSelectRange,
+}: MiniCalendarPickerProps) {
+  const initialDate = startDate ? new Date(startDate + 'T00:00:00') : new Date()
+  const [viewYear, setViewYear] = useState(initialDate.getFullYear())
+  const [viewMonth, setViewMonth] = useState(initialDate.getMonth())
+  const [warningMsg, setWarningMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (startDate) {
+      const d = new Date(startDate + 'T00:00:00')
+      if (!isNaN(d.getTime())) {
+        setViewYear(d.getFullYear())
+        setViewMonth(d.getMonth())
+      }
+    }
+  }, [startDate])
+
+  const prevMonth = () => {
+    if (viewMonth === 0) {
+      setViewMonth(11)
+      setViewYear((y) => y - 1)
+    } else {
+      setViewMonth((m) => m - 1)
+    }
+  }
+
+  const nextMonth = () => {
+    if (viewMonth === 11) {
+      setViewMonth(0)
+      setViewYear((y) => y + 1)
+    } else {
+      setViewMonth((m) => m + 1)
+    }
+  }
+
+  // Generate grid dates (Sunday to Saturday)
+  const firstOfMonth = new Date(viewYear, viewMonth, 1)
+  const lastOfMonth = new Date(viewYear, viewMonth + 1, 0)
+  const startOffset = firstOfMonth.getDay() // 0=Sun, 1=Mon, ..., 6=Sat
+
+  const cells: { dateStr: string; dayNumber: number; isCurrentMonth: boolean }[] = []
+
+  // Prev month padding
+  for (let i = startOffset; i > 0; i--) {
+    const d = new Date(viewYear, viewMonth, 1 - i)
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    cells.push({ dateStr, dayNumber: d.getDate(), isCurrentMonth: false })
+  }
+
+  // Current month
+  for (let i = 1; i <= lastOfMonth.getDate(); i++) {
+    const d = new Date(viewYear, viewMonth, i)
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    cells.push({ dateStr, dayNumber: i, isCurrentMonth: true })
+  }
+
+  // Next month padding
+  let nextDay = 1
+  while (cells.length % 7 !== 0) {
+    const d = new Date(viewYear, viewMonth + 1, nextDay++)
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    cells.push({ dateStr, dayNumber: d.getDate(), isCurrentMonth: false })
+  }
+
+  /**
+   * Selection State Machine:
+   * 1. If no date selected: clicking D sets startDate = D, endDate = D (single day).
+   * 2. If one date selected (startDate === endDate):
+   *    - Clicking same date deselects it -> '' & ''.
+   *    - Clicking different date sets multi-day (earlier is start, later is end, max 1 week).
+   * 3. If two dates selected (startDate !== endDate):
+   *    - Clicking current startDate deselects start date (only endDate remains).
+   *    - Clicking current endDate deselects end date (only startDate remains).
+   *    - Clicking any other date: moves the closer boundary.
+   */
+  const handleDayClick = (clickedDate: string) => {
+    setWarningMsg(null)
+
+    // Cannot click dates outside 1-week range
+    if (!isDateWithinRange(clickedDate, startDate, endDate)) {
+      return
+    }
+
+    // Case 1: No dates selected
+    if (!startDate || !endDate) {
+      onSelectRange(clickedDate, clickedDate)
+      return
+    }
+
+    // Case 2: Exactly one date currently selected
+    if (startDate === endDate) {
+      if (clickedDate === startDate) {
+        onSelectRange('', '')
+        return
+      }
+
+      const t1 = new Date(startDate + 'T00:00:00').getTime()
+      const t2 = new Date(clickedDate + 'T00:00:00').getTime()
+      const diffDays = Math.round(Math.abs(t2 - t1) / (1000 * 60 * 60 * 24))
+
+      if (diffDays > 6) {
+        setWarningMsg('Maximum event duration is 1 week (7 days). Selection set to this date.')
+        onSelectRange(clickedDate, clickedDate)
+        return
+      }
+
+      const start = t1 <= t2 ? startDate : clickedDate
+      const end = t1 <= t2 ? clickedDate : startDate
+      onSelectRange(start, end)
+      return
+    }
+
+    // Case 3: Two dates currently selected
+    if (clickedDate === startDate) {
+      onSelectRange(endDate, endDate)
+      return
+    }
+
+    if (clickedDate === endDate) {
+      onSelectRange(startDate, startDate)
+      return
+    }
+
+    const clickTime = new Date(clickedDate + 'T00:00:00').getTime()
+    const startTime = new Date(startDate + 'T00:00:00').getTime()
+    const endTime = new Date(endDate + 'T00:00:00').getTime()
+
+    const distToStart = Math.abs(clickTime - startTime)
+    const distToEnd = Math.abs(clickTime - endTime)
+
+    if (distToStart < distToEnd) {
+      const newStart = clickedDate <= endDate ? clickedDate : endDate
+      const newEnd = clickedDate <= endDate ? endDate : clickedDate
+      const diffDays = Math.round((new Date(newEnd + 'T00:00:00').getTime() - new Date(newStart + 'T00:00:00').getTime()) / (1000 * 60 * 60 * 24))
+      if (diffDays > 6) return
+      onSelectRange(newStart, newEnd)
+    } else {
+      const newStart = clickedDate >= startDate ? startDate : clickedDate
+      const newEnd = clickedDate >= startDate ? clickedDate : startDate
+      const diffDays = Math.round((new Date(newEnd + 'T00:00:00').getTime() - new Date(newStart + 'T00:00:00').getTime()) / (1000 * 60 * 60 * 24))
+      if (diffDays > 6) return
+      onSelectRange(newStart, newEnd)
+    }
+  }
+
+  const todayStr = (() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+
+  return (
+    <div className="space-y-2">
+      {/* Month Navigation */}
+      <div className="flex items-center justify-between px-1">
+        <h5 className="text-xs font-black text-[#14274E]">
+          {MONTH_NAMES[viewMonth]} {viewYear}
+        </h5>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={prevMonth}
+            className="p-1 rounded-lg text-slate-500 hover:text-[#14274E] hover:bg-slate-200/60 transition-colors cursor-pointer"
+            aria-label="Previous month"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={nextMonth}
+            className="p-1 rounded-lg text-slate-500 hover:text-[#14274E] hover:bg-slate-200/60 transition-colors cursor-pointer"
+            aria-label="Next month"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Weekday labels (Sunday to Saturday) */}
+      <div className="grid grid-cols-7 gap-1 text-center">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, idx) => (
+          <span
+            key={idx}
+            className={`text-[10px] font-black ${idx === 0 || idx === 6 ? 'text-amber-600/70' : 'text-slate-400'}`}
+          >
+            {day}
+          </span>
+        ))}
+      </div>
+
+      {/* Calendar Grid with 1-Week Range Date Fading */}
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map(({ dateStr, dayNumber, isCurrentMonth }) => {
+          const hasStart = Boolean(startDate)
+          const hasEnd = Boolean(endDate)
+          const isStart = hasStart && dateStr === startDate
+          const isEnd = hasEnd && dateStr === endDate
+          const isBetween = hasStart && hasEnd && dateStr > startDate && dateStr < endDate
+          const isToday = dateStr === todayStr
+          const isAllowed = isDateWithinRange(dateStr, startDate, endDate)
+
+          return (
+            <button
+              key={dateStr}
+              type="button"
+              disabled={!isAllowed}
+              onClick={() => {
+                if (isAllowed) handleDayClick(dateStr)
+              }}
+              title={!isAllowed ? 'Date outside 1-week range' : dateStr}
+              className={`h-7 w-full flex items-center justify-center rounded-lg text-xs font-bold transition-all relative ${
+                !isAllowed
+                  ? 'opacity-20 cursor-not-allowed pointer-events-none text-slate-300'
+                  : isStart || isEnd
+                    ? 'bg-[#14274E] text-[#E9C46A] font-black shadow-xs z-10 cursor-pointer'
+                    : isBetween
+                      ? 'bg-blue-100/90 text-blue-900 rounded-none font-black cursor-pointer'
+                      : isCurrentMonth
+                        ? 'text-slate-700 hover:bg-slate-100 cursor-pointer'
+                        : 'text-slate-300 hover:bg-slate-50 cursor-pointer'
+              } ${isStart && isBetween ? 'rounded-l-lg' : ''} ${isEnd && isBetween ? 'rounded-r-lg' : ''}`}
+            >
+              <span>{dayNumber}</span>
+              {isToday && !isStart && !isEnd && (
+                <span className="absolute bottom-0.5 w-1 h-1 rounded-full bg-blue-500" />
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Warning Alert */}
+      {warningMsg && (
+        <div className="p-2 bg-amber-50 border border-amber-200 rounded-xl text-[10px] text-amber-800 font-semibold animate-in fade-in duration-150">
+          {warningMsg}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Main Event Drawer Component ──────────────────────────────────────────────
+
 export const EventDrawer: React.FC<EventDrawerProps> = ({
   isOpen,
   mode,
   event,
-  currentTableSetup,
   prefillDate,
   canManageEvents,
   existingEvents = [],
@@ -174,76 +515,26 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
   const [form, setForm] = useState<EventFormData>(EVENT_FORM_DEFAULTS)
   const [errors, setErrors] = useState<FormErrors>({})
   const [conflicts, setConflicts] = useState<EventConflict[]>([])
-  const [conflictLoading, setConflictLoading] = useState(false)
   const [conflictChecked, setConflictChecked] = useState(false)
   const [presets, setPresets] = useState<TableLayoutPreset[]>([])
   const [menuPresets, setMenuPresets] = useState<MenuPreset[]>([])
-  const [eventPresetSetup, setEventPresetSetup] = useState<TableSetupBreakdown | null>(null)
-  const [formPresetSetup, setFormPresetSetup] = useState<TableSetupBreakdown | null>(null)
-  const [localCurrentSetup, setLocalCurrentSetup] = useState<TableSetupBreakdown | null>(currentTableSetup ?? null)
 
-  // Load layout & menu presets for linking
+  // Load presets
   useEffect(() => {
     if (!isOpen) return
-    fetchAllLayoutPresets()
-      .then(setPresets)
-      .catch(() => setPresets([]))
-    fetchMenuPresets()
-      .then(setMenuPresets)
-      .catch(() => setMenuPresets([]))
+    fetchAllLayoutPresets().then(setPresets).catch(() => {})
+    fetchMenuPresets().then(setMenuPresets).catch(() => {})
   }, [isOpen])
-
-  // Sync current table setup breakdown
-  useEffect(() => {
-    if (!isOpen) return
-    if (currentTableSetup && currentTableSetup.totalTables > 0) {
-      setLocalCurrentSetup(currentTableSetup)
-    } else {
-      fetchCurrentTableSetup()
-        .then(setLocalCurrentSetup)
-        .catch(() => {})
-    }
-  }, [isOpen, currentTableSetup])
-
-  // Fetch breakdown for viewed event's preset if linked
-  useEffect(() => {
-    if (!isOpen) {
-      setEventPresetSetup(null)
-      return
-    }
-    if (mode === 'view' && event?.presetId) {
-      const presetObj = presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)
-      fetchPresetTableSetup(event.presetId, presetObj?.PRESET_NAME)
-        .then(setEventPresetSetup)
-        .catch(() => setEventPresetSetup(null))
-    } else {
-      setEventPresetSetup(null)
-    }
-  }, [isOpen, mode, event?.presetId, presets])
-
-  // Fetch breakdown for form's selected preset in create/edit mode
-  useEffect(() => {
-    if (!isOpen || mode === 'view') {
-      setFormPresetSetup(null)
-      return
-    }
-    if (form.presetId) {
-      const presetObj = presets.find((p) => p.LAYOUT_PRESET_ID === form.presetId)
-      fetchPresetTableSetup(form.presetId, presetObj?.PRESET_NAME)
-        .then(setFormPresetSetup)
-        .catch(() => setFormPresetSetup(null))
-    } else {
-      setFormPresetSetup(null)
-    }
-  }, [isOpen, mode, form.presetId, presets])
 
   // Compute event capacity vs layout preset capacity
   const eventGuestCapacity = form.maxPax && /^\d+$/.test(form.maxPax) ? parseInt(form.maxPax, 10) : 0
   const selectedPreset = presets.find((p) => p.LAYOUT_PRESET_ID === form.presetId)
   const selectedPresetCapacity = selectedPreset?.MAX_PAX != null ? Number(selectedPreset.MAX_PAX) : 50
-  const isPresetOverCapacity = Boolean(form.presetId && eventGuestCapacity > 0 && selectedPresetCapacity > eventGuestCapacity)
+  // An event cannot select a layout with capacity less than the event pax
+  const isPresetUnderCapacity = Boolean(form.presetId && eventGuestCapacity > 0 && selectedPresetCapacity < eventGuestCapacity)
+  const isTimeInvalid = Boolean(form.startTime && form.endTime && form.startTime >= form.endTime)
 
-  // ESC key
+  // ESC key listener
   useEffect(() => {
     if (!isOpen) return
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -259,14 +550,14 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
     setConflictChecked(false)
 
     if (mode === 'create') {
-      const minDate = new Date()
-      minDate.setDate(minDate.getDate() + 7)
-      const d = prefillDate && prefillDate > minDate ? prefillDate : minDate
-      const defaultDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const prefillStr = prefillDate
+        ? `${prefillDate.getFullYear()}-${String(prefillDate.getMonth() + 1).padStart(2, '0')}-${String(prefillDate.getDate()).padStart(2, '0')}`
+        : ''
+
       setForm({
         ...EVENT_FORM_DEFAULTS,
-        startDate: defaultDate,
-        endDate: defaultDate,
+        startDate: prefillStr,
+        endDate: prefillStr,
         location: 'Bill Shaw Restaurant',
         maxPax: '50',
         menuPresetId: null,
@@ -298,29 +589,47 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
   }, [isOpen, mode, event, prefillDate])
 
   const setField = <K extends keyof EventFormData>(key: K, value: EventFormData[K]) => {
-    setForm((prev) => ({ ...prev, [key]: value }))
-    setErrors((prev) => ({ ...prev, [key]: undefined }))
-    // Reset conflict check when dates change
+    setForm((prev) => {
+      const next = { ...prev, [key]: value }
+      if ((key === 'startTime' || key === 'endTime') && next.startTime && next.endTime) {
+        if (next.startTime >= next.endTime) {
+          setErrors((errs) => ({
+            ...errs,
+            endTime: 'End time must be after start time (e.g. 9:00 AM to 9:00 PM)',
+          }))
+        } else {
+          setErrors((errs) => {
+            const copy = { ...errs }
+            delete copy.endTime
+            return copy
+          })
+        }
+      }
+      return next
+    })
+
+    if (key !== 'startTime' && key !== 'endTime') {
+      setErrors((prev) => ({ ...prev, [key]: undefined }))
+    }
+
     if (key === 'startDate' || key === 'startTime' || key === 'endDate' || key === 'endTime') {
       setConflicts([])
       setConflictChecked(false)
     }
   }
 
-  // Conflict check (debounced when both start+end are set)
+  // Conflict check debounced silently (no loading spinner shown to user)
   const runConflictCheck = useCallback(async () => {
     if (!form.startDate || !form.startTime || !form.endDate || !form.endTime) return
+    if (form.startTime >= form.endTime) return
     const startAt = new Date(`${form.startDate}T${form.startTime}`).toISOString()
     const endAt = new Date(`${form.endDate}T${form.endTime}`).toISOString()
     if (isNaN(Date.parse(startAt)) || isNaN(Date.parse(endAt))) return
-    setConflictLoading(true)
     const found = await checkEventConflicts(startAt, endAt, event?.eventId)
     setConflicts(found)
     setConflictChecked(true)
-    setConflictLoading(false)
   }, [form.startDate, form.startTime, form.endDate, form.endTime, event?.eventId])
 
-  // Run conflict check after 600ms debounce when dates change
   useEffect(() => {
     if (mode === 'view') return
     if (!form.startDate || !form.endDate) return
@@ -331,31 +640,36 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
   const validate = (): boolean => {
     const errs: FormErrors = {}
     if (!form.title.trim()) errs.title = 'Event name is required'
-    if (!form.startDate) errs.startDate = 'Start date is required'
+    if (!form.startDate || !form.endDate) {
+      errs.startDate = 'Please select event schedule dates on the calendar'
+    }
     if (!form.startTime) errs.startTime = 'Start time is required'
-    if (!form.endDate) errs.endDate = 'End date is required'
     if (!form.endTime) errs.endTime = 'End time is required'
 
-    if (form.startDate && form.endDate && form.startTime && form.endTime) {
-      const start = new Date(`${form.startDate}T${form.startTime}`)
-      const end = new Date(`${form.endDate}T${form.endTime}`)
-      if (end < start) errs.endDate = 'End must be after start date/time'
+    // Daily operating hours check: endTime must be strictly after startTime
+    if (form.startTime && form.endTime && form.startTime >= form.endTime) {
+      errs.endTime = 'End time must be after start time (e.g. 9:00 AM to 9:00 PM)'
     }
 
-    // Advance booking lead time: must be at least 1 week (7 days) from today
-    const minAdvanceDate = new Date()
-    minAdvanceDate.setDate(minAdvanceDate.getDate() + 7)
-    const minDateStr = `${minAdvanceDate.getFullYear()}-${String(minAdvanceDate.getMonth() + 1).padStart(2, '0')}-${String(minAdvanceDate.getDate()).padStart(2, '0')}`
-    if (mode === 'create' && form.startDate && form.startDate < minDateStr) {
-      errs.startDate = 'Events must be booked at least 1 week (7 days) in advance.'
+    // Maximum length validation: 1 week (7 days)
+    if (form.startDate && form.endDate) {
+      const d1 = new Date(form.startDate + 'T00:00:00')
+      const d2 = new Date(form.endDate + 'T00:00:00')
+      const diffDays = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24))
+      if (diffDays > 6) {
+        errs.endDate = 'Maximum event length is 1 week (7 days).'
+      }
     }
 
-    // 1. Prevention of multiple events at the same time
     if (conflicts.length > 0) {
-      errs.startTime = 'Overlaps with another scheduled event. Simultaneous events are not permitted.'
+      const bufferConflict = conflicts.find((c) => c.conflictType === 'buffer')
+      if (bufferConflict) {
+        errs.startTime = `3-hour buffer required: ${bufferConflict.bufferReason || 'must be at least 3 hours apart'}`
+      } else {
+        errs.startTime = 'Overlaps with another scheduled event. Simultaneous events are not permitted.'
+      }
     }
 
-    // 2. Duplication prevention: check for duplicate title on the same start date
     if (form.title.trim() && form.startDate) {
       const normTitle = form.title.trim().toLowerCase()
       const hasDup = existingEvents.some((e) => {
@@ -369,59 +683,55 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
       }
     }
 
-    // 3. Max Pax validation
-    const paxStr = form.maxPax || form.expectedAttendees
-    if (paxStr && !/^\d+$/.test(paxStr)) {
-      errs.maxPax = 'Must be a whole number'
-    } else if (paxStr && parseInt(paxStr, 10) <= 0) {
-      errs.maxPax = 'Max Pax must be at least 1'
-    } else if (paxStr && parseInt(paxStr, 10) > 50) {
-      errs.maxPax = 'Max Pax cannot exceed venue capacity (50 guests max)'
+    if (!form.maxPax) {
+      errs.maxPax = 'Max pax is required'
+    } else {
+      const parsed = parseInt(form.maxPax, 10)
+      if (isNaN(parsed) || parsed < 1 || parsed > 50) {
+        errs.maxPax = 'Max pax cannot exceed 50'
+      }
+    }
+
+    if (isPresetUnderCapacity) {
+      errs.presetId = `Layout preset capacity (${selectedPresetCapacity} Pax) cannot accommodate event guest count (${eventGuestCapacity} Pax).`
     }
 
     if (form.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contactEmail)) {
-      errs.contactEmail = 'Invalid email format'
-    }
-
-    // 4. Check preset capacity limit against event guest capacity
-    if (form.presetId && eventGuestCapacity > 0) {
-      if (selectedPresetCapacity > eventGuestCapacity) {
-        errs.presetId = `Layout preset capacity (${selectedPresetCapacity} seats) exceeds event guest capacity (${eventGuestCapacity} seats).`
-      }
+      errs.contactEmail = 'Invalid email address'
     }
 
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
     if (!validate()) return
 
-    // Live conflict and duplicate verification right before saving
-    if (form.startDate && form.startTime && form.endDate && form.endTime) {
+    if (!conflictChecked && form.startDate && form.startTime && form.endDate && form.endTime) {
       const startAt = new Date(`${form.startDate}T${form.startTime}`).toISOString()
       const endAt = new Date(`${form.endDate}T${form.endTime}`).toISOString()
-      const liveConflicts = await checkEventConflicts(startAt, endAt, event?.eventId)
-      if (liveConflicts.length > 0) {
-        setConflicts(liveConflicts)
+      const found = await checkEventConflicts(startAt, endAt, event?.eventId)
+      if (found.length > 0) {
+        setConflicts(found)
+        setConflictChecked(true)
+        const bufferConflict = found.find((c) => c.conflictType === 'buffer')
         setErrors((prev) => ({
           ...prev,
-          startTime: 'Overlaps with another scheduled event. Simultaneous events are not permitted.',
-        }))
-        return
-      }
-
-      const liveDuplicate = await checkDuplicateEventTitle(form.title, form.startDate, event?.eventId)
-      if (liveDuplicate) {
-        setErrors((prev) => ({
-          ...prev,
-          title: `An event titled "${form.title.trim()}" already exists on this date.`,
+          startTime: bufferConflict
+            ? `3-hour buffer required: ${bufferConflict.bufferReason || 'must be at least 3 hours apart'}`
+            : 'Overlaps with another scheduled event. Simultaneous events are not permitted.',
         }))
         return
       }
     }
 
-    await onSave(form)
+    const sanitizedPax = Math.min(50, Math.max(1, parseInt(form.maxPax || '50', 10)))
+    await onSave({
+      ...form,
+      maxPax: String(sanitizedPax),
+      expectedAttendees: String(sanitizedPax),
+    })
   }
 
   if (!isOpen) return null
@@ -430,7 +740,77 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
   const isFormMode = mode === 'create' || mode === 'edit'
   const eventStatus = event ? deriveEventStatus(event) : null
   const statusBadge = eventStatus ? getEventStatusBadge(eventStatus) : null
-  const catColor = event ? (event.color || getCategoryColor(event.category)) : '#14274E'
+  const catColor = event ? (event.color || getCategoryColor(event.category)) : (form.color || '#14274E')
+
+  // Calculate duration in days
+  const durationDays = (() => {
+    if (!form.startDate || !form.endDate) return 0
+    const d1 = new Date(form.startDate + 'T00:00:00')
+    const d2 = new Date(form.endDate + 'T00:00:00')
+    const diff = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24))
+    return Math.max(1, diff + 1)
+  })()
+
+  // Category dropdown options
+  const categoryDropdownOptions: DrawerDropdownOption[] = EVENT_CATEGORIES.map((c) => ({
+    value: c,
+    label: c,
+  }))
+
+  // Table Presets Dropdown:
+  // - "Regular Operation" with sublabel "50 Pax" (NO "Default" text)
+  // - Presets with capacity < event pax appear at the BOTTOM, faded, disabled, with hover explanation
+  // - Sublabel with Pax is aligned to the right
+  const validPresetOptions: DrawerDropdownOption[] = []
+  const invalidPresetOptions: DrawerDropdownOption[] = []
+
+  if (eventGuestCapacity <= 50) {
+    validPresetOptions.push({
+      value: '',
+      label: 'Regular Operation',
+      sublabel: '50 Pax',
+    })
+  } else {
+    invalidPresetOptions.push({
+      value: '',
+      label: 'Regular Operation',
+      sublabel: `50 Pax < ${eventGuestCapacity} Pax`,
+      disabled: true,
+      explanation: `Regular Operation accommodates 50 Pax, which is less than the ${eventGuestCapacity} Pax set for this event.`,
+    })
+  }
+
+  presets.forEach((p) => {
+    const presetCap = p.MAX_PAX != null ? Number(p.MAX_PAX) : 50
+    const isUnder = eventGuestCapacity > 0 && presetCap < eventGuestCapacity
+    const optionItem: DrawerDropdownOption = {
+      value: p.LAYOUT_PRESET_ID,
+      label: p.PRESET_NAME,
+      sublabel: `${presetCap} Pax`,
+      disabled: isUnder,
+      explanation: isUnder
+        ? `Cannot select: this layout accommodates ${presetCap} Pax, which is less than the ${eventGuestCapacity} Pax set for this event.`
+        : undefined,
+    }
+
+    if (isUnder) {
+      invalidPresetOptions.push(optionItem)
+    } else {
+      validPresetOptions.push(optionItem)
+    }
+  })
+
+  // Valid presets first, invalid presets at the bottom
+  const presetDropdownOptions = [...validPresetOptions, ...invalidPresetOptions]
+
+  // Menu Preset Dropdown: "None (Standard)" renamed to just "Default"
+  const menuPresetDropdownOptions: DrawerDropdownOption[] = [
+    { value: '', label: 'Default' },
+    ...menuPresets.map((m) => ({
+      value: m.PRESET_ID,
+      label: m.PRESET_NAME,
+    })),
+  ]
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -440,616 +820,577 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
         onClick={submitting ? undefined : onClose}
       />
 
-      {/* Drawer */}
-      <div className="fixed left-1/2 top-1/2 w-[calc(100%-2rem)] max-w-xl max-h-[calc(100vh-2rem)] -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-2xl flex flex-col z-50 animate-in fade-in zoom-in-95 duration-250 border border-slate-200 overflow-hidden">
-        {/* ── Drawer Header ── */}
+      {/* Main Container Wrapper */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 pointer-events-none overflow-y-auto">
         <div
-          className="p-5 border-b border-slate-100 flex items-center justify-between shrink-0"
-          style={{ background: isView && catColor ? `${catColor}08` : undefined }}
+          className={`pointer-events-auto flex flex-col lg:flex-row items-start gap-4 w-full ${
+            isFormMode ? 'max-w-5xl' : 'max-w-xl'
+          } max-h-[calc(100vh-2.5rem)] animate-in fade-in zoom-in-95 duration-250`}
         >
-          <div className="flex items-center gap-3 min-w-0">
+          {/* ── CARD 1: Event Form / Details Modal Container ── */}
+          <div className="flex-1 bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden min-h-0 w-full">
+            {/* Drawer Header */}
             <div
-              className="w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shadow-xs shrink-0"
-              style={{ backgroundColor: catColor, color: '#fff' }}
+              className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between shrink-0"
+              style={{ background: isView && catColor ? `${catColor}08` : undefined }}
             >
-              <CalendarDays className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-base font-black text-[#14274E] truncate">
-                {mode === 'create'
-                  ? 'Add New Event'
-                  : mode === 'edit'
-                    ? `Edit: ${event?.title ?? ''}`
-                    : (event?.title ?? 'Event Details')}
-              </h2>
-              <p className="text-xs text-slate-400">
-                {mode === 'create'
-                  ? 'Fill in the details for the new event.'
-                  : mode === 'edit'
-                    ? 'Update event details. Changes are saved immediately.'
-                    : event
-                      ? `Event #${event.eventId} · ${event.category}`
-                      : ''}
-              </p>
-            </div>
-          </div>
-
-          <button
-            onClick={onClose}
-            disabled={submitting}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors cursor-pointer shrink-0 ml-2"
-            aria-label="Close drawer"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* ── Drawer Body ── */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* ── VIEW MODE ── */}
-          {isView && event && (
-            <div className="space-y-5">
-              {/* Status + Category */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {statusBadge && eventStatus && (
-                  <span
-                    className={[
-                      'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border',
-                      statusBadge.bg, statusBadge.text, statusBadge.border,
-                    ].join(' ')}
-                  >
-                    <span className={`w-2 h-2 rounded-full ${statusBadge.dot}`} />
-                    {eventStatus}
-                  </span>
-                )}
-                <span
-                  className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold"
-                  style={{
-                    backgroundColor: `${catColor}18`,
-                    color: catColor,
-                    border: `1px solid ${catColor}30`,
-                  }}
+              <div className="flex items-center gap-3 min-w-0">
+                <div
+                  className="w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shadow-xs shrink-0"
+                  style={{ backgroundColor: catColor, color: '#fff' }}
                 >
-                  {event.category}
-                </span>
-              </div>
-
-              {/* Core Info Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <DetailRow
-                  icon={<CalendarDays className="w-3.5 h-3.5" />}
-                  label="Date & Time"
-                  value={formatEventDateRange(event.startAt, event.endAt)}
-                />
-                <DetailRow
-                  icon={<Clock className="w-3.5 h-3.5" />}
-                  label="Duration"
-                  value={formatEventDuration(event.startAt, event.endAt)}
-                />
-                {event.location && (
-                  <DetailRow
-                    icon={<MapPin className="w-3.5 h-3.5" />}
-                    label="Location"
-                    value={event.location}
-                  />
-                )}
-                {event.organizer && (
-                  <DetailRow
-                    icon={<User2 className="w-3.5 h-3.5" />}
-                    label="Organizer"
-                    value={event.organizer}
-                  />
-                )}
-                <DetailRow
-                  icon={<Users className="w-3.5 h-3.5" />}
-                  label="Max Pax"
-                  value={`${event.maxPax ?? event.expectedAttendees ?? 50} Pax`}
-                />
-                {event.presetId && (
-                  <DetailRow
-                    icon={<Layout className="w-3.5 h-3.5" />}
-                    label="Linked Table Layout"
-                    value={`${presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`} (${presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.MAX_PAX ?? 50} Pax capacity)`}
-                  />
-                )}
-                {event.menuPresetId && (
-                  <DetailRow
-                    icon={<UtensilsCrossed className="w-3.5 h-3.5" />}
-                    label="Linked Menu Preset"
-                    value={menuPresets.find((m) => m.PRESET_ID === event.menuPresetId)?.PRESET_NAME ?? `Preset #${event.menuPresetId}`}
-                  />
-                )}
-              </div>
-
-              {/* ── Current Tables Setup Breakdown Card (Always visible) ── */}
-              <TableSetupBreakdownSection
-                title={`Current Tables Setup${localCurrentSetup?.presetName ? ` (${localCurrentSetup.presetName})` : ''}`}
-                badgeText="Active Venue Setup"
-                badgeVariant="slate"
-                setup={localCurrentSetup}
-                emptyMessage="No current table setup data available."
-              />
-
-              {/* ── Event Linked Table Layout Breakdown Card (If linked to a layout preset) ── */}
-              {event.presetId && (
-                <TableSetupBreakdownSection
-                  title={`Event Linked Layout: ${eventPresetSetup?.presetName || presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME || `Preset #${event.presetId}`}`}
-                  badgeText="Event Layout Preset"
-                  badgeVariant="indigo"
-                  setup={eventPresetSetup}
-                  emptyMessage="Loading preset tables breakdown..."
-                />
-              )}
-
-              {/* Description */}
-              {event.description && (
-                <div className="space-y-1">
-                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                    <FileText className="w-3 h-3" /> Description
-                  </p>
-                  <p className="text-sm text-slate-700 leading-relaxed bg-slate-50 rounded-xl p-3 border border-slate-100">
-                    {event.description}
+                  <CalendarDays className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-base font-black text-[#14274E] truncate">
+                    {mode === 'create'
+                      ? 'Add New Event'
+                      : mode === 'edit'
+                        ? `Edit: ${event?.title ?? ''}`
+                        : (event?.title ?? 'Event Details')}
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    {mode === 'create'
+                      ? 'Fill in event details and select dates in the schedule panel.'
+                      : mode === 'edit'
+                        ? 'Update event details and adjust schedule dates.'
+                        : event
+                          ? `Event #${event.eventId} · ${event.category}`
+                          : ''}
                   </p>
                 </div>
-              )}
-
-              {/* Contact Info */}
-              {(event.contactName || event.contactPhone || event.contactEmail) && (
-                <div className="space-y-2 p-3 rounded-xl bg-slate-50 border border-slate-100">
-                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Contact</p>
-                  {event.contactName && <InfoChip icon={<User2 className="w-3.5 h-3.5" />} value={event.contactName} />}
-                  {event.contactPhone && <InfoChip icon={<Phone className="w-3.5 h-3.5" />} value={event.contactPhone} />}
-                  {event.contactEmail && <InfoChip icon={<Mail className="w-3.5 h-3.5" />} value={event.contactEmail} />}
-                </div>
-              )}
-
-              {/* Notes */}
-              {event.notes && (
-                <div className="space-y-1">
-                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Notes</p>
-                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{event.notes}</p>
-                </div>
-              )}
-
-              {/* Metadata */}
-              <div className="pt-3 border-t border-slate-100 grid grid-cols-2 gap-3 text-xs text-slate-400">
-                <div>
-                  <p className="text-[10px] uppercase font-black tracking-wider">Created By</p>
-                  <p className="font-medium text-slate-600 mt-0.5">{event.createdBy || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase font-black tracking-wider">Created At</p>
-                  <p className="font-medium text-slate-600 mt-0.5">{formatEventDate(event.createdAt)}</p>
-                </div>
-                {event.updatedBy && (
-                  <div>
-                    <p className="text-[10px] uppercase font-black tracking-wider">Last Updated By</p>
-                    <p className="font-medium text-slate-600 mt-0.5">{event.updatedBy}</p>
-                  </div>
-                )}
-                <div>
-                  <p className="text-[10px] uppercase font-black tracking-wider">Last Updated</p>
-                  <p className="font-medium text-slate-600 mt-0.5">{formatEventDate(event.updatedAt)}</p>
-                </div>
               </div>
+
+              <button
+                onClick={onClose}
+                disabled={submitting}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors cursor-pointer shrink-0 ml-2"
+                aria-label="Close drawer"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-          )}
 
-          {/* ── FORM MODE ── */}
-          {isFormMode && (
-            <div className="space-y-5">
-              {/* Conflict Banner */}
-              {conflictLoading && (
-                <div className="text-xs text-slate-400 italic animate-pulse flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded-full border-2 border-slate-300 border-t-transparent animate-spin" />
-                  Checking for conflicts...
-                </div>
-              )}
-              {!conflictLoading && conflictChecked && (
-                <EventConflictBanner conflicts={conflicts} />
-              )}
+            {/* Drawer Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+              {/* ── VIEW MODE ── */}
+              {isView && event && (
+                <div className="space-y-4">
+                  {/* Status + Category with Assigned Color */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {statusBadge && eventStatus && (
+                      <span
+                        className={[
+                          'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border',
+                          statusBadge.bg, statusBadge.text, statusBadge.border,
+                        ].join(' ')}
+                      >
+                        <span className={`w-2 h-2 rounded-full ${statusBadge.dot}`} />
+                        {eventStatus}
+                      </span>
+                    )}
+                    <span
+                      className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold"
+                      style={{
+                        backgroundColor: `${catColor}18`,
+                        color: catColor,
+                        border: `1px solid ${catColor}35`,
+                      }}
+                    >
+                      {event.category}
+                    </span>
+                    {event.color && (
+                      <span
+                        className="w-3.5 h-3.5 rounded-full border border-white shadow-xs"
+                        style={{ backgroundColor: event.color }}
+                        title={`Assigned color: ${event.color}`}
+                      />
+                    )}
+                  </div>
 
-              {/* Title */}
-              <div className="space-y-1.5">
-                <label htmlFor="event-title" className={FORM_LABEL_CLASS}>
-                  Event Name <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  id="event-title"
-                  type="text"
-                  value={form.title}
-                  onChange={(e) => setField('title', e.target.value)}
-                  placeholder="e.g. Annual Company Dinner"
-                  className={formInputClass(!!errors.title)}
-                />
-                {errors.title && <p className={FORM_ERROR_CLASS}>{errors.title}</p>}
-              </div>
+                  {/* Core Info Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <DetailRow
+                      icon={<CalendarDays className="w-3.5 h-3.5" />}
+                      label="Date Duration"
+                      value={formatEventDateRange(event.startAt, event.endAt)}
+                    />
+                    <DetailRow
+                      icon={<Clock className="w-3.5 h-3.5" />}
+                      label="Duration"
+                      value={formatEventDuration(event.startAt, event.endAt)}
+                    />
+                    {event.location && (
+                      <DetailRow
+                        icon={<MapPin className="w-3.5 h-3.5" />}
+                        label="Location"
+                        value={event.location}
+                      />
+                    )}
+                    {event.organizer && (
+                      <DetailRow
+                        icon={<User2 className="w-3.5 h-3.5" />}
+                        label="Organizer"
+                        value={event.organizer}
+                      />
+                    )}
+                    <DetailRow
+                      icon={<Users className="w-3.5 h-3.5" />}
+                      label="Guest Count"
+                      value={`${event.maxPax ?? event.expectedAttendees ?? 50} Pax`}
+                    />
+                    {event.presetId && (
+                      <DetailRow
+                        icon={<Layout className="w-3.5 h-3.5" />}
+                        label="Linked Table Layout"
+                        value={`${presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.PRESET_NAME ?? `Preset #${event.presetId}`} (${presets.find((p) => p.LAYOUT_PRESET_ID === event.presetId)?.MAX_PAX ?? 50} Pax)`}
+                      />
+                    )}
+                    {event.menuPresetId && (
+                      <DetailRow
+                        icon={<UtensilsCrossed className="w-3.5 h-3.5" />}
+                        label="Linked Menu Preset"
+                        value={menuPresets.find((m) => m.PRESET_ID === event.menuPresetId)?.PRESET_NAME ?? 'Default'}
+                      />
+                    )}
+                  </div>
 
-              {/* Start Date + Time */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label htmlFor="event-start-date" className={FORM_LABEL_CLASS}>
-                    Start Date <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    id="event-start-date"
-                    type="date"
-                    min={(() => {
-                      const d = new Date()
-                      d.setDate(d.getDate() + 7)
-                      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-                    })()}
-                    value={form.startDate}
-                    onChange={(e) => setField('startDate', e.target.value)}
-                    className={formInputClass(!!errors.startDate)}
-                  />
-                  {errors.startDate ? (
-                    <p className={FORM_ERROR_CLASS}>{errors.startDate}</p>
-                  ) : (
-                    <p className="text-[10px] text-slate-400">Notice: Minimum 1-week lead time window required.</p>
+                  {/* Contact Info */}
+                  {(event.contactName || event.contactPhone || event.contactEmail) && (
+                    <div className="space-y-2 p-3 rounded-xl bg-slate-50 border border-slate-100">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Contact</p>
+                      {event.contactName && <InfoChip icon={<User2 className="w-3.5 h-3.5" />} value={event.contactName} />}
+                      {event.contactPhone && <InfoChip icon={<Phone className="w-3.5 h-3.5" />} value={event.contactPhone} />}
+                      {event.contactEmail && <InfoChip icon={<Mail className="w-3.5 h-3.5" />} value={event.contactEmail} />}
+                    </div>
+                  )}
+
+                  {/* Notes */}
+                  {event.notes && (
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Notes</p>
+                      <p className="text-xs text-slate-600 bg-slate-50 rounded-xl p-3 border border-slate-100">{event.notes}</p>
+                    </div>
                   )}
                 </div>
-                <div className="space-y-1.5">
-                  <label htmlFor="event-start-time" className={FORM_LABEL_CLASS}>
-                    Start Time <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    id="event-start-time"
-                    type="time"
-                    value={form.startTime}
-                    onChange={(e) => setField('startTime', e.target.value)}
-                    className={formInputClass(!!errors.startTime)}
-                  />
-                  {errors.startTime && <p className={FORM_ERROR_CLASS}>{errors.startTime}</p>}
-                </div>
-              </div>
+              )}
 
-              {/* End Date + Time */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label htmlFor="event-end-date" className={FORM_LABEL_CLASS}>
-                    End Date <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    id="event-end-date"
-                    type="date"
-                    value={form.endDate}
-                    min={form.startDate || undefined}
-                    onChange={(e) => setField('endDate', e.target.value)}
-                    className={formInputClass(!!errors.endDate)}
-                  />
-                  {errors.endDate && <p className={FORM_ERROR_CLASS}>{errors.endDate}</p>}
-                </div>
-                <div className="space-y-1.5">
-                  <label htmlFor="event-end-time" className={FORM_LABEL_CLASS}>
-                    End Time <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    id="event-end-time"
-                    type="time"
-                    value={form.endTime}
-                    onChange={(e) => setField('endTime', e.target.value)}
-                    className={formInputClass(!!errors.endTime)}
-                  />
-                  {errors.endTime && <p className={FORM_ERROR_CLASS}>{errors.endTime}</p>}
-                </div>
-              </div>
-
-              {/* Category + Color */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label htmlFor="event-category" className={FORM_LABEL_CLASS}>
-                    <Tag className="w-3 h-3 inline mr-1" />Category
-                  </label>
-                  <select
-                    id="event-category"
-                    value={form.category}
-                    onChange={(e) => setField('category', e.target.value as typeof form.category)}
-                    className={formInputClass(false)}
-                  >
-                    {EVENT_CATEGORIES.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className={FORM_LABEL_CLASS}>
-                    <Palette className="w-3 h-3 inline mr-1" />Color
-                  </label>
-                  <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                    {COLOR_PALETTE.map((color, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setField('color', color)}
-                        title={color || 'Default (category color)'}
-                        className={[
-                          'w-6 h-6 rounded-full border-2 transition-all cursor-pointer',
-                          form.color === color
-                            ? 'border-[#14274E] scale-110 ring-2 ring-[#14274E]/20'
-                            : 'border-slate-200 hover:scale-105',
-                        ].join(' ')}
-                        style={{ backgroundColor: color || '#e2e8f0' }}
-                        aria-label={color ? `Color ${color}` : 'Default color'}
-                      />
-                    ))}
+              {/* ── FORM MODE ── */}
+              {isFormMode && (
+                <div className="space-y-4">
+                  {/* Event Name */}
+                  <div className="space-y-1.5">
+                    <label htmlFor="event-title" className={FORM_LABEL_CLASS}>
+                      Event Name <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      id="event-title"
+                      type="text"
+                      value={form.title}
+                      onChange={(e) => setField('title', e.target.value)}
+                      placeholder="e.g. Annual Company Dinner"
+                      className={formInputClass(!!errors.title)}
+                    />
+                    {errors.title && <p className={FORM_ERROR_CLASS}>{errors.title}</p>}
                   </div>
-                </div>
-              </div>
 
-              {/* Description */}
-              <div className="space-y-1.5">
-                <label htmlFor="event-description" className={FORM_LABEL_CLASS}>
-                  <FileText className="w-3 h-3 inline mr-1" />Description
-                </label>
-                <textarea
-                  id="event-description"
-                  value={form.description}
-                  onChange={(e) => setField('description', e.target.value)}
-                  placeholder="Optional event description..."
-                  rows={3}
-                  className={`${formInputClass(false)} resize-none`}
-                />
-              </div>
+                  {/* Category & Color */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                    {/* Category with Redesigned Custom Dropdown */}
+                    <div className="space-y-1.5">
+                      <label className={FORM_LABEL_CLASS}>
+                        <Tag className="w-3 h-3 inline mr-1" />Category
+                      </label>
+                      <DrawerDropdown
+                        id="event-category-select"
+                        value={form.category}
+                        options={categoryDropdownOptions}
+                        onChange={(val) => setField('category', val as typeof form.category)}
+                      />
+                    </div>
 
-              {/* Location + Organizer */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label htmlFor="event-location" className={FORM_LABEL_CLASS}>
-                    <MapPin className="w-3 h-3 inline mr-1" />Location
-                  </label>
-                  <input
-                    id="event-location"
-                    type="text"
-                    value={form.location}
-                    onChange={(e) => setField('location', e.target.value)}
-                    placeholder="Bill Shaw Restaurant"
-                    className={formInputClass(false)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label htmlFor="event-organizer" className={FORM_LABEL_CLASS}>
-                    <User2 className="w-3 h-3 inline mr-1" />Organizer
-                  </label>
-                  <input
-                    id="event-organizer"
-                    type="text"
-                    value={form.organizer}
-                    onChange={(e) => setField('organizer', e.target.value)}
-                    placeholder="e.g. HR Department"
-                    className={formInputClass(false)}
-                  />
-                </div>
-              </div>
+                    {/* Color Selector with Presets in ONE single row + Custom Color Picker */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className={FORM_LABEL_CLASS}>
+                          <Palette className="w-3 h-3 inline mr-1" />Color
+                        </label>
+                        {form.color && (
+                          <span className="text-[10px] font-mono font-bold text-slate-500 uppercase">
+                            {form.color}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-nowrap pt-0.5">
+                        {COLOR_PALETTE.map((color) => {
+                          const isSelected = form.color === color
+                          return (
+                            <button
+                              key={color}
+                              type="button"
+                              onClick={() => setField('color', color)}
+                              className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full border-2 transition-all cursor-pointer flex items-center justify-center shrink-0 ${
+                                isSelected
+                                  ? 'border-slate-800 ring-2 ring-[#14274E]/30 scale-110 shadow-xs'
+                                  : 'border-slate-200 hover:scale-105'
+                              }`}
+                              style={{ backgroundColor: color }}
+                              title={`Preset: ${color}`}
+                            >
+                              {isSelected && <Check className="w-3.5 h-3.5 text-white drop-shadow-xs" />}
+                            </button>
+                          )
+                        })}
 
-              {/* Max Pax & Presets */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <label htmlFor="event-max-pax" className={FORM_LABEL_CLASS}>
-                    <Users className="w-3 h-3 inline mr-1" />Max Pax <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    id="event-max-pax"
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={form.maxPax}
-                    onChange={(e) => setField('maxPax', e.target.value)}
-                    placeholder="e.g. 50"
-                    className={formInputClass(!!errors.maxPax)}
-                  />
-                  {errors.maxPax && <p className={FORM_ERROR_CLASS}>{errors.maxPax}</p>}
-                </div>
-                <div className="space-y-1.5">
-                  <label htmlFor="event-preset" className={FORM_LABEL_CLASS}>
-                    <Layout className="w-3 h-3 inline mr-1" />Table Layout
-                  </label>
-                  <select
-                    id="event-preset"
-                    value={form.presetId ? String(form.presetId) : ''}
-                    onChange={(e) => setField('presetId', e.target.value ? Number(e.target.value) : null)}
-                    className={formInputClass(!!errors.presetId || isPresetOverCapacity)}
-                  >
-                    <option value="">None (Standard · 50 Pax)</option>
-                    {presets.map((p) => {
-                      const presetCap = p.MAX_PAX != null ? Number(p.MAX_PAX) : 50
-                      const isOverCapacity = eventGuestCapacity > 0 && presetCap > eventGuestCapacity
-                      const isCurrentlySelected = form.presetId === p.LAYOUT_PRESET_ID
-                      return (
-                        <option
-                          key={p.LAYOUT_PRESET_ID}
-                          value={p.LAYOUT_PRESET_ID}
-                          disabled={isOverCapacity && !isCurrentlySelected}
+                        {/* Custom Color Selector Picker */}
+                        <label
+                          className={`relative w-6 h-6 sm:w-7 sm:h-7 rounded-full border-2 cursor-pointer flex items-center justify-center transition-all shrink-0 ${
+                            form.color && !COLOR_PALETTE.includes(form.color)
+                              ? 'border-slate-800 ring-2 ring-[#14274E]/30 scale-110 shadow-xs'
+                              : 'border-slate-300 hover:scale-105'
+                          }`}
+                          style={{
+                            background:
+                              form.color && !COLOR_PALETTE.includes(form.color)
+                                ? form.color
+                                : 'conic-gradient(from 180deg at 50% 50%, #dc2626, #d97706, #16a34a, #0891b2, #6366f1, #ec4899, #dc2626)',
+                          }}
+                          title="Choose custom color"
                         >
-                          {p.PRESET_NAME} ({presetCap} Pax){isOverCapacity ? ' — Exceeds Event Capacity' : ''}{p.IS_DEFAULT ? ' · Default' : ''}
-                        </option>
-                      )
-                    })}
-                  </select>
+                          <input
+                            type="color"
+                            value={form.color || '#14274E'}
+                            onChange={(e) => setField('color', e.target.value)}
+                            className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                          />
+                          {form.color && !COLOR_PALETTE.includes(form.color) ? (
+                            <Check className="w-3.5 h-3.5 text-white drop-shadow-xs" />
+                          ) : (
+                            <Plus className="w-3.5 h-3.5 text-white drop-shadow-xs stroke-[3]" />
+                          )}
+                        </label>
+                      </div>
+                    </div>
+                  </div>
 
-                  {/* Warning banner when selected preset exceeds event guest capacity */}
-                  {isPresetOverCapacity && (
-                    <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-2 text-[11px] text-amber-900 mt-1.5 animate-in fade-in duration-150">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  {/* Location + Organizer */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label htmlFor="event-location" className={FORM_LABEL_CLASS}>
+                        <MapPin className="w-3 h-3 inline mr-1" />Location
+                      </label>
+                      <input
+                        id="event-location"
+                        type="text"
+                        value={form.location}
+                        onChange={(e) => setField('location', e.target.value)}
+                        placeholder="Bill Shaw Restaurant"
+                        className={formInputClass(false)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label htmlFor="event-organizer" className={FORM_LABEL_CLASS}>
+                        <User2 className="w-3 h-3 inline mr-1" />Organizer
+                      </label>
+                      <input
+                        id="event-organizer"
+                        type="text"
+                        value={form.organizer}
+                        onChange={(e) => setField('organizer', e.target.value)}
+                        placeholder="e.g. HR Department"
+                        className={formInputClass(false)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Max Pax (Shorter) & Table Layout Preset (Longer) & Menu Preset */}
+                  <div className="flex flex-col sm:flex-row items-start gap-3">
+                    {/* Max Pax - Shorter field */}
+                    <div className="w-full sm:w-28 shrink-0 space-y-1.5">
+                      <label htmlFor="event-max-pax" className={FORM_LABEL_CLASS}>
+                        <Users className="w-3 h-3 inline mr-1" />Max Pax <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        id="event-max-pax"
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={form.maxPax}
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          if (raw === '') {
+                            setField('maxPax', '')
+                            return
+                          }
+                          const val = parseInt(raw, 10)
+                          if (isNaN(val)) return
+                          if (val > 50) {
+                            setField('maxPax', '50')
+                          } else if (val < 1) {
+                            setField('maxPax', '1')
+                          } else {
+                            setField('maxPax', String(val))
+                          }
+                        }}
+                        placeholder="50"
+                        className={formInputClass(!!errors.maxPax)}
+                      />
+                      {errors.maxPax && <p className={FORM_ERROR_CLASS}>{errors.maxPax}</p>}
+                    </div>
+
+                    {/* Table Layout Preset - Longer field with right-aligned pax */}
+                    <div className="w-full sm:flex-1 min-w-0 space-y-1.5">
+                      <label className={FORM_LABEL_CLASS}>
+                        <Layout className="w-3 h-3 inline mr-1" />Table Layout
+                      </label>
+                      <DrawerDropdown
+                        id="event-table-preset-select"
+                        value={form.presetId ? String(form.presetId) : ''}
+                        options={presetDropdownOptions}
+                        onChange={(val) => setField('presetId', val ? Number(val) : null)}
+                        error={!!errors.presetId || isPresetUnderCapacity}
+                      />
+                      {errors.presetId && <p className={FORM_ERROR_CLASS}>{errors.presetId}</p>}
+                    </div>
+
+                    {/* Menu Preset - "Default" */}
+                    <div className="w-full sm:w-44 md:w-48 shrink-0 space-y-1.5">
+                      <label className={FORM_LABEL_CLASS}>
+                        <UtensilsCrossed className="w-3 h-3 inline mr-1" />Menu Preset
+                      </label>
+                      <DrawerDropdown
+                        id="event-menu-preset-select"
+                        value={form.menuPresetId ? String(form.menuPresetId) : ''}
+                        options={menuPresetDropdownOptions}
+                        onChange={(val) => setField('menuPresetId', val ? Number(val) : null)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Insufficient Capacity Alert */}
+                  {isPresetUnderCapacity && (
+                    <div className="p-2.5 bg-rose-50 border border-rose-300 rounded-xl flex items-start gap-2 text-[11px] text-rose-900 animate-in fade-in duration-150">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                       <div>
-                        <span className="font-bold">Capacity Mismatch: </span>
-                        Layout preset <span className="font-black">"{selectedPreset?.PRESET_NAME}"</span> has a capacity of <span className="font-black">{selectedPresetCapacity} seats</span>, which exceeds the event guest capacity of <span className="font-black">{eventGuestCapacity} seats</span>. Please adjust event capacity or choose a layout with &le; {eventGuestCapacity} seats.
+                        <span className="font-bold">Capacity Too Small: </span>
+                        Layout preset <span className="font-black">"{selectedPreset?.PRESET_NAME}"</span> accommodates only <span className="font-black">{selectedPresetCapacity} Pax</span>, which cannot seat the <span className="font-black">{eventGuestCapacity} guests</span> set for this event.
                       </div>
                     </div>
                   )}
 
-                  {/* Valid selected preset indicator */}
-                  {form.presetId && !isPresetOverCapacity && (
-                    <p className="text-[10px] font-bold text-emerald-700 mt-1 flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-500 inline-block" />
-                      Layout preset: {selectedPresetCapacity} Pax (Event capacity: {eventGuestCapacity || 'Not set'})
-                    </p>
-                  )}
+                  {/* Contact Person Card */}
+                  <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2.5">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Contact Person</p>
+                    <div className="space-y-1.5">
+                      <input
+                        id="event-contact-name"
+                        type="text"
+                        value={form.contactName}
+                        onChange={(e) => setField('contactName', e.target.value)}
+                        placeholder="Contact name"
+                        className={formInputClass(false)}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        id="event-contact-phone"
+                        type="tel"
+                        value={form.contactPhone}
+                        onChange={(e) => setField('contactPhone', e.target.value)}
+                        placeholder="Phone number"
+                        className={formInputClass(false)}
+                      />
+                      <div>
+                        <input
+                          id="event-contact-email"
+                          type="email"
+                          value={form.contactEmail}
+                          onChange={(e) => setField('contactEmail', e.target.value)}
+                          placeholder="Email address"
+                          className={formInputClass(!!errors.contactEmail)}
+                        />
+                        {errors.contactEmail && <p className={`${FORM_ERROR_CLASS} mt-1`}>{errors.contactEmail}</p>}
+                      </div>
+                    </div>
+                  </div>
 
-                  {!form.presetId && (
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      Standard layout · Unlinked layouts maintain their configured capacity
-                    </p>
-                  )}
-                  {errors.presetId && <p className={FORM_ERROR_CLASS}>{errors.presetId}</p>}
-                </div>
-                <div className="space-y-1.5">
-                  <label htmlFor="event-menu-preset" className={FORM_LABEL_CLASS}>
-                    <UtensilsCrossed className="w-3 h-3 inline mr-1" />Menu Preset
-                  </label>
-                  <select
-                    id="event-menu-preset"
-                    value={form.menuPresetId ? String(form.menuPresetId) : ''}
-                    onChange={(e) => setField('menuPresetId', e.target.value ? Number(e.target.value) : null)}
-                    className={formInputClass(false)}
-                  >
-                    <option value="">None (Standard)</option>
-                    {menuPresets.map((m) => (
-                      <option key={m.PRESET_ID} value={m.PRESET_ID}>
-                        {m.PRESET_NAME}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* ── Table Setup Breakdown Preview in Form Mode ── */}
-              {form.presetId ? (
-                <TableSetupBreakdownSection
-                  title={`Selected Table Layout: ${formPresetSetup?.presetName || selectedPreset?.PRESET_NAME || `Preset #${form.presetId}`}`}
-                  badgeText="Preset Preview"
-                  badgeVariant="indigo"
-                  setup={formPresetSetup}
-                  emptyMessage="Loading preset tables breakdown..."
-                />
-              ) : (
-                <TableSetupBreakdownSection
-                  title={`Current Tables Setup${localCurrentSetup?.presetName ? ` (${localCurrentSetup.presetName})` : ''}`}
-                  badgeText="Standard Active Setup"
-                  badgeVariant="slate"
-                  setup={localCurrentSetup}
-                  emptyMessage="No current table setup data available."
-                />
-              )}
-
-              {/* Contact */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
-                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Contact Person</p>
-                <div className="space-y-1.5">
-                  <input
-                    id="event-contact-name"
-                    type="text"
-                    value={form.contactName}
-                    onChange={(e) => setField('contactName', e.target.value)}
-                    placeholder="Contact name"
-                    className={formInputClass(false)}
-                  />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <input
-                    id="event-contact-phone"
-                    type="tel"
-                    value={form.contactPhone}
-                    onChange={(e) => setField('contactPhone', e.target.value)}
-                    placeholder="Phone number"
-                    className={formInputClass(false)}
-                  />
-                  <div>
-                    <input
-                      id="event-contact-email"
-                      type="email"
-                      value={form.contactEmail}
-                      onChange={(e) => setField('contactEmail', e.target.value)}
-                      placeholder="Email address"
-                      className={formInputClass(!!errors.contactEmail)}
+                  {/* Notes */}
+                  <div className="space-y-1.5">
+                    <label htmlFor="event-notes" className={FORM_LABEL_CLASS}>Notes</label>
+                    <textarea
+                      id="event-notes"
+                      value={form.notes}
+                      onChange={(e) => setField('notes', e.target.value)}
+                      placeholder="Additional notes or instructions..."
+                      rows={2}
+                      className={`${formInputClass(false)} resize-none`}
                     />
-                    {errors.contactEmail && <p className={`${FORM_ERROR_CLASS} mt-1`}>{errors.contactEmail}</p>}
                   </div>
                 </div>
-              </div>
-
-              {/* Notes */}
-              <div className="space-y-1.5">
-                <label htmlFor="event-notes" className={FORM_LABEL_CLASS}>Notes</label>
-                <textarea
-                  id="event-notes"
-                  value={form.notes}
-                  onChange={(e) => setField('notes', e.target.value)}
-                  placeholder="Additional notes or instructions..."
-                  rows={3}
-                  className={`${formInputClass(false)} resize-none`}
-                />
-              </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {/* ── Drawer Footer ── */}
-        <div className="p-4 border-t border-slate-100 bg-slate-50/60 shrink-0">
-          {isView && event && canManageEvents ? (
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                {!event.isCancelled && deriveEventStatus(event) === 'Scheduled' && (
+            {/* Drawer Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50/60 shrink-0">
+              {isView && event && canManageEvents ? (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    {!event.isCancelled && deriveEventStatus(event) === 'Scheduled' && (
+                      <button
+                        onClick={() => onCancel(event)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100 transition-colors cursor-pointer"
+                      >
+                        <BanIcon className="w-3.5 h-3.5" />
+                        Cancel Event
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onDelete(event)}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete
+                    </button>
+                  </div>
                   <button
-                    onClick={() => onCancel(event)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100 transition-colors cursor-pointer"
+                    onClick={() => onEdit(event)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs transition-all cursor-pointer"
                   >
-                    <BanIcon className="w-3.5 h-3.5" />
-                    Cancel Event
+                    <Pencil className="w-3.5 h-3.5" />
+                    Edit Event
                   </button>
-                )}
+                </div>
+              ) : isView ? (
                 <button
-                  onClick={() => onDelete(event)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100 transition-colors cursor-pointer"
+                  onClick={onClose}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Delete
+                  Close
                 </button>
-              </div>
-              <button
-                onClick={() => onEdit(event)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs transition-all cursor-pointer"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                Edit Event
-              </button>
+              ) : (
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={onClose}
+                    className="px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={submitting || conflicts.length > 0 || isPresetUnderCapacity || isTimeInvalid}
+                    onClick={handleSubmit}
+                    title={
+                      isPresetUnderCapacity
+                        ? 'Cannot save: Selected layout preset capacity is less than event pax'
+                        : isTimeInvalid
+                          ? 'Cannot save: End time must be after start time'
+                          : undefined
+                    }
+                    className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {submitting ? (
+                      <>
+                        <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-3.5 h-3.5" />
+                        {mode === 'create' ? 'Create Event' : 'Save Changes'}
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
-          ) : isView ? (
-            <button
-              onClick={onClose}
-              className="w-full px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
-            >
-              Close
-            </button>
-          ) : (
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={onClose}
-                className="px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={submitting || conflicts.length > 0 || isPresetOverCapacity}
-                onClick={handleSubmit}
-                title={isPresetOverCapacity ? 'Cannot save: Selected layout preset exceeds event guest capacity' : undefined}
-                className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {submitting ? (
-                  <>
-                    <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-3.5 h-3.5" />
-                    {mode === 'create' ? 'Create Event' : 'Save Changes'}
-                  </>
-                )}
-              </button>
+          </div>
+
+          {/* ── CARD 2 Column: Separate Event Schedule Modal + Floating Conflict Error ── */}
+          {isFormMode && (
+            <div className="w-full lg:w-80 xl:w-88 flex flex-col gap-3 shrink-0 self-start">
+              {/* Event Schedule Modal Container */}
+              <div className="w-full bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+                {/* Header */}
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/50">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                      <CalendarDays className="w-4 h-4" />
+                    </div>
+                    <h3 className="text-xs font-black text-[#14274E] uppercase tracking-wider">
+                      Event Schedule
+                    </h3>
+                  </div>
+                </div>
+
+                {/* Body */}
+                <div className="p-4 space-y-3 flex-1 overflow-y-auto">
+                  {/* Duration Display Box: Full dates + faded duration subtext */}
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 shadow-2xs">
+                    <p className="text-xs font-black text-[#14274E]">
+                      {form.startDate && form.endDate
+                        ? formatEventFullDateRange(form.startDate, form.endDate)
+                        : 'No dates selected'}
+                    </p>
+                    <p className="text-[11px] font-semibold text-slate-400 mt-0.5">
+                      {form.startDate && form.endDate
+                        ? `${durationDays} ${durationDays === 1 ? 'Day' : 'Days'}`
+                        : 'Click a date on the calendar'}
+                    </p>
+                  </div>
+
+                  {/* Mini Calendar Range Picker */}
+                  <MiniCalendarPicker
+                    startDate={form.startDate}
+                    endDate={form.endDate}
+                    onSelectRange={(start, end) => {
+                      setField('startDate', start)
+                      setField('endDate', end)
+                    }}
+                  />
+
+                  {/* Start Time & End Time moved below the calendar */}
+                  <div className="pt-3 border-t border-slate-100">
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="space-y-1">
+                        <label htmlFor="event-start-time" className="block text-[10px] font-black uppercase tracking-wider text-slate-500">
+                          <Clock className="w-3 h-3 inline mr-1 text-slate-400" />Start Time <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          id="event-start-time"
+                          type="time"
+                          value={form.startTime}
+                          onChange={(e) => setField('startTime', e.target.value)}
+                          className={formInputClass(!!errors.startTime)}
+                        />
+                        {errors.startTime && <p className={FORM_ERROR_CLASS}>{errors.startTime}</p>}
+                      </div>
+                      <div className="space-y-1">
+                        <label htmlFor="event-end-time" className="block text-[10px] font-black uppercase tracking-wider text-slate-500">
+                          <Clock className="w-3 h-3 inline mr-1 text-slate-400" />End Time <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          id="event-end-time"
+                          type="time"
+                          value={form.endTime}
+                          onChange={(e) => setField('endTime', e.target.value)}
+                          className={formInputClass(!!errors.endTime)}
+                        />
+                        {errors.endTime && <p className={FORM_ERROR_CLASS}>{errors.endTime}</p>}
+                      </div>
+                    </div>
+                  </div>
+
+                  {errors.startDate && <p className={FORM_ERROR_CLASS}>{errors.startDate}</p>}
+                  {errors.endDate && <p className={FORM_ERROR_CLASS}>{errors.endDate}</p>}
+                </div>
+              </div>
+
+              {/* Floating Red Conflict Error Message below the Schedule Modal */}
+              {conflicts.length > 0 && (
+                <EventConflictBanner conflicts={conflicts} />
+              )}
             </div>
           )}
         </div>
@@ -1057,8 +1398,6 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
     </div>
   )
 }
-
-// ─── Small helper sub-components ──────────────────────────────────────────────
 
 function formInputClass(hasError: boolean) {
   return [

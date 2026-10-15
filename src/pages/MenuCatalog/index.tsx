@@ -6,7 +6,6 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-  FolderKanban,
   UtensilsCrossed,
   CheckCircle2,
   XCircle,
@@ -332,35 +331,23 @@ export default function MenuCatalogPage() {
           <OrganizerShiftHeaderBar />
         </div>
 
-        {/* Header Bar */}
+        {/* Header Bar: Search Bar, Add Category, and New Dish */}
         <div className="shrink-0">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#14274E] text-[#E9C46A] flex items-center justify-center shrink-0 shadow-xs">
-                <FolderKanban className="w-5 h-5" />
-              </div>
-              <div>
-                <h1 className="text-lg font-black text-[#14274E] tracking-tight">Menu Catalog</h1>
-                <p className="text-xs text-slate-500 font-medium">
-                  Master repository of all restaurant items, pricing &amp; categories.
-                </p>
-              </div>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+            {/* Search Bar (fills up the remaining space on the left side) */}
+            <div className="relative flex-1 min-w-0">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search catalog dishes..."
+                className="w-full pl-10 pr-3.5 py-2 bg-slate-50 border border-slate-200 focus:border-[#14274E] focus:bg-white rounded-xl text-xs font-semibold text-[#14274E] outline-none transition-colors"
+              />
             </div>
 
-            {/* Actions */}
-            <div className="flex items-center gap-2.5 w-full sm:w-auto">
-              {/* Search */}
-              <div className="relative flex-1 sm:w-64">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search catalog dishes..."
-                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 focus:border-[#14274E] focus:bg-white rounded-xl text-xs font-semibold text-[#14274E] outline-none"
-                />
-              </div>
-
+            {/* Actions: Add Category & New Dish */}
+            <div className="flex items-center gap-2.5 shrink-0">
               {/* Add Category */}
               <button
                 type="button"
@@ -548,8 +535,8 @@ export default function MenuCatalogPage() {
                         : 'border-slate-200/80 shadow-2xs hover:border-slate-300'
                     }`}
                   >
-                    {/* Image & Badges */}
-                    <div>
+                    {/* Image & Content */}
+                    <div className="flex-1 flex flex-col">
                       <div className="relative w-full aspect-4/3 rounded-2xl overflow-hidden bg-slate-100 mb-2.5 shrink-0">
                         <img
                           src={item.imageUrl || DEFAULT_FOOD_PLACEHOLDER}
@@ -559,19 +546,6 @@ export default function MenuCatalogPage() {
                             ;(e.currentTarget as HTMLImageElement).src = DEFAULT_FOOD_PLACEHOLDER
                           }}
                         />
-
-                        {/* Dietary Badge */}
-                        <div className="absolute top-2 left-2">
-                          {item.dietaryType === 'veg' ? (
-                            <span className="text-[9px] font-black tracking-wide text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-1.5 py-0.5 rounded-md shadow-2xs">
-                              VEG
-                            </span>
-                          ) : (
-                            <span className="text-[9px] font-black tracking-wide text-rose-800 bg-rose-100/90 border border-rose-300 px-1.5 py-0.5 rounded-md shadow-2xs">
-                              NON-VEG
-                            </span>
-                          )}
-                        </div>
 
                         {/* Discount / Best Seller Badge */}
                         {item.badge && (
@@ -587,33 +561,22 @@ export default function MenuCatalogPage() {
                             </span>
                           </div>
                         )}
-
-                        {/* Stock limit */}
-                        {item.orderLimit != null && item.orderLimit > 0 && (
-                          <div className="absolute bottom-2 left-2 bg-slate-900/80 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-2xs">
-                            Stock: {item.orderLimit}
-                          </div>
-                        )}
                       </div>
 
                       {/* Content */}
-                      <div className="space-y-1.5 px-0.5">
-                        <div className="flex items-center justify-between gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          <span>{category?.name || 'Dish'}</span>
-                          <span className="font-mono">#{item.code}</span>
+                      <div className="flex-1 flex flex-col justify-between space-y-2 px-0.5">
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            <span>{category?.name || 'Dish'}</span>
+                          </div>
+
+                          <h3 className="font-extrabold text-sm text-[#14274E] leading-snug line-clamp-1" title={item.name}>
+                            {item.name}
+                          </h3>
                         </div>
 
-                        <h3 className="font-extrabold text-sm text-[#14274E] leading-snug line-clamp-1" title={item.name}>
-                          {item.name}
-                        </h3>
-
-                        {item.description && (
-                          <p className="text-[11px] text-slate-500 line-clamp-2 leading-tight">
-                            {item.description}
-                          </p>
-                        )}
-
-                        <div className="flex items-baseline gap-1.5 pt-0.5">
+                        {/* Price positioned to the bottom of its container and to the left */}
+                        <div className="flex items-baseline gap-1.5 pt-1 text-left">
                           <span className="font-black text-sm text-[#14274E]">
                             ₱{item.price.toFixed(2)}
                           </span>
@@ -705,7 +668,7 @@ export default function MenuCatalogPage() {
         onToggleAvailability={handleAvailabilityToggle}
         isAvailabilitySaving={availabilitySavingId === selectedItem?.id}
         secondaryAction={{
-          label: 'Delete from Catalog',
+          label: 'Delete',
           icon: <Trash2 className="w-3.5 h-3.5" />,
           onClick: handleDeleteItem,
           variant: 'danger',

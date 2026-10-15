@@ -111,12 +111,16 @@ export const EVENT_FORM_DEFAULTS: EventFormData = {
 // ─── Filter Params ─────────────────────────────────────────────────────────────
 
 export type EventDateFilter = 'all' | 'today' | 'this_week' | 'this_month' | 'upcoming'
+export type EventSortOrder = 'nearest' | 'farthest'
+export type EventGuestCountFilter = 'all' | 'asc' | 'desc'
 
 export interface EventFilterParams {
   searchQuery: string
   status: EventStatus | 'All'
   category: EventCategory | 'All'
   dateFilter: EventDateFilter
+  sortOrder: EventSortOrder
+  guestCount: EventGuestCountFilter
 }
 
 export const EVENT_FILTER_DEFAULTS: EventFilterParams = {
@@ -124,13 +128,19 @@ export const EVENT_FILTER_DEFAULTS: EventFilterParams = {
   status: 'All',
   category: 'All',
   dateFilter: 'all',
+  sortOrder: 'nearest',
+  guestCount: 'all',
 }
 
 // ─── Conflict Info ─────────────────────────────────────────────────────────────
+
+export type ConflictKind = 'overlap' | 'buffer'
 
 export interface EventConflict {
   eventId: number
   title: string
   startAt: string
   endAt: string
+  conflictType?: ConflictKind
+  bufferReason?: string
 }

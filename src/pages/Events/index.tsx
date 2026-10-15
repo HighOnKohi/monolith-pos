@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { CalendarDays, List, AlertCircle, CalendarX, Plus, Utensils } from 'lucide-react'
+import { CalendarDays, List, AlertCircle, CalendarX, Plus } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
 import type { RestaurantEvent, EventFilterParams, EventFormData } from '@/types/event'
@@ -15,8 +15,7 @@ import {
   isEventServiceUsingFallback,
 } from '@/services/eventService'
 import { fetchCurrentTableSetup, type TableSetupBreakdown } from '@/services/tableLayoutService'
-import { TableShapeIcon } from '@/pages/TableManager/components/TableVisual'
-import { filterEvents, computeEventStats, type EventCardType } from './utils/eventUtils'
+import { filterEvents } from './utils/eventUtils'
 import { EventsSummaryCards } from './components/EventsSummaryCards'
 import { EventsFilterBar } from './components/EventsFilterBar'
 import { EventsCalendar } from './components/EventsCalendar'
@@ -73,8 +72,8 @@ export default function EventsPage() {
   // ── Filters ──
   const [filters, setFilters] = useState<EventFilterParams>(EVENT_FILTER_DEFAULTS)
 
-  // ── View Mode ──
-  const [viewMode, setViewMode] = useState<ViewMode>('calendar')
+  // ── View Mode: Default to 'list' ──
+  const [viewMode, setViewMode] = useState<ViewMode>('list')
 
   // ── Toast ──
   const showToast = useCallback((_message: string, _type: 'success' | 'error' = 'success') => {
@@ -109,24 +108,6 @@ export default function EventsPage() {
     totalSeats: 0,
     byType: [],
   })
-  const [selectedSummaryCard, setSelectedSummaryCard] = useState<EventCardType>('total')
-
-  const eventStats = useMemo(() => computeEventStats(events), [events])
-
-  const handleCardClick = (card: EventCardType) => {
-    setSelectedSummaryCard(card)
-    if (card === 'total') {
-      setFilters((prev) => ({ ...prev, status: 'All', dateFilter: 'all' }))
-    } else if (card === 'upcoming') {
-      setFilters((prev) => ({ ...prev, status: 'Scheduled', dateFilter: 'all' }))
-    } else if (card === 'today') {
-      setFilters((prev) => ({ ...prev, status: 'All', dateFilter: 'today' }))
-    } else if (card === 'thisWeek') {
-      setFilters((prev) => ({ ...prev, status: 'All', dateFilter: 'this_week' }))
-    } else if (card === 'ongoing') {
-      setFilters((prev) => ({ ...prev, status: 'Ongoing', dateFilter: 'all' }))
-    }
-  }
 
   // ── Load Tables Setup Count & Breakdown ──
   const loadTableSetup = useCallback(async () => {
@@ -224,9 +205,10 @@ export default function EventsPage() {
   }
 
   const eventFromForm = (data: EventFormData, previous?: RestaurantEvent): RestaurantEvent => {
-    const pax = data.maxPax
+    const rawPax = data.maxPax
       ? parseInt(data.maxPax, 10)
       : (data.expectedAttendees ? parseInt(data.expectedAttendees, 10) : 50)
+    const pax = Math.min(50, Math.max(1, isNaN(rawPax) ? 50 : rawPax))
     return {
       eventId: previous?.eventId ?? -Date.now(),
       title: data.title.trim(),
@@ -354,27 +336,21 @@ export default function EventsPage() {
   }
 
   return (
-    <div className="events-page events-page-container staff-page flex flex-col gap-3.5 sm:gap-4 pb-12">
+    <div className="events-page events-page-container staff-page flex flex-col gap-3 h-full min-h-0 overflow-hidden">
 
+      {/* ── View Toggle Bar ── */}
       <div className="flex items-center justify-between gap-3 shrink-0 flex-wrap">
-        <div className={`events-view-toggle flex items-center gap-1 bg-slate-100 rounded-xl p-1 ${viewMode === 'list' ? 'events-view-toggle-list' : ''}`}>
+        <div
+          className={`events-view-toggle ${
+            viewMode === 'calendar' ? 'events-view-toggle-calendar' : ''
+          }`}
+        >
           <span className="events-view-toggle-indicator" />
           <button
-            onClick={() => setViewMode('calendar')}
-            className={[
-              'inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all cursor-pointer',
-              viewMode === 'calendar'
-                ? 'text-[#E9C46A]'
-                : 'text-slate-500 hover:text-slate-700',
-            ].join(' ')}
-          >
-            <CalendarDays className="w-4 h-4" />
-            <span>Calendar</span>
-          </button>
-          <button
+            type="button"
             onClick={() => setViewMode('list')}
             className={[
-              'inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-bold transition-all cursor-pointer',
+              'inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-bold transition-all cursor-pointer',
               viewMode === 'list'
                 ? 'text-[#E9C46A]'
                 : 'text-slate-500 hover:text-slate-700',
@@ -383,56 +359,29 @@ export default function EventsPage() {
             <List className="w-4 h-4" />
             <span>Events</span>
           </button>
-        </div>
-
-        {/* Current Tables Setup Badge */}
-        <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-xl border border-slate-200 shadow-2xs">
-          <div className="p-2 rounded-lg bg-[#14274E]/5 text-[#14274E] shrink-0">
-            <Utensils className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider block leading-none">
-                Current Tables Setup
-              </span>
-              {tableSetup.presetName && (
-                <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.2 rounded-md">
-                  {tableSetup.presetName}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-xs font-black text-[#14274E]">
-                {tableSetup.totalTables} Tables{' '}
-                <span className="font-semibold text-slate-400">({tableSetup.totalSeats} Total Seats)</span>
-              </span>
-            </div>
-            {tableSetup.byType.length > 0 && (
-              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                {tableSetup.byType.map((item) => (
-                  <span
-                    key={item.type}
-                    className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 bg-slate-100/90 px-1.5 py-0.5 rounded-md border border-slate-200/60"
-                    title={`${item.count} × ${item.name} (${item.totalSeats} seats)`}
-                  >
-                    <TableShapeIcon tableType={item.type} size={11} />
-                    <span>
-                      {item.count} {item.name.replace(' Table', '').replace(' (Horizontal)', '').replace(' (Vertical)', '').replace(' (1x1)', '').replace(' (2x2)', '')}
-                    </span>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setViewMode('calendar')}
+            className={[
+              'inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-bold transition-all cursor-pointer',
+              viewMode === 'calendar'
+                ? 'text-[#E9C46A]'
+                : 'text-slate-500 hover:text-slate-700',
+            ].join(' ')}
+          >
+            <CalendarDays className="w-4 h-4" />
+            <span>Calendar</span>
+          </button>
         </div>
       </div>
 
-      {/* ── Summary Cards ── */}
+      {/* ── Summary Tabs (Upcoming event & Current event setup enabled) ── */}
       <EventsSummaryCards
-        stats={eventStats}
+        events={events}
         loading={loading}
-        activeCard={selectedSummaryCard}
-        onCardClick={handleCardClick}
+        onViewEvent={handleViewEvent}
+        onToggleActive={handleToggleActive}
+        canManageEvents={canManageEvents}
       />
 
       {/* ── Fallback Storage Notice ── */}
@@ -476,7 +425,7 @@ export default function EventsPage() {
       {!error && (
         <>
           {viewMode === 'calendar' ? (
-            <div key="calendar" className="events-view-content flex-1 min-h-0 flex">
+            <div key="calendar" className="events-view-content flex-1 min-h-0 flex flex-col overflow-hidden">
               <EventsCalendar
                 events={displayedEvents}
                 onEventClick={handleViewEvent}
@@ -486,7 +435,7 @@ export default function EventsPage() {
               />
             </div>
           ) : (
-            <div key="events" className="events-view-content flex-1 min-h-0 overflow-y-auto">
+            <div key="events" className="events-view-content flex-1 min-h-0 flex flex-col overflow-hidden">
               {displayedEvents.length === 0 && !loading ? (
                 <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs p-12 text-center">
                   <div className="flex flex-col items-center gap-3">
