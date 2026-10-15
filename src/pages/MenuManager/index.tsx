@@ -15,6 +15,7 @@ import {
   XCircle,
   MinusCircle,
   Loader2,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { useMenu } from '@/hooks/useMenu'
 import { useActiveEvent } from '@/hooks/useActiveEvent'
@@ -37,6 +38,7 @@ import { categoryIconMap, categoryIcons } from '@/components/menu/NewMenuCategor
 import { MenuItemDetailSidebar } from '@/components/menu/MenuItemDetailSidebar'
 import { ConfirmModal } from '@/components/menu/ConfirmModal'
 import { OrganizerShiftHeaderBar } from '@/components/organizer/OrganizerShiftHeaderBar'
+import { MenuManagerImportModal } from '@/components/menu/MenuManagerImportModal'
 
 export default function MenuManagerPage() {
   const {
@@ -64,6 +66,7 @@ export default function MenuManagerPage() {
   const [pickerMode, setPickerMode] = useState<'create' | 'edit'>('create')
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null)
   const [isItemModalOpen, setItemModalOpen] = useState(false)
+  const [isImportModalOpen, setImportModalOpen] = useState(false)
   const [availabilitySaving, setAvailabilitySaving] = useState<string | null>(null)
 
   // Confirm modal state
@@ -561,6 +564,17 @@ export default function MenuManagerPage() {
               )}
             </div>
 
+            {/* Import Preset Items Button */}
+            <button
+              type="button"
+              onClick={() => setImportModalOpen(true)}
+              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-[#14274E] text-xs font-bold rounded-xl flex items-center gap-1.5 shrink-0 transition-colors border border-slate-200 shadow-2xs cursor-pointer"
+              title="Bulk import dishes into this preset using Item IDs from Menu Catalog"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-blue-600" />
+              <span>Import Items</span>
+            </button>
+
             {/* Edit Menu Button */}
             <button
               type="button"
@@ -890,6 +904,15 @@ export default function MenuManagerPage() {
           onCancel={() => setConfirmState(null)}
         />
       )}
+
+      {/* Preset Bulk Import Modal */}
+      <MenuManagerImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        activePreset={activePreset}
+        catalogItems={catalogItems}
+        onSuccess={() => void reload()}
+      />
     </div>
   )
 }

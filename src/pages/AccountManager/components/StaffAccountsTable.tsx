@@ -34,6 +34,7 @@ interface StaffAccountsTableProps {
   onToggleStatus: (code: StaffCodeItem) => void
   onDeleteCode: (code: StaffCodeItem) => void
   onEndShift: (code: StaffCodeItem) => void
+  onOpenSummary: (code: StaffCodeItem) => void
 }
 
 export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
@@ -43,6 +44,7 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
   onToggleStatus,
   onDeleteCode,
   onEndShift,
+  onOpenSummary,
 }) => {
   const [copiedCodeId, setCopiedCodeId] = useState<number | null>(null)
 
@@ -63,6 +65,7 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
   const renderRoleBadge = (role: StaffRole) => {
     const meta = ROLE_DEFINITIONS[role] || ROLE_DEFINITIONS.DISPATCHER
     let RoleIcon = ChefHat
+    if (role === 'MANAGER') RoleIcon = ShieldCheck
     if (role === 'SERVICE') RoleIcon = UtensilsCrossed
     if (role === 'CASHIER') RoleIcon = Store
     if (role === 'ORGANIZER') RoleIcon = FolderKanban
@@ -123,16 +126,17 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200/80 bg-white shadow-2xs overflow-hidden">
-      <div className="overflow-x-auto">
+    <div className="rounded-2xl border border-slate-200/80 bg-white shadow-2xs overflow-hidden flex flex-col">
+      <div className="overflow-x-auto overflow-y-auto max-h-[580px]">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-black uppercase tracking-wider text-slate-400">
+            <tr className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 backdrop-blur-xs text-[11px] font-black uppercase tracking-wider text-slate-400">
               <th className="py-3.5 px-4">Staff Member</th>
               <th className="py-3.5 px-4">Staff Code</th>
               <th className="py-3.5 px-4">Assigned Role</th>
               <th className="py-3.5 px-4">Code Status</th>
               <th className="py-3.5 px-4">Shift Status</th>
+              <th className="py-3.5 px-4 text-center">Summaries</th>
               <th className="py-3.5 px-4 text-right">Actions</th>
             </tr>
           </thead>
@@ -162,6 +166,9 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
                   <td className="py-3.5 px-4">
                     <div className="h-5 w-20 bg-slate-200 rounded-full" />
                   </td>
+                  <td className="py-3.5 px-4 text-center">
+                    <div className="h-6 w-16 bg-slate-200 rounded-lg mx-auto" />
+                  </td>
                   <td className="py-3.5 px-4 text-right">
                     <div className="h-7 w-7 bg-slate-200 rounded-lg ml-auto" />
                   </td>
@@ -171,7 +178,7 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
             {/* Empty State */}
             {!loading && codes.length === 0 && (
               <tr>
-                <td colSpan={6} className="py-12 px-4 text-center">
+                <td colSpan={7} className="py-12 px-4 text-center">
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 mb-3">
                     <KeyRound className="h-6 w-6" />
                   </div>
@@ -245,7 +252,20 @@ export const StaffAccountsTable: React.FC<StaffAccountsTableProps> = ({
                     {/* 5. Shift Status */}
                     <td className="py-3.5 px-4">{renderShiftStatusBadge(item)}</td>
 
-                    {/* 6. Actions */}
+                    {/* 6. Shift Summaries */}
+                    <td className="py-3.5 px-4 text-center">
+                      <button
+                        type="button"
+                        onClick={() => onOpenSummary(item)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-[#14274E] text-slate-700 hover:text-white text-xs font-black transition-all cursor-pointer shadow-2xs group"
+                        title="View shift summary & punched actions"
+                      >
+                        <Clock className="w-3.5 h-3.5 text-amber-500 group-hover:text-[#E9C46A]" />
+                        <span>Summary</span>
+                      </button>
+                    </td>
+
+                    {/* 7. Actions */}
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1 relative">
                         {/* Manual End Shift Button (Only if shift is ONGOING) */}

@@ -6,7 +6,7 @@ import { fetchAllTables } from './tableService'
 
 export type PaymentStatusFilter = 'ALL' | 'PAID' | 'UNPAID'
 export type PaymentMethodFilter = 'ALL' | 'CASH' | 'CREDIT_CARD' | 'INSTAPAY_QR'
-export type OrderSourceFilter = 'ALL' | 'Cashier' | 'Customer'
+export type OrderSourceFilter = 'ALL' | 'Cashier' | 'Customer' | 'Service'
 export type SortField = 'TIME' | 'ORDER_ID' | 'TOTAL_BILL' | 'ORDER_STATUS'
 export type SortOrder = 'asc' | 'desc'
 
@@ -33,7 +33,7 @@ export interface OrderLogRow {
   isMerged: boolean
   orderStatus: OrderStatus
   orderType: OrderType
-  requestedFrom: 'Cashier' | 'Customer'
+  requestedFrom: 'Cashier' | 'Customer' | 'Service'
   totalBill: number
   subtotalBill: number
   paymentStatus: 'PAID' | 'UNPAID'
@@ -238,8 +238,13 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
       restQuery = restQuery.eq('ORDER_STATUS', orderStatus)
     }
     if (orderSource && orderSource !== 'ALL') {
-      compQuery = compQuery.eq('REQUESTED_FROM', orderSource)
-      restQuery = restQuery.eq('REQUESTED_FROM', orderSource)
+      if (orderSource === 'Service') {
+        compQuery = compQuery.in('REQUESTED_FROM', ['Service', 'Cashier'])
+        restQuery = restQuery.in('REQUESTED_FROM', ['Service', 'Cashier'])
+      } else {
+        compQuery = compQuery.eq('REQUESTED_FROM', orderSource)
+        restQuery = restQuery.eq('REQUESTED_FROM', orderSource)
+      }
     }
     if (tableId && tableId !== 'ALL') {
       compQuery = compQuery.eq('TABLE_ID', tableId)
@@ -267,7 +272,7 @@ export async function fetchOrderLogs(params: OrderLogsFilterParams): Promise<Ord
       const tId = Number(o['TABLE_ID'])
       const tInfo = tableMap.get(tId) || { tableNum: Number(o['TABLE_NUM']) || tId, displayLabel: `Table ${Number(o['TABLE_NUM']) || tId}`, isMerged: false }
       const st = String(o['ORDER_STATUS'] || 'REQUESTED') as OrderStatus
-      const reqFrom = String(o['REQUESTED_FROM'] || 'Cashier') === 'Customer' ? 'Customer' : 'Cashier'
+      const reqFrom = String(o['REQUESTED_FROM'] || '').toLowerCase() === 'customer' ? 'Customer' : 'Service'
       const ordType = String(o['ORDER_TYPE'] || 'DINE-IN').toUpperCase().includes('TAKEOUT')
         ? 'TAKEOUT'
         : 'DINE-IN'
@@ -503,7 +508,7 @@ export async function fetchOrderDetails(orderId: number): Promise<OrderLogDetail
     isMerged: false,
   }
   const st = String(orderData['ORDER_STATUS'] || 'REQUESTED') as OrderStatus
-  const reqFrom = String(orderData['REQUESTED_FROM'] || 'Cashier') === 'Customer' ? 'Customer' : 'Cashier'
+  const reqFrom = String(orderData['REQUESTED_FROM'] || '').toLowerCase() === 'customer' ? 'Customer' : 'Service'
   const ordType = String(orderData['ORDER_TYPE'] || 'DINE-IN').toUpperCase().includes('TAKEOUT')
     ? 'TAKEOUT'
     : 'DINE-IN'

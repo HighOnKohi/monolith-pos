@@ -4,15 +4,18 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { CashierAuditLogsTab } from '@/pages/OrderLogs/components/CashierAuditLogsTab'
+import { StaffShiftSummaryModal } from './components/StaffShiftSummaryModal'
 import type {
   StaffCodeItem,
   StaffCodeFormData,
   StaffCodeFilterParams,
   StaffCodeSummaryStats,
+  StaffRole,
 } from '@/types/account'
 import {
   fetchStaffCodes,
   createStaffCode,
+  createMultipleStaffCodes,
   updateStaffCode,
   toggleStaffCodeStatus,
   deleteStaffCode,
@@ -28,7 +31,6 @@ import { AccountManagerSummaryCards } from './components/AccountManagerSummaryCa
 import { AccountManagerFilterBar } from './components/AccountManagerFilterBar'
 import { StaffAccountsTable } from './components/StaffAccountsTable'
 import { StaffDrawer, type DrawerMode } from './components/StaffDrawer'
-import { AccountPagination } from './components/AccountPagination'
 import { AccountActionConfirmModal } from './components/AccountActionConfirmModal'
 
 export default function AccountManagerPage() {
@@ -48,11 +50,18 @@ export default function AccountManagerPage() {
     receptionistCount: 0,
     ongoingShiftsCount: 0,
   })
-  const [totalCount, setTotalCount] = useState(0)
-  const [totalPages, setTotalPages] = useState(1)
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(25)
+  const pageSize = 250
   const [loading, setLoading] = useState(true)
+
+  // ── Shift Summary Modal State ──
+  const [summaryStaff, setSummaryStaff] = useState<StaffCodeItem | null>(null)
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false)
+
+  const handleOpenSummary = (item: StaffCodeItem) => {
+    setSummaryStaff(item)
+    setIsSummaryModalOpen(true)
+  }
 
   // ── Filter State ──
   const [filters, setFilters] = useState<StaffCodeFilterParams>({
@@ -100,8 +109,6 @@ export default function AccountManagerPage() {
       const result = await fetchStaffCodes(filters, currentPage, pageSize)
       setCodes(result.codes)
       setSummaryStats(result.summaryStats)
-      setTotalCount(result.totalCount)
-      setTotalPages(result.totalPages)
     } catch (err: unknown) {
       console.error('[AccountManager] Failed to load data:', err)
       showToast('Failed to load staff codes. Please refresh.', 'error')
@@ -178,6 +185,13 @@ export default function AccountManagerPage() {
       const updated = await updateStaffCode(originalCodeId, data)
       showToast(`Staff code #${updated.codeId} (${updated.staffName}) updated successfully.`)
     }
+    await loadData()
+  }
+
+  // ── Save Multiple Codes (Create Multi-Name) ──
+  const handleSaveMultipleCodes = async (staffRole: StaffRole, names: string[]) => {
+    const created = await createMultipleStaffCodes(staffRole, names)
+    showToast(`Successfully created ${created.length} staff code(s) for ${staffRole}.`)
     await loadData()
   }
 
@@ -290,7 +304,7 @@ export default function AccountManagerPage() {
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 bg-slate-50/50 min-h-screen">
 
-      {/* ── Top Sub-Tab Switcher: Staff Accounts vs Operational Audit & History ── */}
+      {/* ── Top Sub-Tab Switcher: Staff Accounts vs Action History ── */}
       <div className="no-print flex items-center bg-slate-200/70 p-1 rounded-2xl w-fit gap-1 border border-slate-200">
         <button
           type="button"
@@ -304,6 +318,7 @@ export default function AccountManagerPage() {
           <Users className="w-4 h-4" />
           <span>Staff Accounts &amp; Roles</span>
         </button>
+
         <button
           type="button"
           onClick={() => setActiveSubTab('audit')}
@@ -314,7 +329,7 @@ export default function AccountManagerPage() {
           }`}
         >
           <ShieldCheck className="w-4 h-4 text-[#14274E]" />
-          <span>Operational History &amp; Audit</span>
+          <span>Action History</span>
         </button>
       </div>
 
@@ -333,7 +348,7 @@ export default function AccountManagerPage() {
             ongoingShiftsCount={summaryStats.ongoingShiftsCount}
           />
 
-          {/* ── Staff Codes Table ── */}
+          {/* ── Staff Codes Table (Scrollable with Summaries Column) ── */}
           <StaffAccountsTable
             codes={codes}
             loading={loading}
@@ -341,22 +356,8 @@ export default function AccountManagerPage() {
             onToggleStatus={handleToggleStatus}
             onDeleteCode={handleDeleteCode}
             onEndShift={handleEndShift}
+            onOpenSummary={handleOpenSummary}
           />
-
-          {/* ── Pagination ── */}
-          {!loading && totalCount > pageSize && (
-            <AccountPagination
-              currentPage={currentPage}
-              totalPages={totalPages}
-              totalCount={totalCount}
-              pageSize={pageSize}
-              onPageChange={setCurrentPage}
-              onPageSizeChange={(newSize) => {
-                setPageSize(newSize)
-                setCurrentPage(1)
-              }}
-            />
-          )}
         </>
       ) : (
         <CashierAuditLogsTab />
@@ -369,6 +370,15 @@ export default function AccountManagerPage() {
         codeItem={selectedCode}
         onClose={() => setIsDrawerOpen(false)}
         onSave={handleSaveCode}
+        onSaveMultiple={handleSaveMultipleCodes}
+      />
+
+      {/* ── Staff Shift Summary & Actions Modal ── */}
+      <StaffShiftSummaryModal
+        isOpen={isSummaryModalOpen}
+        staff={summaryStaff}
+        onClose={() => setIsSummaryModalOpen(false)}
+        onActionDeleted={() => void loadData()}
       />
 
       {/* ── Confirmation Modal ── */}

@@ -139,9 +139,21 @@ function NavigationGroup({ group, collapsed, onNavigate }: { group: NavGroup; co
 }
 
 function SidebarContent({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
+  const { user } = useAuth()
+  const isAdmin =
+    user?.email === 'taponakawnt@gmail.com' ||
+    user?.email === 'admin@monolith.com' ||
+    user?.email === 'adminmonolith@gmail.com' ||
+    user?.user_metadata?.role === 'admin'
+
+  const visibleSections = navigation.filter((section) => {
+    if (!isAdmin && section.section === 'Admin') return false
+    return true
+  })
+
   return (
     <nav className="Sidebar-nav-buttons-container">
-      {navigation.map((section) => (
+      {visibleSections.map((section) => (
         <div className="Nav-category" key={section.section}>
           <p className={['Nav-category-header', collapsed ? 'is-hidden' : ''].join(' ')}>{section.section}</p>
           <div className="Nav-category-buttons">

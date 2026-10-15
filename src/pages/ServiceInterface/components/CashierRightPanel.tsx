@@ -113,20 +113,20 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
   }
   const aggregatedItems = Object.values(itemAggMap)
 
-  // 1. Calculate Bill totals from actual line items (Menu price is VAT-inclusive)
+  // Punch Cart Total (Direct item prices, no tax calculation in Service Interface)
+  const punchCartTotal = punchCart.reduce((sum, ci) => sum + (ci.item.price || 0) * ci.quantity, 0)
+
+  // Calculate Active Orders Bill totals (No tax in Service Interface - tax is calculated at Cashier)
   const rawBillTotal = aggregatedItems.reduce((sum, it) => sum + it.total, 0)
-  const baseSubtotal = rawBillTotal > 0 ? rawBillTotal / 1.05 : 0
 
   let discountAmount = 0
   if (discountType === 'senior' || discountType === 'pwd') {
-    discountAmount = baseSubtotal * 0.20
+    discountAmount = rawBillTotal * 0.20
   } else if (discountType === 'custom') {
-    discountAmount = baseSubtotal * (Math.min(100, Math.max(0, customPercent)) / 100)
+    discountAmount = rawBillTotal * (Math.min(100, Math.max(0, customPercent)) / 100)
   }
 
-  const taxableSubtotal = Math.max(0, baseSubtotal - discountAmount)
-  const billTax = taxableSubtotal * 0.05
-  const grandTotal = taxableSubtotal + billTax
+  const grandTotal = Math.max(0, rawBillTotal - discountAmount)
 
 
   return (
@@ -318,7 +318,7 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
               <div className="space-y-1.5 pt-2 border-t border-slate-200/80 text-xs">
                 <div className="flex justify-between text-slate-500">
                   <span>Subtotal</span>
-                  <span>₱{baseSubtotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span>₱{rawBillTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 {discountAmount > 0 && (
                   <div className="flex justify-between text-emerald-600 font-bold">
@@ -326,10 +326,6 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                     <span>-₱{discountAmount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-slate-500">
-                  <span>Tax (5% VAT)</span>
-                  <span>₱{billTax.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                </div>
                 <div className="flex justify-between text-base font-black text-[#14274E] pt-1.5 border-t border-slate-200">
                   <span>Grand Total</span>
                   <span>₱{grandTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -422,6 +418,9 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                         <h5 className="text-sm font-bold text-[#14274E] truncate">
                           {ci.item.name}
                         </h5>
+                        <p className="text-xs font-semibold text-slate-500 mt-0.5">
+                          ₱{(ci.item.price || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each
+                        </p>
                       </div>
 
                       {/* Stepper */}
@@ -441,6 +440,12 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                         >
                           <Plus className="w-2.5 h-2.5" />
                         </button>
+                      </div>
+
+                      <div className="text-right min-w-[65px]">
+                        <span className="text-sm font-black text-[#14274E]">
+                          ₱{((ci.item.price || 0) * ci.quantity).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
                       </div>
 
                       <button
@@ -467,6 +472,18 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                   className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-[#14274E] placeholder-slate-400 focus:outline-none focus:border-[#14274E]"
                 />
               </label>
+
+              {/* Price Calculation (Without Tax) */}
+              {punchCart.length > 0 && (
+                <div className="pt-1 text-xs">
+                  <div className="flex justify-between text-base font-black text-[#14274E] pt-1.5 border-t border-slate-200">
+                    <span>Subtotal</span>
+                    <span>
+                      ₱{punchCartTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-2 pt-1">
                 <button
@@ -511,8 +528,8 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                 pendingOrders.map((ord) => {
                   const isExpanded = expandedOrders[ord.orderId] ?? false
                   const groupedItems = Object.values(
-                    (ord.items ?? []).reduce<Record<string, { name: string; count: number; items: typeof ord.items }>>((groups, item) => {
-                      const group = groups[item.itemId] ?? { name: item.name || `Item #${item.itemId}`, count: 0, items: [] }
+                    (ord.items ?? []).reduce<Record<string, { name: string; count: number; price: number; items: typeof ord.items }>>((groups, item) => {
+                      const group = groups[item.itemId] ?? { name: item.name || `Item #${item.itemId}`, count: 0, price: item.price || 0, items: [] }
                       group.count += 1
                       group.items = [...(group.items ?? []), item]
                       groups[item.itemId] = group
@@ -525,9 +542,16 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                       className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-xs space-y-2"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-[#14274E]">
-                          Order #{ord.orderId}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-[#14274E]">
+                            Order #{ord.orderId}
+                          </span>
+                          {ord.totalBill > 0 && (
+                            <span className="text-xs font-bold text-slate-600">
+                              (₱{ord.totalBill.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                            </span>
+                          )}
+                        </div>
                         <span
                           className={[
                             'text-[10px] font-extrabold px-2 py-0.5 rounded-full',
@@ -560,7 +584,14 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                                   {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                                   {group.name} <span className="text-slate-400">x{group.count}</span>
                                 </span>
-                                <span className="text-[10px] text-slate-400">View items</span>
+                                <div className="flex items-center gap-2">
+                                  {group.price > 0 && (
+                                    <span className="text-xs font-bold text-[#14274E]">
+                                      ₱{(group.price * group.count).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] text-slate-400">View items</span>
+                                </div>
                               </button>
                               {isExpanded && (
                                 <div className="ml-5 space-y-1 pb-1">
@@ -593,9 +624,16 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                       </div>
 
                       <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-slate-500">
-                          {ord.items?.length ?? 0} individual item{(ord.items?.length ?? 0) !== 1 ? 's' : ''}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-bold text-slate-500">
+                            {ord.items?.length ?? 0} individual item{(ord.items?.length ?? 0) !== 1 ? 's' : ''}
+                          </span>
+                          {ord.totalBill > 0 && (
+                            <span className="text-xs font-black text-[#14274E]">
+                              · Total: ₱{ord.totalBill.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          )}
+                        </div>
                         {!['READY', 'SERVED', 'COMPLETED', 'CANCELLED'].includes(ord.orderStatus) && (ord.items ?? []).some((it) => it.status !== 'CANCELLED' && it.status !== 'READY' && it.status !== 'SERVED') && onOpenVoidModal && (
                           <button
                             type="button"
@@ -631,10 +669,11 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
               ) : (
                 cancelledOrders.map((ord) => {
                   const groupedItems = Object.values(
-                    (ord.items ?? []).reduce<Record<string, { name: string; count: number; items: typeof ord.items; reasons: string[] }>>((groups, item) => {
+                    (ord.items ?? []).reduce<Record<string, { name: string; count: number; price: number; items: typeof ord.items; reasons: string[] }>>((groups, item) => {
                       const group = groups[item.itemId] ?? {
                         name: item.name || `Item #${item.itemId}`,
                         count: 0,
+                        price: item.price || 0,
                         items: [],
                         reasons: [],
                       }
@@ -654,9 +693,16 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                       className="p-3.5 rounded-2xl bg-rose-50/40 border border-rose-200 shadow-xs space-y-3"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-[#14274E]">
-                          Order #{ord.orderId}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-[#14274E]">
+                            Order #{ord.orderId}
+                          </span>
+                          {ord.totalBill > 0 && (
+                            <span className="text-xs font-bold text-slate-600">
+                              (₱{ord.totalBill.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">
                           CANCELLED
                         </span>
@@ -685,6 +731,11 @@ export const CashierRightPanel: React.FC<CashierRightPanelProps> = ({
                               <div>
                                 <span className="font-medium text-slate-700">
                                   {group.name} <span className="text-slate-400">x{group.count}</span>
+                                  {group.price > 0 && (
+                                    <span className="text-xs font-bold text-slate-600 ml-1.5">
+                                      · ₱{(group.price * group.count).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  )}
                                 </span>
                                 {group.reasons.length > 0 && (
                                   <p className="text-[10px] font-semibold text-rose-600">

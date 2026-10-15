@@ -9,8 +9,6 @@ import {
   voidOrderItems,
 } from '@/services/orderService'
 import { useMenu } from '@/hooks/useMenu'
-import { useAuth } from '@/hooks/useAuth'
-import { verifyAdminPassword } from '@/services/authVerificationService'
 import { fetchServiceMenuItems } from '@/services/menuService'
 import { MENU_ITEM_STATUS_UPDATED } from '@/hooks/useRealtimeMenu'
 import type { BillRequest } from '@/types/bill'
@@ -42,7 +40,6 @@ import { useServiceSession } from '@/hooks/useServiceSession'
 import { logCashierAction } from '@/services/cashierAuditService'
 
 export default function CashierPage() {
-  const { user } = useAuth()
   const { shift: serviceShift } = useServiceSession()
 
   // ── 1. Data States ──
@@ -646,14 +643,8 @@ export default function CashierPage() {
     setIsVoidModalOpen(true)
   }
 
-  const handleConfirmVoid = async (orderId: number, orderItemIds: number[], password?: string) => {
-    if (!password) {
-      throw new Error('Administrator password is required.')
-    }
-    const authRes = await verifyAdminPassword(password, user?.email)
-    if (!authRes.valid) {
-      throw new Error(authRes.error || 'Incorrect administrator password.')
-    }
+  const handleConfirmVoid = async (orderId: number, orderItemIds: number[], staffCode?: string) => {
+    const numericStaffCode = staffCode ? Number(staffCode) : serviceShift?.staffId
 
     const { orderDeleted, voidedCount } = await voidOrderItems(
       orderId,
@@ -661,9 +652,9 @@ export default function CashierPage() {
       selectedGroup.anchorTableId,
       selectedGroup.memberTableIds,
       {
-        staffId: serviceShift?.staffId,
+        staffId: numericStaffCode,
         shiftId: serviceShift?.shiftId,
-        reason: `Admin voided ${orderItemIds.length} item(s) for ${selectedGroup.displayLabel}`,
+        reason: `Staff #${numericStaffCode || ''} authorized void of ${orderItemIds.length} item(s) for ${selectedGroup.displayLabel}`,
       },
     )
 

@@ -18,3 +18,21 @@ export function ProtectedRoute() {
 
   return <Outlet />
 }
+
+export function AdminProtectedRoute() {
+  const { user, loading } = useAuth()
+
+  if (loading) return <PageLoader />
+  if (!user) return <Navigate to="/login" replace />
+
+  const isAdmin =
+    user.email === 'taponakawnt@gmail.com' ||
+    user.email === 'admin@monolith.com' ||
+    user.email === 'adminmonolith@gmail.com' ||
+    user.user_metadata?.role === 'admin'
+  if (!isAdmin) {
+    return <Navigate to="/service" replace />
+  }
+
+  return <Outlet />
+}

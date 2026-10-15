@@ -84,14 +84,15 @@ function mapDbRowToStaffCode(row: Record<string, unknown>): StaffCodeItem {
   const codeId = Number(row['CODE_ID'])
   const staffName = String(row['STAFF_NAME'] || 'Unnamed Staff')
   
-  // Normalize role to DISPATCHER | SERVICE | CASHIER | ORGANIZER | RECEPTIONIST
+  // Normalize role to MANAGER | DISPATCHER | SERVICE | CASHIER | ORGANIZER | RECEPTIONIST
   let rawRole = String(row['STAFF_ROLE'] || 'DISPATCHER').toUpperCase()
   let staffRole: StaffRole = 'DISPATCHER'
-  if (rawRole === 'ORGANIZER') staffRole = 'ORGANIZER'
+  if (rawRole === 'MANAGER') staffRole = 'MANAGER'
+  else if (rawRole === 'ORGANIZER') staffRole = 'ORGANIZER'
   else if (rawRole === 'RECEPTIONIST' || rawRole === 'RECEPTION') staffRole = 'RECEPTIONIST'
   else if (rawRole === 'CASHIER') staffRole = 'CASHIER'
   else if (rawRole === 'SERVICE' || rawRole === 'STAFF' || rawRole === 'SERVER') staffRole = 'SERVICE'
-  else if (rawRole === 'DISPATCHER' || rawRole === 'KITCHEN' || rawRole === 'ADMIN' || rawRole === 'MANAGER') staffRole = 'DISPATCHER'
+  else if (rawRole === 'DISPATCHER' || rawRole === 'KITCHEN' || rawRole === 'ADMIN') staffRole = 'DISPATCHER'
 
   const rawCodeStatus = String(row['CODE_STATUS'] || row['STATUS'] || 'ACTIVE').toUpperCase()
   const codeStatus: CodeStatus = rawCodeStatus === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE'
@@ -594,31 +595,71 @@ export async function deleteStaffCode(codeId: number): Promise<void> {
 }
 
 /**
- * Suggests the next available numeric staff code (e.g. 1001, 1002...).
+ * Generates a random numeric staff code between 1000 and 9999 that does not conflict with existing codes.
  */
-export async function suggestNextCode(): Promise<number> {
+export async function generateRandomStaffCode(excludeCodes: Set<number> = new Set()): Promise<number> {
+  const existing = new Set<number>(excludeCodes)
   try {
     const { data } = await supabase
       .schema('staff')
       .from('Staff_Codes')
       .select('CODE_ID')
-      .order('CODE_ID', { ascending: false })
-      .limit(1)
-
-    if (data && data.length > 0) {
-      return Number(data[0].CODE_ID) + 1
+    if (data) {
+      for (const d of data) existing.add(Number(d.CODE_ID))
     }
   } catch {
     // ignore
   }
 
   const fallbackAll = getFallbackCodes()
-  if (fallbackAll.length > 0) {
-    const maxCode = Math.max(...fallbackAll.map((c) => c.codeId))
-    return maxCode + 1
+  for (const c of fallbackAll) existing.add(c.codeId)
+
+  // Find a random available code in [1000, 9999]
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const candidate = Math.floor(1000 + Math.random() * 9000)
+    if (!existing.has(candidate)) {
+      return candidate
+    }
+  }
+  return Math.floor(1000 + Math.random() * 9000)
+}
+
+/**
+ * Creates multiple staff codes for a specified role at once,
+ * assigning each a random code between 1000 and 9999.
+ */
+export async function createMultipleStaffCodes(
+  staffRole: StaffRole,
+  names: string[],
+): Promise<StaffCodeItem[]> {
+  const createdItems: StaffCodeItem[] = []
+  const usedCodes = new Set<number>()
+
+  for (const rawName of names) {
+    const staffName = rawName.trim()
+    if (!staffName) continue
+
+    const codeId = await generateRandomStaffCode(usedCodes)
+    usedCodes.add(codeId)
+
+    const created = await createStaffCode({
+      codeId,
+      staffName,
+      staffRole,
+      codeStatus: 'ACTIVE',
+      status: 'ACTIVE',
+    })
+    createdItems.push(created)
   }
 
-  return 1001
+  return createdItems
+}
+
+/**
+ * Suggests the next available numeric staff code (e.g. 1001, 1002...).
+ */
+export async function suggestNextCode(): Promise<number> {
+  return generateRandomStaffCode()
 }
 
 // ─── Filter & Stats Helpers ───────────────────────────────────────────────────
@@ -715,6 +756,9 @@ function calculateSummaryStats(codes: StaffCodeItem[]): StaffCodeSummaryStats {
       case 'RECEPTIONIST':
         stats.receptionistCount++
         break
+      case 'MANAGER':
+        stats.managerCount = (stats.managerCount || 0) + 1
+        break
     }
   }
 
@@ -733,7 +777,7 @@ function updateFallbackCache(item: StaffCodeItem): void {
 }
 
 /**
- * Validates whether a numeric staff code belongs to an active ORGANIZER.
+ * Validates whether a numeric staff code belongs to an active ORGANIZER or MANAGER.
  */
 export async function validateOrganizerStaff(staffId: number): Promise<{
   valid: boolean
@@ -776,10 +820,10 @@ export async function validateOrganizerStaff(staffId: number): Promise<{
       }
     }
 
-    if (staff.staffRole !== 'ORGANIZER') {
+    if (staff.staffRole !== 'ORGANIZER' && staff.staffRole !== 'MANAGER') {
       return {
         valid: false,
-        error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only ORGANIZER staff can access Management interfaces.`,
+        error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only ORGANIZER or MANAGER staff can access Management interfaces.`,
       }
     }
 
@@ -796,7 +840,7 @@ export async function validateOrganizerStaff(staffId: number): Promise<{
 }
 
 /**
- * Validates whether a numeric staff code belongs to an active RECEPTIONIST.
+ * Validates whether a numeric staff code belongs to an active RECEPTIONIST or MANAGER.
  */
 export async function validateReceptionistStaff(staffId: number): Promise<{
   valid: boolean
@@ -839,10 +883,10 @@ export async function validateReceptionistStaff(staffId: number): Promise<{
       }
     }
 
-    if (staff.staffRole !== 'RECEPTIONIST') {
+    if (staff.staffRole !== 'RECEPTIONIST' && staff.staffRole !== 'MANAGER') {
       return {
         valid: false,
-        error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only RECEPTIONIST staff can access the Receptionist interface.`,
+        error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only RECEPTIONIST or MANAGER staff can access the Receptionist interface.`,
       }
     }
 
@@ -854,6 +898,127 @@ export async function validateReceptionistStaff(staffId: number): Promise<{
     return {
       valid: false,
       error: err instanceof Error ? err.message : 'Failed to verify Receptionist staff code.',
+    }
+  }
+}
+
+/**
+ * Validates whether a numeric staff code belongs to an active MANAGER.
+ * Used for administrative overrides, glitch shift registry deletions, and supervisor actions.
+ */
+export async function validateManagerStaff(staffId: number): Promise<{
+  valid: boolean
+  staff?: StaffCodeItem
+  error?: string
+}> {
+  try {
+    let rawRow: Record<string, unknown> | null = null
+    const { data: schemaRow, error: schemaErr } = await supabase
+      .schema('staff')
+      .from('Staff_Codes')
+      .select('*')
+      .eq('CODE_ID', staffId)
+      .maybeSingle()
+
+    if (!schemaErr && schemaRow) {
+      rawRow = schemaRow as Record<string, unknown>
+    } else {
+      const { data: pubRow } = await supabase
+        .from('Staff_Codes')
+        .select('*')
+        .eq('CODE_ID', staffId)
+        .maybeSingle()
+      if (pubRow) rawRow = pubRow as Record<string, unknown>
+    }
+
+    if (!rawRow) {
+      return {
+        valid: false,
+        error: `Staff Code #${staffId} was not found. Please enter a valid Manager staff code.`,
+      }
+    }
+
+    const staff = mapDbRowToStaffCode(rawRow)
+
+    if (staff.codeStatus === 'INACTIVE' || staff.status === 'INACTIVE') {
+      return {
+        valid: false,
+        error: `Staff #${staff.codeId} (${staff.staffName}) is currently inactive. Contact an administrator.`,
+      }
+    }
+
+    if (staff.staffRole !== 'MANAGER') {
+      return {
+        valid: false,
+        error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only MANAGER staff codes can authorize this action.`,
+      }
+    }
+
+    return {
+      valid: true,
+      staff,
+    }
+  } catch (err) {
+    return {
+      valid: false,
+      error: err instanceof Error ? err.message : 'Failed to verify Manager staff code.',
+    }
+  }
+}
+
+/**
+ * Validates whether a numeric staff code belongs to ANY active staff member (any role).
+ * Required when voiding orders/items in Cashier or Service interfaces.
+ */
+export async function validateAnyActiveStaffCode(staffId: number): Promise<{
+  valid: boolean
+  staff?: StaffCodeItem
+  error?: string
+}> {
+  try {
+    let rawRow: Record<string, unknown> | null = null
+    const { data: schemaRow, error: schemaErr } = await supabase
+      .schema('staff')
+      .from('Staff_Codes')
+      .select('*')
+      .eq('CODE_ID', staffId)
+      .maybeSingle()
+
+    if (!schemaErr && schemaRow) {
+      rawRow = schemaRow as Record<string, unknown>
+    } else {
+      const { data: pubRow } = await supabase
+        .from('Staff_Codes')
+        .select('*')
+        .eq('CODE_ID', staffId)
+        .maybeSingle()
+      if (pubRow) rawRow = pubRow as Record<string, unknown>
+    }
+
+    if (!rawRow) {
+      return {
+        valid: false,
+        error: `Staff Code #${staffId} was not found. Please enter a valid staff code.`,
+      }
+    }
+
+    const staff = mapDbRowToStaffCode(rawRow)
+
+    if (staff.codeStatus === 'INACTIVE' || staff.status === 'INACTIVE') {
+      return {
+        valid: false,
+        error: `Staff #${staff.codeId} (${staff.staffName}) is currently inactive. Contact an administrator.`,
+      }
+    }
+
+    return {
+      valid: true,
+      staff,
+    }
+  } catch (err) {
+    return {
+      valid: false,
+      error: err instanceof Error ? err.message : 'Failed to verify staff code.',
     }
   }
 }

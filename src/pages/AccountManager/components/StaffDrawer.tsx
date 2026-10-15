@@ -9,12 +9,13 @@ import {
   UtensilsCrossed,
   FolderKanban,
   ConciergeBell,
-  Sparkles,
   Check,
+  Plus,
+  Trash2,
+  ShieldCheck,
 } from 'lucide-react'
 import type { StaffCodeItem, StaffCodeFormData, StaffRole, CodeStatus } from '@/types/account'
 import { ROLE_DEFINITIONS } from '@/types/account'
-import { suggestNextCode } from '@/services/staffCodeService'
 
 export type DrawerMode = 'create' | 'edit'
 
@@ -24,6 +25,7 @@ interface StaffDrawerProps {
   codeItem: StaffCodeItem | null
   onClose: () => void
   onSave: (data: StaffCodeFormData, originalCodeId?: number) => Promise<void>
+  onSaveMultiple?: (staffRole: StaffRole, names: string[]) => Promise<void>
 }
 
 export const StaffDrawer: React.FC<StaffDrawerProps> = ({
@@ -32,9 +34,11 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
   codeItem,
   onClose,
   onSave,
+  onSaveMultiple,
 }) => {
   // Form State
   const [staffName, setStaffName] = useState('')
+  const [names, setNames] = useState<string[]>([''])
   const [codeId, setCodeId] = useState<string>('')
   const [staffRole, setStaffRole] = useState<StaffRole>('DISPATCHER')
   const [codeStatus, setCodeStatus] = useState<CodeStatus>('ACTIVE')
@@ -42,7 +46,6 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
   // UI State
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const [isSuggesting, setIsSuggesting] = useState(false)
 
   // ESC key listener
   useEffect(() => {
@@ -61,11 +64,11 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
     setFormError(null)
 
     if (mode === 'create') {
+      setNames([''])
       setStaffName('')
+      setCodeId('')
       setStaffRole('DISPATCHER')
       setCodeStatus('ACTIVE')
-      // Auto-suggest next code
-      suggestNextCode().then((next) => setCodeId(String(next)))
     } else if (codeItem) {
       setStaffName(codeItem.staffName)
       setCodeId(String(codeItem.codeId))
@@ -74,56 +77,92 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
     }
   }, [isOpen, mode, codeItem])
 
-  const handleSuggestNext = async () => {
-    setIsSuggesting(true)
-    try {
-      const next = await suggestNextCode()
-      setCodeId(String(next))
-    } finally {
-      setIsSuggesting(false)
-    }
+  // Multi-name handlers
+  const handleAddNameField = () => {
+    setNames((prev) => [...prev, ''])
+  }
+
+  const handleRemoveNameField = (index: number) => {
+    setNames((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : ['']))
+  }
+
+  const handleNameChange = (index: number, val: string) => {
+    setNames((prev) => prev.map((n, i) => (i === index ? val : n)))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
 
-    const trimmedName = staffName.trim()
-    if (!trimmedName) {
-      setFormError('Please enter a staff member name.')
-      return
-    }
+    if (mode === 'create') {
+      const validNames = names.map((n) => n.trim()).filter((n) => n.length > 0)
+      if (validNames.length === 0) {
+        setFormError('Please enter at least one staff member name.')
+        return
+      }
 
-    const numericCode = Number(codeId)
-    if (!codeId || isNaN(numericCode) || numericCode <= 0) {
-      setFormError('Please enter a valid numeric staff code (e.g. 1001).')
-      return
-    }
+      setSubmitting(true)
+      try {
+        if (onSaveMultiple) {
+          await onSaveMultiple(staffRole, validNames)
+        } else {
+          for (const name of validNames) {
+            await onSave({
+              codeId: 0,
+              staffName: name,
+              staffRole,
+              codeStatus,
+              status: codeStatus,
+            })
+          }
+        }
+        onClose()
+      } catch (err: unknown) {
+        console.error('[StaffDrawer] Save error:', err)
+        setFormError(err instanceof Error ? err.message : 'Failed to create staff codes.')
+      } finally {
+        setSubmitting(false)
+      }
+    } else {
+      // Edit Mode
+      const trimmedName = staffName.trim()
+      if (!trimmedName) {
+        setFormError('Please enter a staff member name.')
+        return
+      }
 
-    setSubmitting(true)
-    try {
-      await onSave(
-        {
-          codeId: numericCode,
-          staffName: trimmedName,
-          staffRole,
-          codeStatus,
-          status: codeStatus,
-        },
-        mode === 'edit' && codeItem ? codeItem.codeId : undefined,
-      )
-      onClose()
-    } catch (err: unknown) {
-      console.error('[StaffDrawer] Save error:', err)
-      setFormError(err instanceof Error ? err.message : 'Failed to save staff code.')
-    } finally {
-      setSubmitting(false)
+      const numericCode = Number(codeId)
+      if (!codeId || isNaN(numericCode) || numericCode <= 0) {
+        setFormError('Please enter a valid numeric staff code.')
+        return
+      }
+
+      setSubmitting(true)
+      try {
+        await onSave(
+          {
+            codeId: numericCode,
+            staffName: trimmedName,
+            staffRole,
+            codeStatus,
+            status: codeStatus,
+          },
+          codeItem ? codeItem.codeId : undefined,
+        )
+        onClose()
+      } catch (err: unknown) {
+        console.error('[StaffDrawer] Save error:', err)
+        setFormError(err instanceof Error ? err.message : 'Failed to update staff code.')
+      } finally {
+        setSubmitting(false)
+      }
     }
   }
 
   if (!isOpen) return null
 
   const rolesList: StaffRole[] = [
+    'MANAGER',
     'DISPATCHER',
     'SERVICE',
     'CASHIER',
@@ -149,11 +188,13 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
                 <KeyRound className="w-4 h-4" />
               </div>
               <h2 className="text-base font-extrabold text-[#14274E]">
-                {mode === 'create' ? 'Add Staff Code' : 'Edit Staff Code'}
+                {mode === 'create' ? 'Add Staff Codes' : 'Edit Staff Code'}
               </h2>
             </div>
             <p className="text-xs text-slate-400 mt-0.5 ml-10">
-              Assign a numeric staff code and operational role for terminal access.
+              {mode === 'create'
+                ? 'Assign operational roles and enter names. 4-digit codes (1000–9999) are generated randomly.'
+                : 'Modify staff member details, role, or access status.'}
             </p>
           </div>
           <button
@@ -174,59 +215,7 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
             </div>
           )}
 
-          {/* 1. Staff Name */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-              Staff Member Name <span className="text-rose-500">*</span>
-            </label>
-            <div className="relative">
-              <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                required
-                value={staffName}
-                onChange={(e) => setStaffName(e.target.value)}
-                placeholder="e.g. Juan Dela Cruz"
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#14274E] focus:bg-white transition-all font-semibold"
-              />
-            </div>
-          </div>
-
-          {/* 2. Staff Code */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-                Staff Code (PIN) <span className="text-rose-500">*</span>
-              </label>
-              <button
-                type="button"
-                onClick={handleSuggestNext}
-                disabled={isSuggesting}
-                className="text-[11px] font-bold text-[#14274E] hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-              >
-                <Sparkles className="w-3 h-3 text-[#E9C46A]" />
-                <span>Suggest Next</span>
-              </button>
-            </div>
-            <div className="relative">
-              <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="number"
-                required
-                min={1}
-                step={1}
-                value={codeId}
-                onChange={(e) => setCodeId(e.target.value)}
-                placeholder="e.g. 1001"
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-xs font-mono font-black text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#14274E] focus:bg-white transition-all"
-              />
-            </div>
-            <p className="text-[11px] text-slate-400">
-              Unique numeric code entered by this staff member to unlock their operational interface.
-            </p>
-          </div>
-
-          {/* 3. Role Selector */}
+          {/* 1. Operational Role Selection */}
           <div className="space-y-2">
             <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
               Assigned Operational Role <span className="text-rose-500">*</span>
@@ -236,6 +225,7 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
                 const isSelected = staffRole === rKey
                 const meta = ROLE_DEFINITIONS[rKey]
                 let Icon = ChefHat
+                if (rKey === 'MANAGER') Icon = ShieldCheck
                 if (rKey === 'SERVICE') Icon = UtensilsCrossed
                 if (rKey === 'CASHIER') Icon = Store
                 if (rKey === 'ORGANIZER') Icon = FolderKanban
@@ -278,7 +268,95 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
             </div>
           </div>
 
-          {/* 4. Code Status Toggle */}
+          {/* 2. Staff Name(s) */}
+          {mode === 'create' ? (
+            /* Multi-name creation with '+' icon */
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-700">
+                  Staff Member Names ({names.length}) <span className="text-rose-500">*</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAddNameField}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#14274E] text-[#E9C46A] text-[11px] font-black hover:bg-[#1a3468] transition-all cursor-pointer shadow-2xs active:scale-95"
+                  title="Add another staff member name field"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Name</span>
+                </button>
+              </div>
+
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {names.map((nm, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="text"
+                        required={idx === 0}
+                        value={nm}
+                        onChange={(e) => handleNameChange(idx, e.target.value)}
+                        placeholder={`Staff Name #${idx + 1} (e.g. Juan Dela Cruz)`}
+                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-slate-50/50 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#14274E] focus:bg-white transition-all font-semibold"
+                      />
+                    </div>
+                    {names.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveNameField(idx)}
+                        className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer shrink-0"
+                        title="Remove this name field"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            /* Single Name & Code in Edit Mode */
+            <div className="space-y-4 pt-2 border-t border-slate-100">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
+                  Staff Member Name <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    value={staffName}
+                    onChange={(e) => setStaffName(e.target.value)}
+                    placeholder="e.g. Juan Dela Cruz"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#14274E] focus:bg-white transition-all font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
+                  Staff Code (PIN) <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="number"
+                    required
+                    min={1000}
+                    max={9999}
+                    value={codeId}
+                    onChange={(e) => setCodeId(e.target.value)}
+                    placeholder="e.g. 1024"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-xs font-mono font-black text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#14274E] focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 3. Account Status Toggle */}
           <div className="space-y-2 pt-2 border-t border-slate-100">
             <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
               Account Status
@@ -325,7 +403,11 @@ export const StaffDrawer: React.FC<StaffDrawerProps> = ({
               disabled={submitting}
               className="px-5 py-2 rounded-xl bg-[#14274E] hover:bg-[#1a3468] text-white text-xs font-black shadow-xs active:scale-98 transition-all cursor-pointer disabled:opacity-50"
             >
-              {submitting ? 'Saving...' : mode === 'create' ? 'Create Staff Code' : 'Save Changes'}
+              {submitting
+                ? 'Saving...'
+                : mode === 'create'
+                  ? `Create ${names.filter((n) => n.trim().length > 0).length || 1} Staff Code(s)`
+                  : 'Save Changes'}
             </button>
           </div>
         </form>

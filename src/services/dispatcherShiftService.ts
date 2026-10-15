@@ -87,10 +87,10 @@ export async function validateDispatcherStaff(staffId: number): Promise<Dispatch
     }
   }
 
-  if (staff.staffRole !== 'DISPATCHER') {
+  if (staff.staffRole !== 'DISPATCHER' && staff.staffRole !== 'MANAGER') {
     return {
       valid: false,
-      error: `Staff #${staff.codeId} is registered as ${staff.staffRole}. Only DISPATCHER staff can operate the kitchen dispatch line.`,
+      error: `Staff #${staff.codeId} is registered as ${staff.staffRole}. Only DISPATCHER or MANAGER staff can operate the kitchen dispatch line.`,
     }
   }
 

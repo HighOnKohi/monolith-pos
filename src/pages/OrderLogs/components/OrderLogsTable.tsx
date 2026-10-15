@@ -163,10 +163,10 @@ export const OrderLogsTable: React.FC<OrderLogsTableProps> = ({
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
       {/* ── Desktop Table View (visible on md+) ── */}
-      <div className="hidden md:block overflow-x-auto">
+      <div className="hidden md:block overflow-x-auto max-h-[600px] overflow-y-auto">
         <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-slate-50/80 border-b border-slate-200/80 text-[11px] font-black text-slate-500 uppercase tracking-wider select-none">
+          <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200/80">
+            <tr className="text-[11px] font-black text-slate-500 uppercase tracking-wider select-none">
               <th
                 onClick={() => onSortChange('ORDER_ID')}
                 className="py-3 px-4 cursor-pointer hover:text-slate-800 transition-colors"
@@ -357,7 +357,7 @@ export const OrderLogsTable: React.FC<OrderLogsTableProps> = ({
       </div>
 
       {/* ── Mobile Card List View (visible on < md) ── */}
-      <div className="md:hidden divide-y divide-slate-100">
+      <div className="md:hidden divide-y divide-slate-100 max-h-[600px] overflow-y-auto">
         {orders.map((order) => {
           const isSelected = selectedOrderId === order.orderId
           return (

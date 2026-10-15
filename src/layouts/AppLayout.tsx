@@ -7,8 +7,15 @@ import { MenuProvider } from '@/hooks/useMenu'
 import { OrganizerSessionProvider } from '@/contexts/OrganizerSessionContext'
 import { ReceptionistSessionProvider } from '@/contexts/ReceptionistSessionContext'
 import { sanitizeTerminalSessions } from '@/services/terminalSessionService'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function AppLayout() {
+  const { user } = useAuth()
+  const isAdmin =
+    user?.email === 'taponakawnt@gmail.com' ||
+    user?.email === 'admin@monolith.com' ||
+    user?.email === 'adminmonolith@gmail.com' ||
+    user?.user_metadata?.role === 'admin'
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
 
@@ -61,8 +68,10 @@ export default function AppLayout() {
             </div>
             <div className="flex items-center gap-2">
               <BusinessDayStatusIndicator collapsed={true} />
-              <span className="text-[10px] sm:text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                Staff
+              <span className={`text-[10px] sm:text-xs font-black px-2 py-0.5 rounded-full ${
+                isAdmin ? 'text-amber-800 bg-amber-100 border border-amber-300' : 'text-slate-500 bg-slate-100'
+              }`}>
+                {isAdmin ? 'Admin' : 'Staff'}
               </span>
             </div>
           </div>

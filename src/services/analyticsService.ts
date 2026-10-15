@@ -1,13 +1,19 @@
 import { supabase } from '@/lib/supabase'
 
 export type DateRangePreset =
+  | 'thisWeek'
+  | 'last3Weeks'
+  | 'thisMonth'
+  | 'last3Months'
+  | 'thisYear'
+  | 'last3Years'
+  | 'custom'
+  // legacy fallbacks
   | 'today'
   | 'yesterday'
   | 'last7days'
   | 'last30days'
-  | 'thisMonth'
   | 'lastMonth'
-  | 'custom'
 
 export interface DateRange {
   preset: DateRangePreset
@@ -19,6 +25,35 @@ export interface DateRange {
 export interface TimeSeriesPoint {
   key: string // e.g. "14:00" or "Sep 07" or "Mon"
   timestamp: string
+  revenue: number
+  standardRevenue?: number
+  eventRevenue?: number
+  orderCount: number
+  customerCount: number | null
+  itemCount: number
+}
+
+export interface EventAnalyticsItem {
+  eventId: number
+  title: string
+  category: string
+  color: string | null
+  startAt: string
+  endAt: string
+  maxPax: number
+  generatesRevenue: boolean
+  revenueEarned: number
+  revenuePerGuest: number
+  performanceTier: 'good' | 'poor' | 'neutral'
+  performanceLabel: string
+}
+
+export interface MonthPerformancePoint {
+  monthIndex: number
+  monthName: string
+  shortName: string
+  year: number
+  key: string
   revenue: number
   orderCount: number
   customerCount: number | null
@@ -33,6 +68,15 @@ export interface DayOfWeekPoint extends TimeSeriesPoint {
 
 export interface DayOfWeekItemStats {
   dayName: string
+  shortName: string
+  topItems: ItemSalesStat[]
+  leastItems: ItemSalesStat[]
+  allItems: ItemSalesStat[]
+}
+
+export interface MonthItemStats {
+  monthIndex: number
+  monthName: string
   shortName: string
   topItems: ItemSalesStat[]
   leastItems: ItemSalesStat[]
@@ -65,6 +109,13 @@ export interface CategoryStat {
   itemsSold: number
   revenue: number
   percentageOfRevenue: number
+}
+
+export interface PresetPerformanceStat {
+  presetId: number
+  presetName: string
+  itemsSold: number
+  percentageOfSales: number
 }
 
 export interface StatusStat {
@@ -125,15 +176,32 @@ export interface AnalyticsSummary {
 
   // Aggregated series & breakdowns
   timeSeries: TimeSeriesPoint[]
+  dailySeries: TimeSeriesPoint[]
   dayOfWeekSeries: DayOfWeekPoint[]
+  monthPerformanceSeries: MonthPerformancePoint[]
   dayOfWeekItemStats: Record<string, DayOfWeekItemStats>
+  monthItemStats: Record<string, MonthItemStats>
   topItems: ItemSalesStat[]
   leastItems: ItemSalesStat[]
   allItems: ItemSalesStat[]
   categoryStats: CategoryStat[]
+  presetStats: PresetPerformanceStat[]
   statusBreakdown: StatusStat[]
   orderTypeBreakdown: BreakdownStat[] // DINE-IN vs TAKEOUT
-  channelBreakdown: BreakdownStat[]   // Cashier vs Customer
+  channelBreakdown: BreakdownStat[]   // Service vs Customer
+
+  // Order Source Comparison (Pie Chart: Service Staff vs Customer Interface)
+  orderSourceComparison: {
+    service: { count: number; percentage: number; revenue: number }
+    customer: { count: number; percentage: number; revenue: number }
+    totalCount: number
+    totalRevenue: number
+  }
+
+  // Events Analytics
+  eventsList: EventAnalyticsItem[]
+  totalEventRevenue: number
+  totalStandardRevenue: number
 
   // Range metadata
   dateRange: DateRange
@@ -184,6 +252,41 @@ export function getDateRangeFromPreset(preset: DateRangePreset, customStart?: Da
   const now = new Date()
 
   switch (preset) {
+    case 'thisWeek': {
+      const start = new Date(now)
+      const day = start.getDay() // 0 = Sunday, 1 = Monday, ...
+      start.setDate(start.getDate() - day)
+      start.setHours(0, 0, 0, 0)
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+      return { preset, startDate: start, endDate: end, label: 'This Week' }
+    }
+    case 'last3Weeks': {
+      const start = new Date(now)
+      start.setDate(start.getDate() - 20)
+      start.setHours(0, 0, 0, 0)
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+      return { preset, startDate: start, endDate: end, label: 'Last 3 Weeks' }
+    }
+    case 'thisMonth': {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+      return { preset, startDate: start, endDate: end, label: 'This Month' }
+    }
+    case 'last3Months': {
+      const start = new Date(now.getFullYear(), now.getMonth() - 2, 1, 0, 0, 0, 0)
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+      return { preset, startDate: start, endDate: end, label: 'Last 3 Months' }
+    }
+    case 'thisYear': {
+      const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0)
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+      return { preset, startDate: start, endDate: end, label: 'This Year' }
+    }
+    case 'last3Years': {
+      const start = new Date(now.getFullYear() - 2, 0, 1, 0, 0, 0, 0)
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+      return { preset, startDate: start, endDate: end, label: 'Last 3 Years' }
+    }
     case 'today': {
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
       const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
@@ -203,11 +306,6 @@ export function getDateRangeFromPreset(preset: DateRangePreset, customStart?: Da
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29, 0, 0, 0, 0)
       const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
       return { preset, startDate: start, endDate: end, label: 'Last 30 Days' }
-    }
-    case 'thisMonth': {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
-      return { preset, startDate: start, endDate: end, label: 'This Month' }
     }
     case 'lastMonth': {
       const start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0)
@@ -271,6 +369,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     .gte('TIME', toIsoDate(startDate))
     .lte('TIME', toIsoDate(endDate))
     .order('TIME', { ascending: true })
+    .limit(10000)
 
   if (ordersError) {
     console.error('[analyticsService] Error fetching restaurant orders:', ordersError)
@@ -303,6 +402,118 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
 
   if (ticketOrdersError) {
     console.warn('[analyticsService] Error fetching ticket orders:', ticketOrdersError)
+  }
+
+  // 1c. Fetch Business_Days and Restaurant_Events for Event analytics & Revenue separation
+  const { data: rawBusinessDays } = await supabase
+    .schema('staff')
+    .from('Business_Days')
+    .select('BUSINESS_DAY_ID, BUSINESS_DATE, TOTAL_REVENUE, EVENT_ID, MENU_PRESET_USED_ID')
+    .gte('BUSINESS_DATE', toIsoDate(startDate))
+    .lte('BUSINESS_DATE', toIsoDate(endDate))
+
+  let rawEventsList: any[] = []
+  try {
+    const { data: evs } = await supabase
+      .schema('events' as any)
+      .from('Restaurant_Events')
+      .select('*')
+      .is('DELETED_AT', null)
+      .order('START_AT', { ascending: false })
+    if (evs && evs.length > 0) rawEventsList = evs
+  } catch {
+    // fallback
+  }
+
+  if (rawEventsList.length === 0) {
+    try {
+      const { data: pubEvs } = await supabase
+        .from('Restaurant_Events')
+        .select('*')
+        .is('DELETED_AT', null)
+        .order('START_AT', { ascending: false })
+      if (pubEvs) rawEventsList = pubEvs
+    } catch {
+      // fallback
+    }
+  }
+
+  // Process Events Analytics with performance categorization
+  const eventsList: EventAnalyticsItem[] = rawEventsList.map((row: any) => {
+    const generatesRevenue = row['GENERATES_REVENUE'] !== false
+    let revenueEarned = Number(row['REVENUE_EARNED'] || 0)
+    if (revenueEarned === 0 && typeof row['NOTES'] === 'string') {
+      const matchRev = row['NOTES'].match(/\[REVENUE:(\d+(?:\.\d+)?)\]/)
+      if (matchRev) revenueEarned = Number(matchRev[1])
+    }
+    const maxPax = Math.max(Number(row['EXPECTED_ATTENDEES']) || 50, 1)
+    const revenuePerGuest = maxPax > 0 ? revenueEarned / maxPax : 0
+
+    let performanceTier: 'good' | 'poor' | 'neutral' = 'neutral'
+    let performanceLabel = 'Standard'
+
+    if (!generatesRevenue) {
+      performanceTier = 'neutral'
+      performanceLabel = 'Complimentary (Zero-Revenue)'
+    } else {
+      const isHighPax = maxPax >= 30
+      const isHighRevenue = revenueEarned >= 10000 || revenuePerGuest >= 300
+      const isLowRevenue = revenueEarned < 5000 || revenuePerGuest < 150
+
+      if (isHighPax && isLowRevenue) {
+        performanceTier = 'poor'
+        performanceLabel = 'Poor (High Guests, Low Revenue)'
+      } else if (!isHighPax && isHighRevenue) {
+        performanceTier = 'good'
+        performanceLabel = 'Good (VIP / High Margin)'
+      } else if (isHighPax && isHighRevenue) {
+        performanceTier = 'good'
+        performanceLabel = 'Good (High Scale & Revenue)'
+      } else if (revenueEarned > 0) {
+        performanceTier = 'neutral'
+        performanceLabel = 'Moderate / Balanced'
+      } else {
+        performanceTier = 'poor'
+        performanceLabel = 'No Revenue Recorded'
+      }
+    }
+
+    return {
+      eventId: Number(row['EVENT_ID']),
+      title: String(row['TITLE'] || 'Untitled Event'),
+      category: String(row['CATEGORY'] || 'Other'),
+      color: row['COLOR'] ? String(row['COLOR']) : null,
+      startAt: String(row['START_AT']),
+      endAt: String(row['END_AT']),
+      maxPax,
+      generatesRevenue,
+      revenueEarned,
+      revenuePerGuest: Math.round(revenuePerGuest * 100) / 100,
+      performanceTier,
+      performanceLabel,
+    }
+  })
+
+  // Set of business days tied to revenue-generating events
+  const presetIds = Array.from(new Set((rawBusinessDays ?? []).map((bd) => Number(bd['MENU_PRESET_USED_ID'])).filter(Boolean)))
+  let presetNames = new Map<number, string>()
+  if (presetIds.length > 0) {
+    const { data: presetRows } = await supabase
+      .schema('menu')
+      .from('Menu_Presets')
+      .select('PRESET_ID, PRESET_NAME')
+      .in('PRESET_ID', presetIds)
+    presetNames = new Map((presetRows ?? []).map((row) => [Number(row['PRESET_ID']), String(row['PRESET_NAME'] || `Preset ${row['PRESET_ID']}`)]))
+  }
+
+  const eventDayIds = new Set<number>()
+  for (const bd of rawBusinessDays ?? []) {
+    if (bd['EVENT_ID'] != null) {
+      const linkedEvent = eventsList.find((e) => e.eventId === Number(bd['EVENT_ID']))
+      if (linkedEvent && linkedEvent.generatesRevenue) {
+        eventDayIds.add(Number(bd['BUSINESS_DAY_ID']))
+      }
+    }
   }
 
   // Process ticket orders into normalized items and calculate untaxed order totals
@@ -500,30 +711,57 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
 
   // Fetch Order_Items only for legacy orders that do not have ORDER_ITEMS jsonb
   if (legacyCompletedOrderIds.length > 0) {
-    const { data: legacyItemsData, error: itemsError } = await supabase
-      .from('Order_Items')
-      .select(`
-        ORDER_ITEM_ID,
-        ORDER_ID,
-        ITEM_ID,
-        ORDER_ITEM_STATUS,
-        Menu_Items (
+    const CHUNK_SIZE = 200
+    for (let i = 0; i < legacyCompletedOrderIds.length; i += CHUNK_SIZE) {
+      const chunk = legacyCompletedOrderIds.slice(i, i + CHUNK_SIZE)
+      const { data: legacyItemsData, error: itemsError } = await supabase
+        .from('Order_Items')
+        .select(`
+          ORDER_ITEM_ID,
+          ORDER_ID,
           ITEM_ID,
-          ITEM_NAME,
-          ITEM_PRICE,
-          CATEGORY_ID,
-          Menu_Categories (
+          ORDER_ITEM_STATUS,
+          Menu_Items (
+            ITEM_ID,
+            ITEM_NAME,
+            ITEM_PRICE,
             CATEGORY_ID,
-            CATEGORY_NAME
+            Menu_Categories (
+              CATEGORY_ID,
+              CATEGORY_NAME
+            )
           )
-        )
-      `)
-      .in('ORDER_ID', legacyCompletedOrderIds)
+        `)
+        .in('ORDER_ID', chunk)
+        .limit(10000)
 
-    if (!itemsError && legacyItemsData) {
-      orderItemsData.push(...(legacyItemsData as Array<Record<string, unknown>>))
+      if (!itemsError && legacyItemsData) {
+        orderItemsData.push(...(legacyItemsData as Array<Record<string, unknown>>))
+      }
     }
   }
+
+  const presetByBusinessDay = new Map<number, number>()
+  for (const bd of rawBusinessDays ?? []) {
+    const businessDayId = Number(bd['BUSINESS_DAY_ID'])
+    const presetId = Number(bd['MENU_PRESET_USED_ID'])
+    if (businessDayId && presetId) presetByBusinessDay.set(businessDayId, presetId)
+  }
+  const presetSales = new Map<number, number>()
+  for (const oi of orderItemsData) {
+    const orderId = Number(oi['ORDER_ID'])
+    const order = completedOrdersList.find((entry) => Number(entry['ORDER_ID']) === orderId)
+    const presetId = order ? presetByBusinessDay.get(Number(order['BUSINESS_DAY_ID'])) : undefined
+    if (presetId) presetSales.set(presetId, (presetSales.get(presetId) || 0) + 1)
+  }
+  const presetStats: PresetPerformanceStat[] = Array.from(presetNames.entries())
+    .map(([presetId, presetName]) => ({
+      presetId,
+      presetName,
+      itemsSold: presetSales.get(presetId) || 0,
+      percentageOfSales: orderItemsData.length > 0 ? Math.round(((presetSales.get(presetId) || 0) / orderItemsData.length) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => b.itemsSold - a.itemsSold || a.presetName.localeCompare(b.presetName))
 
   // 3b. Fetch full menu catalog (items + groups) to track zero-sales and underperforming items
   const { data: catalogItemsData, error: catalogError } = await supabase
@@ -767,20 +1005,33 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     ticketCount: number
   }
 
+  const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ]
+  const MONTH_SHORTS = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ]
+
   const DAYS_OF_WEEK_CONFIG = [
+    { key: 'Sunday', dayIndex: 0, dayName: 'Sunday', shortName: 'Sun' },
     { key: 'Monday', dayIndex: 1, dayName: 'Monday', shortName: 'Mon' },
     { key: 'Tuesday', dayIndex: 2, dayName: 'Tuesday', shortName: 'Tue' },
     { key: 'Wednesday', dayIndex: 3, dayName: 'Wednesday', shortName: 'Wed' },
     { key: 'Thursday', dayIndex: 4, dayName: 'Thursday', shortName: 'Thu' },
     { key: 'Friday', dayIndex: 5, dayName: 'Friday', shortName: 'Fri' },
     { key: 'Saturday', dayIndex: 6, dayName: 'Saturday', shortName: 'Sat' },
-    { key: 'Sunday', dayIndex: 0, dayName: 'Sunday', shortName: 'Sun' },
   ]
 
   const itemAggMap = new Map<number, ItemAgg>()
   const dayItemAggMaps = new Map<string, Map<number, ItemAgg>>()
   for (const day of DAYS_OF_WEEK_CONFIG) {
     dayItemAggMaps.set(day.dayName, new Map<number, ItemAgg>())
+  }
+  const monthItemAggMaps = new Map<string, Map<number, ItemAgg>>()
+  for (const m of MONTH_NAMES) {
+    monthItemAggMaps.set(m, new Map<number, ItemAgg>())
   }
 
   // 5a. Seed with standalone catalog items
@@ -811,6 +1062,9 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       itemAggMap.set(id, { ...baseItem, orderIds: new Set<number>() })
       for (const day of DAYS_OF_WEEK_CONFIG) {
         dayItemAggMaps.get(day.dayName)!.set(id, { ...baseItem, orderIds: new Set<number>() })
+      }
+      for (const m of MONTH_NAMES) {
+        monthItemAggMaps.get(m)!.set(id, { ...baseItem, orderIds: new Set<number>() })
       }
     }
   }
@@ -844,6 +1098,9 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       itemAggMap.set(id, { ...baseItem, orderIds: new Set<number>() })
       for (const day of DAYS_OF_WEEK_CONFIG) {
         dayItemAggMaps.get(day.dayName)!.set(id, { ...baseItem, orderIds: new Set<number>() })
+      }
+      for (const m of MONTH_NAMES) {
+        monthItemAggMaps.get(m)!.set(id, { ...baseItem, orderIds: new Set<number>() })
       }
     }
   }
@@ -923,6 +1180,38 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       if (orderMeta.isCustomerApp) dayItem.customerAppCount += 1
       else dayItem.cashierCount += 1
     }
+
+    // Month item accumulation
+    const monthName = orderDate ? MONTH_NAMES[orderDate.getMonth()] : undefined
+    if (monthName && monthItemAggMaps.has(monthName)) {
+      const monthMap = monthItemAggMaps.get(monthName)!
+      let monthItem = monthMap.get(itemId)
+      if (!monthItem) {
+        monthItem = {
+          id: itemId,
+          name: existing.name,
+          category: existing.category,
+          unitPrice: existing.unitPrice,
+          isAvailable: true,
+          qty: 0,
+          revenue: 0,
+          orderIds: new Set<number>(),
+          dineInCount: 0,
+          takeoutCount: 0,
+          customerAppCount: 0,
+          cashierCount: 0,
+          ticketCount: 0,
+        }
+        monthMap.set(itemId, monthItem)
+      }
+      monthItem.qty += 1
+      monthItem.revenue += priceToAdd
+      if (orderId) monthItem.orderIds.add(orderId)
+      if (orderMeta.isDineIn) monthItem.dineInCount += 1
+      else monthItem.takeoutCount += 1
+      if (orderMeta.isCustomerApp) monthItem.customerAppCount += 1
+      else monthItem.cashierCount += 1
+    }
   }
 
   // 5d. Accumulate sold items and packages from completed ticket orders
@@ -984,6 +1273,34 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         dayItem.revenue += item.price
         if (t.ticketId) dayItem.orderIds.add(t.ticketId)
         dayItem.ticketCount += 1
+      }
+
+      const tMonthName = MONTH_NAMES[t.date.getMonth()]
+      const monthMap = monthItemAggMaps.get(tMonthName)
+      if (monthMap) {
+        let mItem = monthMap.get(aggId)
+        if (!mItem) {
+          mItem = {
+            id: aggId,
+            name: item.name,
+            category: item.categoryName,
+            unitPrice: item.price,
+            isAvailable: true,
+            qty: 0,
+            revenue: 0,
+            orderIds: new Set<number>(),
+            dineInCount: 0,
+            takeoutCount: 0,
+            customerAppCount: 0,
+            cashierCount: 0,
+            ticketCount: 0,
+          }
+          monthMap.set(aggId, mItem)
+        }
+        mItem.qty += 1
+        mItem.revenue += item.price
+        if (t.ticketId) mItem.orderIds.add(t.ticketId)
+        mItem.ticketCount += 1
       }
     }
   }
@@ -1104,28 +1421,49 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     percentage: completedCount > 0 ? Math.round((data.count / completedCount) * 1000) / 10 : 0,
   }))
 
-  // 9. Channel Breakdown (Cashier vs Customer from REQUESTED_FROM + Ticketing Interface)
-  const channelMap = new Map<string, { count: number; revenue: number }>()
+  // 9. Channel Breakdown (Service Staff vs Customer Interface from REQUESTED_FROM)
+  let serviceCount = 0
+  let serviceRevenue = 0
+  let customerCount = 0
+  let customerRevenue = 0
+
   for (const o of completedOrdersList) {
-    const rawChan = String(o['REQUESTED_FROM'] || 'Cashier').toLowerCase()
-    const channelLabel = rawChan.includes('customer') ? 'Customer App' : 'Cashier Station'
-    const cur = channelMap.get(channelLabel) ?? { count: 0, revenue: 0 }
-    cur.count += 1
-    cur.revenue += Number(o['TOTAL_BILL']) || 0
-    channelMap.set(channelLabel, cur)
+    const rawChan = String(o['REQUESTED_FROM'] || '').toLowerCase()
+    const bill = Number(o['TOTAL_BILL']) || 0
+    if (rawChan.includes('customer')) {
+      customerCount += 1
+      customerRevenue += bill
+    } else {
+      serviceCount += 1
+      serviceRevenue += bill
+    }
   }
 
-  if (completedTicketsList.length > 0) {
-    const tRev = completedTicketsList.reduce((sum, t) => sum + t.totalBill, 0)
-    channelMap.set('Ticketing Interface', { count: completedTicketsList.length, revenue: tRev })
+  const totalSourceOrders = serviceCount + customerCount
+  const servicePct = totalSourceOrders > 0 ? Math.round((serviceCount / totalSourceOrders) * 1000) / 10 : 0
+  const customerPct = totalSourceOrders > 0 ? Math.round((customerCount / totalSourceOrders) * 1000) / 10 : 0
+
+  const orderSourceComparison = {
+    service: { count: serviceCount, percentage: servicePct, revenue: serviceRevenue },
+    customer: { count: customerCount, percentage: customerPct, revenue: customerRevenue },
+    totalCount: totalSourceOrders,
+    totalRevenue: serviceRevenue + customerRevenue,
   }
 
-  const channelBreakdown: BreakdownStat[] = Array.from(channelMap.entries()).map(([label, data]) => ({
-    label,
-    count: data.count,
-    revenue: data.revenue,
-    percentage: completedCount > 0 ? Math.round((data.count / completedCount) * 1000) / 10 : 0,
-  }))
+  const channelBreakdown: BreakdownStat[] = [
+    {
+      label: 'Service Staff',
+      count: serviceCount,
+      revenue: serviceRevenue,
+      percentage: servicePct,
+    },
+    {
+      label: 'Customer Interface',
+      count: customerCount,
+      revenue: customerRevenue,
+      percentage: customerPct,
+    },
+  ]
 
   // 10. Time Series Aggregation (Hourly if single day, Daily if multi-day)
   const isSingleDay =
@@ -1143,6 +1481,8 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         key: hStr,
         timestamp: `${toIsoDate(startDate).slice(0, 10)}T${hStr}:00`,
         revenue: 0,
+        standardRevenue: 0,
+        eventRevenue: 0,
         orderCount: 0,
         customerCount: hasCustomerData ? 0 : null,
         itemCount: 0,
@@ -1155,8 +1495,27 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       const hStr = `${orderDate.getHours().toString().padStart(2, '0')}:00`
       const point = timeSeriesMap.get(hStr)
       if (point) {
-        point.revenue += Number(o['TOTAL_BILL']) || 0
+        const bill = Number(o['TOTAL_BILL']) || 0
+        point.revenue += bill
         point.orderCount += 1
+
+        const oDayId = Number(o['BUSINESS_DAY_ID'])
+        const matchingEvent = eventsList.find((ev) => {
+          if (!ev.startAt) return false
+          const s = new Date(ev.startAt)
+          const e = ev.endAt ? new Date(ev.endAt) : new Date(s.getTime() + 8 * 3600000)
+          return orderDate >= s && orderDate <= e
+        })
+        const isEventOrder = (oDayId && eventDayIds.has(oDayId)) || Boolean(matchingEvent)
+        if (isEventOrder) {
+          point.eventRevenue = (point.eventRevenue || 0) + bill
+          if (matchingEvent && !matchingEvent.revenueEarned) {
+            matchingEvent.revenueEarned = (matchingEvent.revenueEarned || 0) + bill
+          }
+        } else {
+          point.standardRevenue = (point.standardRevenue || 0) + bill
+        }
+
         if (hasCustomerData) {
           point.customerCount = (point.customerCount || 0) + (Number(o['GUEST_COUNT']) || 1)
         }
@@ -1181,6 +1540,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       const point = timeSeriesMap.get(hStr)
       if (point) {
         point.revenue += t.totalBill
+        point.standardRevenue = (point.standardRevenue || 0) + t.totalBill
         point.orderCount += 1
         if (hasCustomerData) {
           point.customerCount = (point.customerCount || 0) + 1
@@ -1189,36 +1549,77 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       }
     }
   } else {
-    // Generate day buckets across the range
+    const diffDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+    const isMonthlyGrouping = diffDays > 90
+
+    // Generate buckets across the range
     const cursor = new Date(startDate)
     cursor.setHours(0, 0, 0, 0)
+    if (isMonthlyGrouping) {
+      cursor.setDate(1)
+    }
     const endMidnight = new Date(endDate)
     endMidnight.setHours(23, 59, 59, 999)
 
+    const getKey = (d: Date) => {
+      if (isMonthlyGrouping) {
+        return d.toLocaleDateString('en-US', {
+          month: 'short',
+          year: diffDays > 365 ? '2-digit' : undefined,
+        })
+      }
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    }
+
     while (cursor <= endMidnight) {
-      const key = cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      const key = getKey(cursor)
       const isoStr = cursor.toISOString()
       if (!timeSeriesMap.has(key)) {
         timeSeriesMap.set(key, {
           key,
           timestamp: isoStr,
           revenue: 0,
+          standardRevenue: 0,
+          eventRevenue: 0,
           orderCount: 0,
           customerCount: hasCustomerData ? 0 : null,
           itemCount: 0,
         })
       }
-      cursor.setDate(cursor.getDate() + 1)
+      if (isMonthlyGrouping) {
+        cursor.setMonth(cursor.getMonth() + 1)
+      } else {
+        cursor.setDate(cursor.getDate() + 1)
+      }
     }
 
     for (const o of completedOrdersList) {
       const orderDate = parseDbTimestamp(o['TIME'])
       if (!orderDate) continue
-      const key = orderDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      const key = getKey(orderDate)
       const point = timeSeriesMap.get(key)
       if (point) {
-        point.revenue += Number(o['TOTAL_BILL']) || 0
+        const bill = Number(o['TOTAL_BILL']) || 0
+        point.revenue += bill
         point.orderCount += 1
+
+        const oDayId = Number(o['BUSINESS_DAY_ID'])
+        const matchingEvent = eventsList.find((ev) => {
+          if (!ev.startAt) return false
+          const s = new Date(ev.startAt)
+          const e = ev.endAt ? new Date(ev.endAt) : new Date(s.getTime() + 8 * 3600000)
+          return orderDate >= s && orderDate <= e
+        })
+        const isEventOrder = (oDayId && eventDayIds.has(oDayId)) || Boolean(matchingEvent)
+        if (isEventOrder) {
+          point.eventRevenue = (point.eventRevenue || 0) + bill
+          if (matchingEvent && !matchingEvent.revenueEarned) {
+            matchingEvent.revenueEarned = (matchingEvent.revenueEarned || 0) + bill
+          }
+        } else {
+          point.standardRevenue = (point.standardRevenue || 0) + bill
+        }
+
         if (hasCustomerData) {
           point.customerCount = (point.customerCount || 0) + (Number(o['GUEST_COUNT']) || 1)
         }
@@ -1243,6 +1644,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       const point = timeSeriesMap.get(key)
       if (point) {
         point.revenue += t.totalBill
+        point.standardRevenue = (point.standardRevenue || 0) + t.totalBill
         point.orderCount += 1
         if (hasCustomerData) {
           point.customerCount = (point.customerCount || 0) + 1
@@ -1254,6 +1656,14 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
 
   const timeSeries = Array.from(timeSeriesMap.values())
 
+  const itemsCountByOrderId = new Map<number, number>()
+  for (const oi of orderItemsData) {
+    const oId = Number(oi['ORDER_ID'])
+    if (oId) {
+      itemsCountByOrderId.set(oId, (itemsCountByOrderId.get(oId) || 0) + 1)
+    }
+  }
+
   // Build Day of Week Series (Monday to Sunday) across the selected range
   const dayOfWeekMap = new Map<string, DayOfWeekPoint>()
   for (const day of DAYS_OF_WEEK_CONFIG) {
@@ -1264,6 +1674,8 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       dayName: day.dayName,
       shortName: day.shortName,
       revenue: 0,
+      standardRevenue: 0,
+      eventRevenue: 0,
       orderCount: 0,
       customerCount: hasCustomerData ? 0 : null,
       itemCount: 0,
@@ -1276,8 +1688,17 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     const dayName = orderDate.toLocaleDateString('en-US', { weekday: 'long' })
     const point = dayOfWeekMap.get(dayName)
     if (point) {
-      point.revenue += Number(o['TOTAL_BILL']) || 0
+      const bill = Number(o['TOTAL_BILL']) || 0
+      point.revenue += bill
       point.orderCount += 1
+
+      const oDayId = Number(o['BUSINESS_DAY_ID'])
+      if (oDayId && eventDayIds.has(oDayId)) {
+        point.eventRevenue = (point.eventRevenue || 0) + bill
+      } else {
+        point.standardRevenue = (point.standardRevenue || 0) + bill
+      }
+
       if (hasCustomerData) {
         point.customerCount = (point.customerCount || 0) + (Number(o['GUEST_COUNT']) || 1)
       }
@@ -1291,7 +1712,7 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
         )
       } else {
         const oId = Number(o['ORDER_ID'])
-        orderItemCount = orderItemsData.filter((oi) => Number(oi['ORDER_ID']) === oId).length
+        orderItemCount = itemsCountByOrderId.get(oId) || 0
       }
       point.itemCount += orderItemCount
     }
@@ -1311,6 +1732,145 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
   }
 
   const dayOfWeekSeries: DayOfWeekPoint[] = DAYS_OF_WEEK_CONFIG.map((d) => dayOfWeekMap.get(d.dayName)!)
+
+  // Build Daily Series across the entire date range (every calendar day)
+  const dailyMap = new Map<string, TimeSeriesPoint>()
+  const dayCursor = new Date(startDate)
+  dayCursor.setHours(0, 0, 0, 0)
+  const dayEndLimit = new Date(endDate)
+  dayEndLimit.setHours(23, 59, 59, 999)
+
+  while (dayCursor <= dayEndLimit) {
+    const y = dayCursor.getFullYear()
+    const m = String(dayCursor.getMonth() + 1).padStart(2, '0')
+    const d = String(dayCursor.getDate()).padStart(2, '0')
+    const dateKey = `${y}-${m}-${d}`
+    dailyMap.set(dateKey, {
+      key: dateKey,
+      timestamp: dayCursor.toISOString(),
+      revenue: 0,
+      standardRevenue: 0,
+      eventRevenue: 0,
+      orderCount: 0,
+      customerCount: hasCustomerData ? 0 : null,
+      itemCount: 0,
+    })
+    dayCursor.setDate(dayCursor.getDate() + 1)
+  }
+
+  for (const o of completedOrdersList) {
+    const orderDate = parseDbTimestamp(o['TIME'])
+    if (!orderDate) continue
+    const y = orderDate.getFullYear()
+    const m = String(orderDate.getMonth() + 1).padStart(2, '0')
+    const d = String(orderDate.getDate()).padStart(2, '0')
+    const dateKey = `${y}-${m}-${d}`
+    const pt = dailyMap.get(dateKey)
+    if (pt) {
+      const bill = Number(o['TOTAL_BILL']) || 0
+      pt.revenue += bill
+      pt.orderCount += 1
+      const oDayId = Number(o['BUSINESS_DAY_ID'])
+      if (oDayId && eventDayIds.has(oDayId)) {
+        pt.eventRevenue = (pt.eventRevenue || 0) + bill
+      } else {
+        pt.standardRevenue = (pt.standardRevenue || 0) + bill
+      }
+      if (hasCustomerData) {
+        pt.customerCount = (pt.customerCount || 0) + (Number(o['GUEST_COUNT']) || 1)
+      }
+      let orderItemCount = 0
+      if (o['ITEM_COUNT'] != null && Number(o['ITEM_COUNT']) > 0) {
+        orderItemCount = Number(o['ITEM_COUNT'])
+      } else if (Array.isArray(o['ORDER_ITEMS']) && o['ORDER_ITEMS'].length > 0) {
+        orderItemCount = (o['ORDER_ITEMS'] as any[]).reduce(
+          (sum: number, it: any) => sum + (Number(it.quantity) || 1),
+          0,
+        )
+      } else {
+        const oId = Number(o['ORDER_ID'])
+        orderItemCount = itemsCountByOrderId.get(oId) || 0
+      }
+      pt.itemCount += orderItemCount
+    }
+  }
+
+  for (const t of completedTicketsList) {
+    const y = t.date.getFullYear()
+    const m = String(t.date.getMonth() + 1).padStart(2, '0')
+    const d = String(t.date.getDate()).padStart(2, '0')
+    const dateKey = `${y}-${m}-${d}`
+    const pt = dailyMap.get(dateKey)
+    if (pt) {
+      pt.revenue += t.totalBill
+      pt.standardRevenue = (pt.standardRevenue || 0) + t.totalBill
+      pt.orderCount += 1
+      if (hasCustomerData) {
+        pt.customerCount = (pt.customerCount || 0) + 1
+      }
+      pt.itemCount += t.items.length
+    }
+  }
+
+  const dailySeries = Array.from(dailyMap.values())
+
+  // Build Month Performance Series (January to December) across the entire date range
+  const monthPerformanceMap = new Map<number, MonthPerformancePoint>()
+  for (let m = 0; m < 12; m++) {
+    monthPerformanceMap.set(m, {
+      monthIndex: m,
+      monthName: MONTH_NAMES[m],
+      shortName: MONTH_SHORTS[m],
+      year: endDate.getFullYear(),
+      key: MONTH_SHORTS[m],
+      revenue: 0,
+      orderCount: 0,
+      customerCount: hasCustomerData ? 0 : null,
+      itemCount: 0,
+    })
+  }
+
+  for (const o of completedOrdersList) {
+    const od = parseDbTimestamp(o['TIME'])
+    if (!od) continue
+    const mIdx = od.getMonth()
+    const pt = monthPerformanceMap.get(mIdx)
+    if (pt) {
+      pt.revenue += Number(o['TOTAL_BILL']) || 0
+      pt.orderCount += 1
+      if (hasCustomerData) {
+        pt.customerCount = (pt.customerCount || 0) + (Number(o['GUEST_COUNT']) || 1)
+      }
+      let orderItemCount = 0
+      if (o['ITEM_COUNT'] != null && Number(o['ITEM_COUNT']) > 0) {
+        orderItemCount = Number(o['ITEM_COUNT'])
+      } else if (Array.isArray(o['ORDER_ITEMS']) && o['ORDER_ITEMS'].length > 0) {
+        orderItemCount = (o['ORDER_ITEMS'] as any[]).reduce(
+          (sum: number, it: any) => sum + (Number(it.quantity) || 1),
+          0,
+        )
+      } else {
+        const oId = Number(o['ORDER_ID'])
+        orderItemCount = itemsCountByOrderId.get(oId) || 0
+      }
+      pt.itemCount += orderItemCount
+    }
+  }
+
+  for (const t of completedTicketsList) {
+    const mIdx = t.date.getMonth()
+    const pt = monthPerformanceMap.get(mIdx)
+    if (pt) {
+      pt.revenue += t.totalBill
+      pt.orderCount += 1
+      if (hasCustomerData) {
+        pt.customerCount = (pt.customerCount || 0) + 1
+      }
+      pt.itemCount += t.items.length
+    }
+  }
+
+  const monthPerformanceSeries = Array.from(monthPerformanceMap.values())
 
   // Build Day of Week Item Stats
   const dayOfWeekItemStats: Record<string, DayOfWeekItemStats> = {}
@@ -1350,6 +1910,47 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
       topItems: topItemsForDay,
       leastItems: leastItemsForDay,
       allItems: allItemsForDay,
+    }
+  }
+
+  // Build Month Item Stats (January to December)
+  const monthItemStats: Record<string, MonthItemStats> = {}
+  for (let m = 0; m < 12; m++) {
+    const mName = MONTH_NAMES[m]
+    const mShort = MONTH_SHORTS[m]
+    const mMap = monthItemAggMaps.get(mName)
+
+    const monthRanked: ItemSalesStat[] = Array.from(mMap?.values() ?? []).map((val) => ({
+      itemId: val.id,
+      itemName: val.name,
+      categoryName: val.category,
+      unitPrice: val.unitPrice,
+      quantity: val.qty,
+      revenue: val.revenue,
+      percentageOfSales: 0,
+      percentageOfRevenue: 0,
+      orderCount: val.orderIds.size,
+      dineInCount: val.dineInCount,
+      takeoutCount: val.takeoutCount,
+      customerAppCount: val.customerAppCount,
+      cashierCount: val.cashierCount,
+      ticketCount: val.ticketCount,
+      isAvailable: val.isAvailable,
+    }))
+
+    const topItemsForMonth = monthRanked
+      .filter((i) => i.quantity > 0)
+      .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
+    const leastItemsForMonth = [...monthRanked].sort((a, b) => a.quantity - b.quantity || a.revenue - b.revenue)
+    const allItemsForMonth = [...monthRanked].sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
+
+    monthItemStats[mName] = {
+      monthIndex: m,
+      monthName: mName,
+      shortName: mShort,
+      topItems: topItemsForMonth,
+      leastItems: leastItemsForMonth,
+      allItems: allItemsForMonth,
     }
   }
 
@@ -1450,15 +2051,23 @@ export async function fetchAnalyticsData(range: DateRange): Promise<AnalyticsSum
     peakDay: peakDay ? `${peakDay} (${maxDayOrders} orders)` : null,
 
     timeSeries,
+    dailySeries,
     dayOfWeekSeries,
+    monthPerformanceSeries,
     dayOfWeekItemStats,
+    monthItemStats,
     topItems,
     leastItems,
     allItems,
     categoryStats,
+    presetStats,
     statusBreakdown,
     orderTypeBreakdown,
     channelBreakdown,
+    orderSourceComparison,
+    eventsList,
+    totalEventRevenue: eventsList.reduce((sum, e) => sum + e.revenueEarned, 0),
+    totalStandardRevenue: Math.max(totalRevenue - eventsList.reduce((sum, e) => sum + e.revenueEarned, 0), 0),
     dateRange: range,
   }
 }

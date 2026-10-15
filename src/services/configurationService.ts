@@ -162,3 +162,75 @@ export async function updateMorningMenuCutoff(timeStr: string): Promise<void> {
     // Non-blocking so the app functions seamlessly with the persisted setting
   }
 }
+
+// ─── Discount Rate Configurations (PWD & Senior Citizen) ─────────────────────────
+
+export interface DiscountConfigurations {
+  pwdPercent: number
+  seniorPercent: number
+}
+
+export const DEFAULT_DISCOUNT_CONFIG: DiscountConfigurations = {
+  pwdPercent: 20,
+  seniorPercent: 20,
+}
+
+export const LOCAL_STORAGE_DISCOUNT_CONFIG_KEY = 'monolith_discount_config'
+export const DISCOUNT_CONFIG_CHANGED_EVENT = 'monolith-discount-config-changed'
+
+/**
+ * Retrieves the currently configured PWD and Senior Citizen discount percentages.
+ * Defaults to 20% each (standard Philippine statutory rate).
+ */
+export function getDiscountPercentages(): DiscountConfigurations {
+  try {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem(LOCAL_STORAGE_DISCOUNT_CONFIG_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        return {
+          pwdPercent:
+            typeof parsed.pwdPercent === 'number' && parsed.pwdPercent >= 0
+              ? Math.min(100, parsed.pwdPercent)
+              : 20,
+          seniorPercent:
+            typeof parsed.seniorPercent === 'number' && parsed.seniorPercent >= 0
+              ? Math.min(100, parsed.seniorPercent)
+              : 20,
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return DEFAULT_DISCOUNT_CONFIG
+}
+
+/**
+ * Updates the configured discount percentages for PWD and Senior Citizen.
+ * Emits custom event and broadcast channel message so checkout screens sync live.
+ */
+export function updateDiscountPercentages(pwdPercent: number, seniorPercent: number): void {
+  const config: DiscountConfigurations = {
+    pwdPercent: Math.max(0, Math.min(100, Math.round(pwdPercent))),
+    seniorPercent: Math.max(0, Math.min(100, Math.round(seniorPercent))),
+  }
+
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(LOCAL_STORAGE_DISCOUNT_CONFIG_KEY, JSON.stringify(config))
+      window.dispatchEvent(
+        new CustomEvent(DISCOUNT_CONFIG_CHANGED_EVENT, { detail: config }),
+      )
+      try {
+        const bc = new BroadcastChannel('monolith_config_events')
+        bc.postMessage({ type: 'discount_config_changed', config })
+        bc.close()
+      } catch {
+        // ignore
+      }
+    }
+  } catch (err) {
+    console.warn('[configurationService] Error saving discount percentages:', err)
+  }
+}

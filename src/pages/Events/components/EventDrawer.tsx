@@ -561,6 +561,7 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
         location: 'Bill Shaw Restaurant',
         maxPax: '50',
         menuPresetId: null,
+        generatesRevenue: true,
       })
     } else if ((mode === 'edit' || mode === 'view') && event) {
       const pax = event.maxPax ?? event.expectedAttendees
@@ -580,6 +581,7 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
         presetId: event.presetId ?? null,
         menuPresetId: event.menuPresetId ?? null,
         isActive: event.isActive ?? false,
+        generatesRevenue: event.generatesRevenue !== false,
         contactName: event.contactName ?? '',
         contactPhone: event.contactPhone ?? '',
         contactEmail: event.contactEmail ?? '',
@@ -953,6 +955,11 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                         value={menuPresets.find((m) => m.PRESET_ID === event.menuPresetId)?.PRESET_NAME ?? 'Default'}
                       />
                     )}
+                    <DetailRow
+                      icon={<Check className="w-3.5 h-3.5" />}
+                      label="Revenue Generation"
+                      value={event.generatesRevenue !== false ? 'Revenue Generating' : 'Zero Revenue (₱0.00 / Complimentary)'}
+                    />
                   </div>
 
                   {/* Contact Info */}
@@ -1177,6 +1184,30 @@ export const EventDrawer: React.FC<EventDrawerProps> = ({
                       </div>
                     </div>
                   )}
+
+                  {/* Generates Revenue Checkbox */}
+                  <div className="flex items-center gap-3 p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 hover:bg-slate-100/70 transition-colors">
+                    <input
+                      id="event-generates-revenue"
+                      type="checkbox"
+                      checked={form.generatesRevenue}
+                      onChange={(e) => setField('generatesRevenue', e.target.checked)}
+                      className="w-4 h-4 rounded text-[#14274E] focus:ring-[#14274E] cursor-pointer"
+                    />
+                    <label htmlFor="event-generates-revenue" className="text-xs font-bold text-slate-800 cursor-pointer select-none flex-1">
+                      <div className="flex items-center justify-between">
+                        <span>Generate's Revenue?</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${form.generatesRevenue ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                          {form.generatesRevenue ? 'Revenue Generating' : 'Zero Revenue (₱0.00)'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 font-normal mt-0.5">
+                        {form.generatesRevenue
+                          ? 'Orders placed on this event will be billed normally and reported to event revenue.'
+                          : 'Starting a business day on this event will make all price calculations ₱0.00 (no revenue earned).'}
+                      </p>
+                    </label>
+                  </div>
 
                   {/* Contact Person Card */}
                   <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2.5">

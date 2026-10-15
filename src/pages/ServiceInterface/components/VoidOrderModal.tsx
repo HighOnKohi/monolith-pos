@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { X, ShieldAlert, Trash2, Lock, Loader2, AlertTriangle } from 'lucide-react'
+import { X, ShieldAlert, Trash2, KeyRound, Loader2, AlertTriangle } from 'lucide-react'
 import type { Order } from '@/types/order'
+import { validateAnyActiveStaffCode } from '@/services/staffCodeService'
 
 interface VoidOrderModalProps {
   isOpen: boolean
@@ -8,8 +9,9 @@ interface VoidOrderModalProps {
   tableLabel: string
   initialItemId?: number | null
   onClose: () => void
-  onConfirmVoid: (orderId: number, orderItemIds: number[], password?: string) => Promise<void>
+  onConfirmVoid: (orderId: number, orderItemIds: number[], staffCode?: string) => Promise<void>
   requirePassword?: boolean
+  requireStaffCode?: boolean
 }
 
 export function VoidOrderModal({
@@ -19,10 +21,10 @@ export function VoidOrderModal({
   initialItemId,
   onClose,
   onConfirmVoid,
-  requirePassword = true,
+  requireStaffCode = true,
 }: VoidOrderModalProps) {
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([])
-  const [password, setPassword] = useState('')
+  const [staffCode, setStaffCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -33,7 +35,7 @@ export function VoidOrderModal({
   useEffect(() => {
     if (!isOpen || !order) return
     setError(null)
-    setPassword('')
+    setStaffCode('')
     setSubmitting(false)
 
     if (initialItemId && activeItems.some((i) => i.orderItemId === initialItemId)) {
@@ -72,21 +74,44 @@ export function VoidOrderModal({
       setError('Please select at least one item to void.')
       return
     }
-    if (requirePassword && !password.trim()) {
-      setError('Admin password is required.')
-      return
-    }
 
-    setError(null)
-    setSubmitting(true)
+    if (requireStaffCode) {
+      const trimmed = staffCode.trim()
+      const numericCode = Number(trimmed)
+      if (!trimmed || isNaN(numericCode) || numericCode <= 0) {
+        setError('Please enter an existing 4-digit staff code.')
+        return
+      }
 
-    try {
-      await onConfirmVoid(order.orderId, selectedItemIds, requirePassword ? password.trim() : '')
-      onClose()
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to void selected items.')
-    } finally {
-      setSubmitting(false)
+      setSubmitting(true)
+      setError(null)
+
+      try {
+        const staffRes = await validateAnyActiveStaffCode(numericCode)
+        if (!staffRes.valid) {
+          setError(staffRes.error || 'Staff code was not found or is inactive.')
+          setSubmitting(false)
+          return
+        }
+
+        await onConfirmVoid(order.orderId, selectedItemIds, trimmed)
+        onClose()
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Failed to void selected items.')
+      } finally {
+        setSubmitting(false)
+      }
+    } else {
+      setSubmitting(true)
+      setError(null)
+      try {
+        await onConfirmVoid(order.orderId, selectedItemIds)
+        onClose()
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Failed to void selected items.')
+      } finally {
+        setSubmitting(false)
+      }
     }
   }
 
@@ -108,7 +133,7 @@ export function VoidOrderModal({
             <div>
               <h3 className="text-sm font-black text-[#14274E]">Void Order / Items</h3>
               <p className="text-[11px] font-bold text-slate-500">
-                {tableLabel} · Order #{order.orderId} {requirePassword ? '(Pending)' : '(Cashier Authorization)'}
+                {tableLabel} · Order #{order.orderId}
               </p>
             </div>
           </div>
@@ -128,9 +153,7 @@ export function VoidOrderModal({
             <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-900 text-xs font-medium leading-relaxed">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <span>
-                {requirePassword
-                  ? 'Voiding items requires administrator authorization. Select the item(s) to remove from this pending order.'
-                  : 'As cashier, select the item(s) to void and cancel from this table.'}
+                Voiding orders requires entering an existing staff code. Select the item(s) to remove from this order.
               </span>
             </div>
 
@@ -199,30 +222,30 @@ export function VoidOrderModal({
               )}
             </div>
 
-            {/* Admin Password Input (if required) */}
-            {requirePassword && (
+            {/* Staff Code Authorization Input */}
+            {requireStaffCode && (
               <div className="space-y-1.5 pt-1">
-                <label className="block text-xs font-bold text-slate-700">
-                  Administrator Password
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-700">
+                  Staff Code Authorization <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <KeyRound className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="password"
                     required
                     disabled={submitting}
-                    value={password}
+                    value={staffCode}
                     onChange={(e) => {
-                      setPassword(e.target.value)
+                      setStaffCode(e.target.value)
                       if (error) setError(null)
                     }}
-                    placeholder="Enter administrator password"
-                    autoComplete="current-password"
-                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 focus:border-[#14274E] focus:ring-2 focus:ring-[#14274E]/10 outline-hidden transition-all bg-white"
+                    placeholder="Enter existing staff code (e.g. 1024)"
+                    autoComplete="off"
+                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 focus:border-[#14274E] focus:ring-2 focus:ring-[#14274E]/10 outline-none transition-all bg-white font-mono font-black"
                   />
                 </div>
                 <p className="text-[10px] text-slate-400 font-semibold">
-                  Use your system administrator credentials to authorize this void action.
+                  Enter an existing active staff code to authorize voiding these order items.
                 </p>
               </div>
             )}
@@ -247,7 +270,7 @@ export function VoidOrderModal({
             </button>
             <button
               type="submit"
-              disabled={submitting || selectedItemIds.length === 0 || (requirePassword && !password.trim())}
+              disabled={submitting || selectedItemIds.length === 0 || (requireStaffCode && !staffCode.trim())}
               className="px-4 py-2 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
             >
               {submitting ? (

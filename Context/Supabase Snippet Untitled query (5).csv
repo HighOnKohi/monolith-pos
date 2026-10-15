@@ -1571,6 +1571,26 @@
   },
   {
     "schema_name": "staff",
+    "table_name": "Business_Days",
+    "column_name": "EVENT_ID",
+    "data_type": "bigint",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Business_Days_pkey: PRIMARY KEY (\"BUSINESS_DAY_ID\")",
+    "foreign_key_relation": "Business_Days_EVENT_ID_fkey: EVENT_ID -> events.Restaurant_Events.EVENT_ID",
+    "check_constraints": "business_days_status_check: CHECK ((\"STATUS\" = ANY (ARRAY['OPEN'::text, 'CLOSED'::text])))"
+  },
+  {
+    "schema_name": "staff",
+    "table_name": "Business_Days",
+    "column_name": "MENU_PRESET_USED_ID",
+    "data_type": "bigint",
+    "is_primary_key": "NO",
+    "primary_key_definition": "Business_Days_pkey: PRIMARY KEY (\"BUSINESS_DAY_ID\")",
+    "foreign_key_relation": "Business_Days_MENU_PRESET_USED_ID_fkey: MENU_PRESET_USED_ID -> menu.Menu_Presets.PRESET_ID",
+    "check_constraints": "business_days_status_check: CHECK ((\"STATUS\" = ANY (ARRAY['OPEN'::text, 'CLOSED'::text])))"
+  },
+  {
+    "schema_name": "staff",
     "table_name": "Cashier_Staff",
     "column_name": "CASHIER_ID",
     "data_type": "bigint",

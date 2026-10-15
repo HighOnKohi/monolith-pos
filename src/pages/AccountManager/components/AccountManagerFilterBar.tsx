@@ -120,6 +120,7 @@ export const AccountManagerFilterBar: React.FC<AccountManagerFilterBarProps> = (
             className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 hover:bg-white focus:outline-none focus:border-[#14274E] cursor-pointer"
           >
             <option value="ALL">All Roles</option>
+            <option value="MANAGER">{ROLE_DEFINITIONS.MANAGER.label}</option>
             <option value="DISPATCHER">{ROLE_DEFINITIONS.DISPATCHER.label}</option>
             <option value="SERVICE">{ROLE_DEFINITIONS.SERVICE.label}</option>
             <option value="CASHIER">{ROLE_DEFINITIONS.CASHIER.label}</option>

@@ -12,6 +12,7 @@ import {
   Pencil,
   Loader2,
   Grid,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
@@ -31,6 +32,7 @@ import { NewMenuItemModal, type NewMenuItemForm } from '@/components/menu/NewMen
 import { MenuItemDetailSidebar } from '@/components/menu/MenuItemDetailSidebar'
 import { ConfirmModal } from '@/components/menu/ConfirmModal'
 import { OrganizerShiftHeaderBar } from '@/components/organizer/OrganizerShiftHeaderBar'
+import { MenuCatalogImportModal } from '@/components/menu/MenuCatalogImportModal'
 
 export default function MenuCatalogPage() {
   const [items, setItems] = useState<MenuItem[]>([])
@@ -45,6 +47,7 @@ export default function MenuCatalogPage() {
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null)
   const [isCategoryModalOpen, setCategoryModalOpen] = useState(false)
   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
+  const [isImportModalOpen, setImportModalOpen] = useState(false)
   const [availabilitySavingId, setAvailabilitySavingId] = useState<string | null>(null)
 
   // Confirm modal state
@@ -346,8 +349,19 @@ export default function MenuCatalogPage() {
               />
             </div>
 
-            {/* Actions: Add Category & New Dish */}
+            {/* Actions: Import Items, Add Category & New Dish */}
             <div className="flex items-center gap-2.5 shrink-0">
+              {/* Import Items */}
+              <button
+                type="button"
+                onClick={() => setImportModalOpen(true)}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-[#14274E] text-xs font-bold rounded-xl flex items-center gap-1.5 shrink-0 transition-colors border border-slate-200 shadow-2xs cursor-pointer"
+                title="Bulk import dishes via Excel spreadsheet, download format template, or export Item IDs"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Import Items</span>
+              </button>
+
               {/* Add Category */}
               <button
                 type="button"
@@ -709,6 +723,15 @@ export default function MenuCatalogPage() {
           onCancel={() => setConfirmState(null)}
         />
       )}
+
+      {/* Bulk Import Dishes & Export Item IDs Modal */}
+      <MenuCatalogImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        items={items}
+        categories={categories}
+        onSuccess={() => void loadCatalog(true)}
+      />
     </div>
   )
 }

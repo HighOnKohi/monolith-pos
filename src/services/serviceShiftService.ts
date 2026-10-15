@@ -119,13 +119,13 @@ export async function validateServiceStaff(staffId: number): Promise<ServiceStaf
     }
   }
 
-  // Authorized roles for Service Interface: SERVICE only
+  // Authorized roles for Service Interface: SERVICE or MANAGER
   const normalizedRole = staff.staffRole?.toUpperCase() || ''
 
-  if (normalizedRole !== 'SERVICE') {
+  if (normalizedRole !== 'SERVICE' && normalizedRole !== 'MANAGER') {
     return {
       valid: false,
-      error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only SERVICE staff can operate the floor ordering terminal.`,
+      error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only SERVICE or MANAGER staff can operate the floor ordering terminal.`,
     }
   }
 

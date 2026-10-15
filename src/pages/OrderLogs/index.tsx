@@ -15,7 +15,6 @@ import { OrderLogsHeader } from './components/OrderLogsHeader'
 import { OrderLogsSummaryCards } from './components/OrderLogsSummaryCards'
 import { OrderLogsFilterBar, type DatePreset } from './components/OrderLogsFilterBar'
 import { OrderLogsTable } from './components/OrderLogsTable'
-import { OrderLogsPagination } from './components/OrderLogsPagination'
 import { OrderDetailsDrawer } from './components/OrderDetailsDrawer'
 import { exportOrderLogsToCsv } from './utils/orderLogsCsv'
 import { exportOrderLogsPdf } from './utils/orderLogsPdf'
@@ -36,7 +35,7 @@ export default function OrderLogsPage() {
 
   // ── Pagination & Sort State ──
   const [page, setPage] = useState<number>(1)
-  const [pageSize, setPageSize] = useState<number>(25)
+  const pageSize = 300
   const [sortBy, setSortBy] = useState<SortField>('TIME')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
 
@@ -380,23 +379,6 @@ export default function OrderLogsPage() {
           onSelectOrder={handleSelectOrder}
           selectedOrderId={selectedOrder?.orderId}
         />
-      )}
-
-      {/* Pagination Controls */}
-      {data && (
-        <div className="no-print">
-          <OrderLogsPagination
-            currentPage={data.currentPage}
-            totalPages={data.totalPages}
-            totalCount={data.totalCount}
-            pageSize={pageSize}
-            onPageChange={(p) => setPage(p)}
-            onPageSizeChange={(s) => {
-              setPageSize(s)
-              setPage(1)
-            }}
-          />
-        </div>
       )}
 
       {/* Slide-Over Order Details Drawer */}

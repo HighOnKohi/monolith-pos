@@ -65,19 +65,24 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         </div>
       </div>
 
-      {/* Item Title at bottom left */}
+      {/* Item Title and Price at bottom */}
       <div className="mt-auto pt-1 text-left">
         {item.isItemGroup && item.includedItemNames && item.includedItemNames.length > 0 && (
           <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500 line-clamp-1">
             {item.includedItemNames.join(' • ')}
           </p>
         )}
-        <h4
-          className="text-base font-extrabold text-[#14274E] line-clamp-2 leading-snug text-left"
-          title={item.name}
-        >
-          {item.name}
-        </h4>
+        <div className="flex items-start justify-between gap-1.5">
+          <h4
+            className="text-sm font-extrabold text-[#14274E] line-clamp-2 leading-snug text-left flex-1"
+            title={item.name}
+          >
+            {item.name}
+          </h4>
+          <span className="text-sm font-black text-[#14274E] shrink-0">
+            ₱{item.price.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
       </div>
     </div>
   )

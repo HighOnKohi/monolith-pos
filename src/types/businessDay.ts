@@ -11,6 +11,10 @@ export interface BusinessDay {
   totalTransactions: number
   totalRevenue: number
   totalCustomersServed: number
+  eventId?: number | null
+  menuPresetUsedId?: number | null
+  eventTitle?: string | null
+  generatesRevenue?: boolean
 }
 
 export interface CashierDailyPerformance {

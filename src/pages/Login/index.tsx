@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
+import { Clock } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -7,6 +8,7 @@ import { APP_NAME } from '@/config/app'
 import PageLoader from '@/components/common/PageLoader'
 
 export default function LoginPage() {
+  const navigate = useNavigate()
   const { user, loading, signIn } = useAuth()
 
   const [email, setEmail] = useState('')
@@ -82,11 +84,62 @@ export default function LoginPage() {
               size="md"
               loading={submitting}
               disabled={!email || !password}
-              className="w-full mt-2"
+              className="w-full mt-2 cursor-pointer"
             >
               Sign in
             </Button>
+
+            {/* Quick Demo Credentials */}
+            <div className="pt-2">
+              <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 mb-1.5">
+                <span>Select Account Role:</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('admin@monolith.com')
+                    setPassword('AdminPassword123!')
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[11px] font-bold transition-all text-center cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+                  title="Autofill Admin credentials (admin@monolith.com / AdminPassword123!)"
+                >
+                  <span className="text-amber-500">👑</span>
+                  <span>Admin</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('staff@monolith.com')
+                    setPassword('StaffPassword123!')
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[11px] font-bold transition-all text-center cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+                  title="Autofill Staff credentials (staff@monolith.com / StaffPassword123!)"
+                >
+                  <span>🧑‍🍳</span>
+                  <span>Staff</span>
+                </button>
+              </div>
+            </div>
           </form>
+
+          {/* ── Customer Advance Order Button ── */}
+          <div className="mt-5 pt-4 border-t border-slate-100">
+            <p className="text-[11px] text-slate-400 text-center mb-2 font-semibold">
+              Dining or Pre-Ordering at the Venue?
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/advance-order')}
+              className="w-full py-2.5 px-4 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100/80 text-blue-900 text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs active:scale-98"
+            >
+              <Clock className="w-4 h-4 text-blue-600" />
+              <span>Advance Order</span>
+            </button>
+            <p className="text-[10px] text-slate-400 text-center mt-1.5">
+              Requires venue location verification.
+            </p>
+          </div>
         </div>
 
         <p className="mt-6 text-center text-xs text-muted">

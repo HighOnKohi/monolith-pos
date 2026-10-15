@@ -88,9 +88,8 @@ export function CashierAuditLogsTab() {
   const [staffList, setStaffList] = useState<StaffCodeItem[]>([])
   const [loading, setLoading] = useState(true)
   const [totalCount, setTotalCount] = useState(0)
-  const [totalPages, setTotalPages] = useState(1)
   const [page, setPage] = useState(1)
-  const pageSize = 20
+  const pageSize = 300
 
   // Filters
   const [search, setSearch] = useState('')
@@ -137,7 +136,6 @@ export function CashierAuditLogsTab() {
       const res = await fetchCashierAuditLogs(filters, page, pageSize)
       setLogs(res.logs)
       setTotalCount(res.totalCount)
-      setTotalPages(res.totalPages)
     } catch (err) {
       console.error('[CashierAuditLogsTab] Failed to load audit logs:', err)
     } finally {
@@ -192,7 +190,7 @@ export function CashierAuditLogsTab() {
             <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-sm font-black text-[#14274E]">Staff Operational Audit Trail</h2>
+            <h2 className="text-sm font-black text-[#14274E]">Action History</h2>
             <p className="text-xs text-slate-400 font-semibold">
               Immutable historical attribution of shifts (Cashier &amp; Service), payments, table actions, and orders.
             </p>
@@ -323,10 +321,10 @@ export function CashierAuditLogsTab() {
 
       {/* Audit Logs Table */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
           <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-black uppercase tracking-wider text-[10px]">
+            <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200">
+              <tr className="text-slate-500 font-black uppercase tracking-wider text-[10px]">
                 <th className="py-3 px-4">Time &amp; Date</th>
                 <th className="py-3 px-4">Cashier Staff</th>
                 <th className="py-3 px-4">Shift ID</th>
@@ -444,33 +442,6 @@ export function CashierAuditLogsTab() {
             </tbody>
           </table>
         </div>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="px-4 py-3 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between text-xs">
-            <span className="text-slate-400 font-semibold">
-              Page {page} of {totalPages} ({totalCount} records)
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg font-bold text-slate-700 disabled:opacity-40 cursor-pointer"
-              >
-                Prev
-              </button>
-              <button
-                type="button"
-                disabled={page >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg font-bold text-slate-700 disabled:opacity-40 cursor-pointer"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Slide-over Inspection Drawer */}

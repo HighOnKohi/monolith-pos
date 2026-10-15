@@ -91,8 +91,31 @@ export async function getActiveBusinessDay(): Promise<BusinessDay | null> {
 
   if (day) {
     localStorage.setItem(LOCAL_STORAGE_ACTIVE_BUSINESS_DAY_ID, String(day.businessDayId))
+    if (day.eventId) {
+      localStorage.setItem('monolith_active_business_day_event_id', String(day.eventId))
+      try {
+        const { data: ev } = await supabase
+          .schema('events' as any)
+          .from('Restaurant_Events')
+          .select('TITLE, GENERATES_REVENUE')
+          .eq('EVENT_ID', day.eventId)
+          .maybeSingle()
+        if (ev) {
+          day.eventTitle = ev.TITLE
+          day.generatesRevenue = ev.GENERATES_REVENUE !== false
+          localStorage.setItem('monolith_active_event_generates_revenue', String(day.generatesRevenue))
+        }
+      } catch {
+        // keep existing if any
+      }
+    } else {
+      localStorage.removeItem('monolith_active_business_day_event_id')
+      localStorage.removeItem('monolith_active_event_generates_revenue')
+    }
   } else {
     localStorage.removeItem(LOCAL_STORAGE_ACTIVE_BUSINESS_DAY_ID)
+    localStorage.removeItem('monolith_active_business_day_event_id')
+    localStorage.removeItem('monolith_active_event_generates_revenue')
   }
 
   return day
@@ -271,6 +294,40 @@ export async function startBusinessDay(startedBy?: string): Promise<BusinessDay>
   const now = new Date()
   const localDateStr = now.toISOString().slice(0, 10) // YYYY-MM-DD
 
+  // Check if an event is currently happening at this date and time
+  let activeEvent: any = null
+  try {
+    const { fetchActiveEventAt } = await import('./eventService')
+    activeEvent = await fetchActiveEventAt(now)
+  } catch (evErr) {
+    console.warn('[businessDayService] Failed to check for active event:', evErr)
+  }
+
+  if (activeEvent) {
+    try {
+      const { activateEvent } = await import('./eventService')
+      await activateEvent(activeEvent)
+    } catch (evErr) {
+      console.warn('[businessDayService] Failed to activate event presets:', evErr)
+    }
+  }
+
+  let menuPresetUsedId = activeEvent?.menuPresetId ?? null
+  if (!menuPresetUsedId) {
+    try {
+      const { fetchMenuPresets } = await import('./menuService')
+      const menuPresets = await fetchMenuPresets()
+      menuPresetUsedId = menuPresets.find((preset) => preset.IS_DEFAULT)?.PRESET_ID ?? null
+    } catch (menuErr) {
+      console.warn('[businessDayService] Failed to resolve active menu preset:', menuErr)
+    }
+  }
+
+  const eventMaxPax = activeEvent?.maxPax ?? activeEvent?.expectedAttendees ?? 50
+  const initialCustomers = activeEvent ? eventMaxPax : 0
+  const eventId = activeEvent?.eventId ?? null
+  const eventGeneratesRevenue = activeEvent ? activeEvent.generatesRevenue !== false : true
+
   let newDay: BusinessDay = {
     businessDayId: Date.now(),
     businessDate: localDateStr,
@@ -281,44 +338,52 @@ export async function startBusinessDay(startedBy?: string): Promise<BusinessDay>
     endedBy: null,
     totalTransactions: 0,
     totalRevenue: 0,
-    totalCustomersServed: 0,
+    totalCustomersServed: initialCustomers,
+    eventId: eventId,
+    menuPresetUsedId,
+    eventTitle: activeEvent?.title ?? null,
+    generatesRevenue: eventGeneratesRevenue,
   }
 
-  // 1. Attempt Supabase RPC or direct insert
+  // 1. Attempt Supabase direct insert or RPC
   try {
-    const { data: rpcData, error: rpcError } = await supabase.rpc('start_business_day', {
-      p_started_by: startedBy || 'Administrator',
-      p_business_date: localDateStr,
-    })
+    const payload: Record<string, unknown> = {
+      BUSINESS_DATE: localDateStr,
+      STATUS: 'OPEN',
+      STARTED_AT: now.toISOString(),
+      STARTED_BY: startedBy || 'Administrator',
+      TOTAL_CUSTOMERS_SERVED: initialCustomers,
+      MENU_PRESET_USED_ID: menuPresetUsedId,
+    }
+    if (eventId) {
+      payload['EVENT_ID'] = eventId
+    }
 
-    if (!rpcError && rpcData) {
-      newDay = mapDbRowToBusinessDay(rpcData as Record<string, unknown>)
-    } else {
-      const payload = {
-        BUSINESS_DATE: localDateStr,
-        STATUS: 'OPEN',
-        STARTED_AT: now.toISOString(),
-        STARTED_BY: startedBy || 'Administrator',
+    const { data, error } = await supabase
+      .schema('staff')
+      .from('Business_Days')
+      .insert([payload])
+      .select('*')
+      .single()
+
+    if (!error && data) {
+      newDay = {
+        ...mapDbRowToBusinessDay(data),
+        eventTitle: activeEvent?.title ?? null,
+        generatesRevenue: eventGeneratesRevenue,
       }
-
-      const { data, error } = await supabase
-        .schema('staff')
+    } else {
+      const { data: pubData, error: pubError } = await supabase
         .from('Business_Days')
         .insert([payload])
         .select('*')
         .single()
 
-      if (!error && data) {
-        newDay = mapDbRowToBusinessDay(data)
-      } else {
-        const { data: pubData, error: pubError } = await supabase
-          .from('Business_Days')
-          .insert([payload])
-          .select('*')
-          .single()
-
-        if (!pubError && pubData) {
-          newDay = mapDbRowToBusinessDay(pubData)
+      if (!pubError && pubData) {
+        newDay = {
+          ...mapDbRowToBusinessDay(pubData),
+          eventTitle: activeEvent?.title ?? null,
+          generatesRevenue: eventGeneratesRevenue,
         }
       }
     }
@@ -328,6 +393,13 @@ export async function startBusinessDay(startedBy?: string): Promise<BusinessDay>
 
   // 2. Save locally
   localStorage.setItem(LOCAL_STORAGE_ACTIVE_BUSINESS_DAY_ID, String(newDay.businessDayId))
+  if (eventId) {
+    localStorage.setItem('monolith_active_business_day_event_id', String(eventId))
+    localStorage.setItem('monolith_active_event_generates_revenue', String(eventGeneratesRevenue))
+  } else {
+    localStorage.removeItem('monolith_active_business_day_event_id')
+    localStorage.removeItem('monolith_active_event_generates_revenue')
+  }
   saveFallbackBusinessDay(newDay)
 
   // 3. Log Audit Action
@@ -471,7 +543,19 @@ export async function endBusinessDay(endedBy?: string): Promise<BusinessDay> {
 
   // 2. Clear active storage and save to fallback
   localStorage.removeItem(LOCAL_STORAGE_ACTIVE_BUSINESS_DAY_ID)
+  localStorage.removeItem('monolith_active_business_day_event_id')
+  localStorage.removeItem('monolith_active_event_generates_revenue')
   saveFallbackBusinessDay(updatedDay)
+
+  // Report final revenue to tied event if business day was opened on an event
+  if (activeDay.eventId) {
+    try {
+      const { updateEventRevenue } = await import('./eventService')
+      await updateEventRevenue(activeDay.eventId, updatedDay.totalRevenue)
+    } catch (evErr) {
+      console.warn('[businessDayService] Failed to report final revenue to event:', evErr)
+    }
+  }
 
   // 3. Log Audit Action
   void logCashierAction({
@@ -533,6 +617,7 @@ export async function calculateDailySummary(businessDayId: number): Promise<Dail
       totalTransactions: 0,
       totalRevenue: 0,
       totalCustomersServed: 0,
+      menuPresetUsedId: null,
     }
   }
 
@@ -785,6 +870,13 @@ export async function fetchBusinessDayHistory(page = 1, pageSize = 20): Promise<
 // ─── Row Mapper ─────────────────────────────────────────────────────────────
 
 function mapDbRowToBusinessDay(row: Record<string, unknown>): BusinessDay {
+  const eventId =
+    row['EVENT_ID'] != null
+      ? Number(row['EVENT_ID'])
+      : row['EVENTS_ID'] != null
+        ? Number(row['EVENTS_ID'])
+        : null
+
   return {
     businessDayId: Number(row['BUSINESS_DAY_ID']),
     businessDate: String(row['BUSINESS_DATE'] || new Date().toISOString().slice(0, 10)),
@@ -796,5 +888,23 @@ function mapDbRowToBusinessDay(row: Record<string, unknown>): BusinessDay {
     totalTransactions: Number(row['TOTAL_TRANSACTIONS'] || 0),
     totalRevenue: Number(row['TOTAL_REVENUE'] || 0),
     totalCustomersServed: Number(row['TOTAL_CUSTOMERS_SERVED'] || 0),
+    eventId,
+    menuPresetUsedId:
+      row['MENU_PRESET_USED_ID'] != null ? Number(row['MENU_PRESET_USED_ID']) : null,
   }
+}
+
+/**
+ * Returns true if the currently active Business Day is tied to an event
+ * that has GENERATES_REVENUE set to false (complimentary event).
+ * When true, all prices and bill calculations should resolve to ₱0.00.
+ */
+export function isZeroRevenueEventDay(): boolean {
+  try {
+    const raw = localStorage.getItem('monolith_active_event_generates_revenue')
+    if (raw === 'false') return true
+  } catch {
+    // ignore
+  }
+  return false
 }

@@ -224,6 +224,8 @@ export default function EventsPage() {
       presetId: data.presetId ?? null,
       menuPresetId: data.menuPresetId ?? null,
       isActive: previous?.isActive ?? false,
+      generatesRevenue: data.generatesRevenue !== false,
+      revenueEarned: previous?.revenueEarned ?? 0,
       contactName: data.contactName.trim() || null,
       contactPhone: data.contactPhone.trim() || null,
       contactEmail: data.contactEmail.trim() || null,

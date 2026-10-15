@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { createBrowserRouter, Navigate, useLocation } from 'react-router-dom'
 import RootLayout from '@/layouts/RootLayout'
 import AppLayout from '@/layouts/AppLayout'
-import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
+import { ProtectedRoute, AdminProtectedRoute } from '@/components/auth/ProtectedRoute'
 import PageLoader from '@/components/common/PageLoader'
 import { VERCEL_APP_URL } from '@/components/table-qr/tableQrUtils'
 
@@ -236,11 +236,18 @@ export const router = createBrowserRouter([
           { path: 'tables', element: wrapOrganizer(TableManagerPage) },
           { path: 'catalog', element: wrapOrganizer(MenuCatalogPage) },
           { path: 'menu', element: wrapOrganizer(MenuManagerPage) },
-          { path: 'analytics', element: wrap(AnalyticsPage) },
           { path: 'events', element: wrapOrganizer(EventsPage) },
-          { path: 'accounts', element: wrap(AccountManagerPage) },
-          { path: 'order-logs', element: wrap(OrderLogsPage) },
-          { path: 'admin', element: wrap(AdminPanelPage) },
+
+          // ── Admin-Only routes ──
+          {
+            element: <AdminProtectedRoute />,
+            children: [
+              { path: 'analytics', element: wrap(AnalyticsPage) },
+              { path: 'accounts', element: wrap(AccountManagerPage) },
+              { path: 'order-logs', element: wrap(OrderLogsPage) },
+              { path: 'admin', element: wrap(AdminPanelPage) },
+            ],
+          },
         ],
       },
     ],

@@ -87,6 +87,8 @@ function mapRow(row: Record<string, any>): RestaurantEvent {
   }
 
   const pax = row['EXPECTED_ATTENDEES'] != null ? Number(row['EXPECTED_ATTENDEES']) : null
+  const generatesRevenue = row['GENERATES_REVENUE'] != null ? Boolean(row['GENERATES_REVENUE']) : true
+  const revenueEarned = row['REVENUE_EARNED'] != null ? Number(row['REVENUE_EARNED']) : 0
 
   return {
     eventId: row['EVENT_ID'],
@@ -103,6 +105,8 @@ function mapRow(row: Record<string, any>): RestaurantEvent {
     presetId,
     menuPresetId,
     isActive,
+    generatesRevenue,
+    revenueEarned,
     contactName: row['CONTACT_NAME'] ?? null,
     contactPhone: row['CONTACT_PHONE'] ?? null,
     contactEmail: row['CONTACT_EMAIL'] ?? null,
@@ -188,6 +192,7 @@ function filterEventsList(events: RestaurantEvent[], filters?: Partial<EventFilt
 export async function fetchEvents(filters?: Partial<EventFilterParams>): Promise<RestaurantEvent[]> {
   try {
     let query = supabase
+      .schema('events' as any)
       .from('Restaurant_Events')
       .select('*')
       .is('DELETED_AT', null)
@@ -199,7 +204,26 @@ export async function fetchEvents(filters?: Partial<EventFilterParams>): Promise
       if (end) query = query.lte('START_AT', end.toISOString())
     }
 
-    const { data, error } = await query
+    let { data, error } = await query
+
+    if (error) {
+      // Fallback to default public schema
+      let fallbackQuery = supabase
+        .from('Restaurant_Events')
+        .select('*')
+        .is('DELETED_AT', null)
+        .order('START_AT', { ascending: true })
+
+      if (filters?.dateFilter && filters.dateFilter !== 'all') {
+        const { start, end } = getDateFilterRange(filters.dateFilter)
+        if (start) fallbackQuery = fallbackQuery.gte('START_AT', start.toISOString())
+        if (end) fallbackQuery = fallbackQuery.lte('START_AT', end.toISOString())
+      }
+
+      const fbRes = await fallbackQuery
+      data = fbRes.data
+      error = fbRes.error
+    }
 
     if (error) {
       throw error
@@ -347,14 +371,22 @@ export async function createEvent(
     if (data.presetId != null) insertObj['PRESET_ID'] = data.presetId
     if (data.menuPresetId != null) insertObj['MENU_PRESET_ID'] = data.menuPresetId
     if (data.isActive != null) insertObj['IS_ACTIVE'] = data.isActive
+    insertObj['GENERATES_REVENUE'] = data.generatesRevenue !== false
+    insertObj['REVENUE_EARNED'] = 0
 
-    let res = await supabase.from('Restaurant_Events').insert(insertObj).select().single()
+    let res = await supabase.schema('events' as any).from('Restaurant_Events').insert(insertObj).select().single()
+
+    if (res.error) {
+      res = await supabase.from('Restaurant_Events').insert(insertObj).select().single()
+    }
 
     if (res.error) {
       // Remove optional columns if not present in schema
       delete insertObj['PRESET_ID']
       delete insertObj['MENU_PRESET_ID']
       delete insertObj['IS_ACTIVE']
+      delete insertObj['GENERATES_REVENUE']
+      delete insertObj['REVENUE_EARNED']
       res = await supabase.from('Restaurant_Events').insert(insertObj).select().single()
     }
 
@@ -402,6 +434,8 @@ export async function createEvent(
       presetId: data.presetId ?? null,
       menuPresetId: data.menuPresetId ?? null,
       isActive: Boolean(data.isActive),
+      generatesRevenue: data.generatesRevenue !== false,
+      revenueEarned: 0,
       contactName: data.contactName.trim() || null,
       contactPhone: data.contactPhone.trim() || null,
       contactEmail: data.contactEmail.trim() || null,
@@ -487,8 +521,10 @@ export async function updateEvent(
     if (data.presetId !== undefined) updateObj['PRESET_ID'] = data.presetId
     if (data.menuPresetId !== undefined) updateObj['MENU_PRESET_ID'] = data.menuPresetId
     if (data.isActive !== undefined) updateObj['IS_ACTIVE'] = data.isActive
+    if (data.generatesRevenue !== undefined) updateObj['GENERATES_REVENUE'] = data.generatesRevenue
 
     let res = await supabase
+      .schema('events' as any)
       .from('Restaurant_Events')
       .update(updateObj)
       .eq('EVENT_ID', eventId)
@@ -496,9 +532,19 @@ export async function updateEvent(
       .single()
 
     if (res.error) {
+      res = await supabase
+        .from('Restaurant_Events')
+        .update(updateObj)
+        .eq('EVENT_ID', eventId)
+        .select()
+        .single()
+    }
+
+    if (res.error) {
       delete updateObj['PRESET_ID']
       delete updateObj['MENU_PRESET_ID']
       delete updateObj['IS_ACTIVE']
+      delete updateObj['GENERATES_REVENUE']
       res = await supabase
         .from('Restaurant_Events')
         .update(updateObj)
@@ -1092,3 +1138,91 @@ export async function checkEventConflicts(
     return conflicts
   }
 }
+
+// ─── Revenue Reporting & Active Event Detection ──────────────────────────────
+
+export async function incrementEventRevenue(eventId: number, amount: number): Promise<void> {
+  if (!eventId || !amount || amount <= 0) return
+  try {
+    let { data: ev } = await supabase
+      .schema('events' as any)
+      .from('Restaurant_Events')
+      .select('REVENUE_EARNED')
+      .eq('EVENT_ID', eventId)
+      .maybeSingle()
+
+    if (!ev) {
+      const { data: pubEv } = await supabase
+        .from('Restaurant_Events')
+        .select('REVENUE_EARNED')
+        .eq('EVENT_ID', eventId)
+        .maybeSingle()
+      ev = pubEv
+    }
+
+    const current = Number(ev?.['REVENUE_EARNED'] || 0)
+    const updated = current + amount
+
+    await supabase
+      .schema('events' as any)
+      .from('Restaurant_Events')
+      .update({ REVENUE_EARNED: updated, UPDATED_AT: new Date().toISOString() })
+      .eq('EVENT_ID', eventId)
+  } catch (err) {
+    console.warn('[eventService] Failed to increment event revenue:', err)
+  }
+}
+
+export async function updateEventRevenue(eventId: number, totalRevenue: number): Promise<void> {
+  if (!eventId) return
+  try {
+    await supabase
+      .schema('events' as any)
+      .from('Restaurant_Events')
+      .update({ REVENUE_EARNED: totalRevenue, UPDATED_AT: new Date().toISOString() })
+      .eq('EVENT_ID', eventId)
+  } catch (err) {
+    console.warn('[eventService] Failed to update event revenue:', err)
+  }
+}
+
+export async function fetchActiveEventAt(date: Date = new Date()): Promise<RestaurantEvent | null> {
+  const iso = date.toISOString()
+  try {
+    const { data, error } = await supabase
+      .schema('events' as any)
+      .from('Restaurant_Events')
+      .select('*')
+      .is('DELETED_AT', null)
+      .eq('IS_CANCELLED', false)
+      .lte('START_AT', iso)
+      .gte('END_AT', iso)
+      .order('START_AT', { ascending: false })
+      .limit(1)
+
+    if (!error && data && data.length > 0) {
+      return mapRow(data[0])
+    }
+
+    const { data: pubData, error: pubErr } = await supabase
+      .from('Restaurant_Events')
+      .select('*')
+      .is('DELETED_AT', null)
+      .eq('IS_CANCELLED', false)
+      .lte('START_AT', iso)
+      .gte('END_AT', iso)
+      .order('START_AT', { ascending: false })
+      .limit(1)
+
+    if (!pubErr && pubData && pubData.length > 0) {
+      return mapRow(pubData[0])
+    }
+  } catch (err) {
+    console.warn('[eventService] Failed to fetch active event at date:', err)
+  }
+
+  const fallback = getFallbackEvents()
+  const matched = fallback.find((e) => !e.isCancelled && !e.deletedAt && e.startAt <= iso && e.endAt >= iso)
+  return matched ?? null
+}
+

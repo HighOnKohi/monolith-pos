@@ -68,6 +68,7 @@ export interface StaffCodeSummaryStats {
   cashierCount: number
   organizerCount: number
   receptionistCount: number
+  managerCount?: number
   ongoingShiftsCount: number
 }
 

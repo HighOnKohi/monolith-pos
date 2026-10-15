@@ -50,6 +50,8 @@ export interface RestaurantEvent {
   presetId?: number | null         // linked Table_Layout_Presets ID
   menuPresetId?: number | null     // linked Menu_Presets ID
   isActive?: boolean               // active event toggle status
+  generatesRevenue: boolean        // whether event generates revenue
+  revenueEarned: number            // recorded revenue earned on that event
   contactName?: string | null
   contactPhone?: string | null
   contactEmail?: string | null
@@ -80,6 +82,7 @@ export interface EventFormData {
   presetId?: number | null   // linked layout preset ID
   menuPresetId?: number | null // linked menu preset ID
   isActive?: boolean         // active status
+  generatesRevenue: boolean  // whether event generates revenue
   contactName: string
   contactPhone: string
   contactEmail: string
@@ -102,6 +105,7 @@ export const EVENT_FORM_DEFAULTS: EventFormData = {
   presetId: null,
   menuPresetId: null,
   isActive: false,
+  generatesRevenue: true,
   contactName: '',
   contactPhone: '',
   contactEmail: '',

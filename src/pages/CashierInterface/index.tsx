@@ -9,6 +9,7 @@ import {
   FileText,
   Printer,
   CheckCircle2,
+  X,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { fetchAllTables, fetchOrderSummariesForIds, type TableData } from '@/services/tableService'
@@ -40,6 +41,12 @@ import {
   removeAssistanceRequest,
 } from '@/services/assistanceService'
 import type { AssistanceRequest } from '@/types/assistance'
+import {
+  getDiscountPercentages,
+  DISCOUNT_CONFIG_CHANGED_EVENT,
+  type DiscountConfigurations,
+} from '@/services/configurationService'
+import { validateAnyActiveStaffCode } from '@/services/staffCodeService'
 
 function playNotificationChime() {
   try {
@@ -111,10 +118,47 @@ export default function CashierInterface() {
   // Sidebar tab state: 'pending' vs 'active'
   const [sidebarTab, setSidebarTab] = useState<'pending' | 'active'>('active')
 
+  // Dynamic Discount Configurations (PWD & Senior Citizen)
+  const [discountConfig, setDiscountConfig] = useState<DiscountConfigurations>(getDiscountPercentages())
+
+  useEffect(() => {
+    const handleDiscountChange = (e: Event) => {
+      const customEvent = e as CustomEvent<DiscountConfigurations>
+      if (customEvent.detail) {
+        setDiscountConfig(customEvent.detail)
+      } else {
+        setDiscountConfig(getDiscountPercentages())
+      }
+    }
+
+    window.addEventListener(DISCOUNT_CONFIG_CHANGED_EVENT, handleDiscountChange)
+
+    let bc: BroadcastChannel | null = null
+    try {
+      bc = new BroadcastChannel('monolith_config_events')
+      bc.onmessage = (msg) => {
+        if (msg.data?.type === 'discount_config_changed') {
+          setDiscountConfig(getDiscountPercentages())
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      window.removeEventListener(DISCOUNT_CONFIG_CHANGED_EVENT, handleDiscountChange)
+      if (bc) bc.close()
+    }
+  }, [])
+
   // In-line Void Orders mode
   const [isVoidMode, setIsVoidMode] = useState(false)
   const [selectedVoidItemIds, setSelectedVoidItemIds] = useState<Set<string>>(new Set())
   const [isVoiding, setIsVoiding] = useState(false)
+  const [isBatchVoidAuthOpen, setIsBatchVoidAuthOpen] = useState(false)
+  const [batchVoidAuthCode, setBatchVoidAuthCode] = useState('')
+  const [batchVoidAuthError, setBatchVoidAuthError] = useState<string | null>(null)
+  const [isAuthorizingBatchVoid, setIsAuthorizingBatchVoid] = useState(false)
 
   // Invoice & Receipt workflow state
   const [currentInvoice, setCurrentInvoice] = useState<OrderInvoiceRecord | null>(null)
@@ -458,10 +502,13 @@ export default function CashierInterface() {
     const p0 = item.price
     let rem = p0
 
-    // Step 1: PWD / SENIOR (20%)
+    // Step 1: PWD / SENIOR (Configurable %)
     let dPwdSenior = 0
-    if (discount?.pwd || discount?.senior) {
-      dPwdSenior = p0 * 0.20
+    if (discount?.pwd) {
+      dPwdSenior = p0 * (discountConfig.pwdPercent / 100)
+      rem = Math.max(0, rem - dPwdSenior)
+    } else if (discount?.senior) {
+      dPwdSenior = p0 * (discountConfig.seniorPercent / 100)
       rem = Math.max(0, rem - dPwdSenior)
     }
 
@@ -548,7 +595,7 @@ export default function CashierInterface() {
       vatAmount: vat,
       total: grandTotal,
     }
-  }, [activeItems, itemDiscounts])
+  }, [activeItems, itemDiscounts, discountConfig])
 
   async function selectTable(tableId: number) {
     setError('')
@@ -718,7 +765,7 @@ export default function CashierInterface() {
     })
   }
 
-  async function handleConfirmBatchVoid() {
+  async function handleConfirmBatchVoid(authorizedStaffCode?: number) {
     if (!selectedTableGroup || selectedVoidItemIds.size === 0) return
     setIsVoiding(true)
     setError('')
@@ -735,7 +782,7 @@ export default function CashierInterface() {
 
       const anchorId = selectedTableGroup.group.anchorTableId
       const memberIds = selectedTableGroup.group.memberTableIds
-      const cashierStaffId = staff?.codeId ? Number(staff.codeId) : undefined
+      const cashierStaffId = authorizedStaffCode ?? (staff?.codeId ? Number(staff.codeId) : undefined)
       const cashierShiftId = shift?.shiftId ? Number(shift.shiftId) : undefined
 
       let totalVoided = 0
@@ -743,7 +790,7 @@ export default function CashierInterface() {
         await voidOrderItems(orderId, itemIds, anchorId, memberIds, {
           staffId: cashierStaffId,
           shiftId: cashierShiftId,
-          reason: `Cashier voided ${itemIds.length} item(s) for ${selectedTableGroup.group.displayLabel}`,
+          reason: `Staff #${cashierStaffId || ''} voided ${itemIds.length} item(s) for ${selectedTableGroup.group.displayLabel}`,
         })
         totalVoided += itemIds.length
       }
@@ -751,6 +798,8 @@ export default function CashierInterface() {
       showToast(`Successfully voided ${totalVoided} item(s).`, 'success')
       setIsVoidMode(false)
       setSelectedVoidItemIds(new Set())
+      setIsBatchVoidAuthOpen(false)
+      setBatchVoidAuthCode('')
 
       const updated = await fetchOrdersByTable(anchorId, ALL_ACTIVE_ORDER_STATUSES, memberIds)
       setOrders(updated)
@@ -764,15 +813,44 @@ export default function CashierInterface() {
     }
   }
 
+  const handleExecuteBatchVoidWithAuth = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const num = Number(batchVoidAuthCode.trim())
+    if (!batchVoidAuthCode.trim() || isNaN(num) || num <= 0) {
+      setBatchVoidAuthError('Please enter a valid staff code.')
+      return
+    }
+
+    setIsAuthorizingBatchVoid(true)
+    setBatchVoidAuthError(null)
+
+    try {
+      const authRes = await validateAnyActiveStaffCode(num)
+      if (!authRes.valid) {
+        setBatchVoidAuthError(authRes.error || 'Invalid or inactive staff code.')
+        setIsAuthorizingBatchVoid(false)
+        return
+      }
+
+      await handleConfirmBatchVoid(num)
+    } catch (err) {
+      setBatchVoidAuthError(err instanceof Error ? err.message : 'Failed to authorize void.')
+    } finally {
+      setIsAuthorizingBatchVoid(false)
+    }
+  }
+
   const handleOpenVoidModal = (order: Order, initialItemId?: number) => {
     setVoidTargetOrder(order)
     setVoidInitialItemId(initialItemId ?? null)
     setIsVoidModalOpen(true)
   }
 
-  // Cashier directly authorizes and confirms item/order voiding
-  const handleConfirmVoid = async (orderId: number, orderItemIds: number[]) => {
+  // Cashier authorizes and confirms item/order voiding
+  const handleConfirmVoid = async (orderId: number, orderItemIds: number[], staffCode?: string) => {
     if (!selectedTableGroup) return
+
+    const numericStaffId = staffCode ? Number(staffCode) : (staff?.codeId ? Number(staff.codeId) : undefined)
 
     await voidOrderItems(
       orderId,
@@ -780,9 +858,9 @@ export default function CashierInterface() {
       selectedTableGroup.group.anchorTableId,
       selectedTableGroup.group.memberTableIds,
       {
-        staffId: staff?.codeId ? Number(staff.codeId) : undefined,
+        staffId: numericStaffId,
         shiftId: shift?.shiftId ? Number(shift.shiftId) : undefined,
-        reason: `Cashier voided ${orderItemIds.length} item(s) for ${selectedTableGroup.group.displayLabel}`,
+        reason: `Staff #${numericStaffId || ''} voided ${orderItemIds.length} item(s) for ${selectedTableGroup.group.displayLabel}`,
       },
     )
 
@@ -1489,7 +1567,7 @@ export default function CashierInterface() {
                               <span>Name</span>
                             </div>
                             <div className="ci-col-pwd">
-                              <span>PWD</span>
+                              <span>PWD ({discountConfig.pwdPercent}%)</span>
                               <input
                                 type="radio"
                                 name="apply-all-discount"
@@ -1509,7 +1587,7 @@ export default function CashierInterface() {
                               />
                             </div>
                             <div className="ci-col-senior">
-                              <span>Senior</span>
+                              <span>Senior ({discountConfig.seniorPercent}%)</span>
                               <input
                                 type="radio"
                                 name="apply-all-discount"
@@ -2030,7 +2108,11 @@ export default function CashierInterface() {
                   <button
                     type="button"
                     disabled={selectedVoidItemIds.size === 0 || isVoiding}
-                    onClick={() => void handleConfirmBatchVoid()}
+                    onClick={() => {
+                      setBatchVoidAuthCode('')
+                      setBatchVoidAuthError(null)
+                      setIsBatchVoidAuthOpen(true)
+                    }}
                     className="w-full py-2.5 px-3 rounded-2xl text-xs font-black bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                   >
                     <Trash2 className="w-4 h-4 shrink-0" />
@@ -2047,13 +2129,13 @@ export default function CashierInterface() {
                 </div>
                 {pwdCount > 0 && (
                   <div className="ci-total-row ci-discount-total">
-                    <span>PWD Discounts ({pwdCount})</span>
+                    <span>PWD Discounts ({discountConfig.pwdPercent}%) ({pwdCount})</span>
                     <span>-{money(pwdTotal)}</span>
                   </div>
                 )}
                 {seniorCount > 0 && (
                   <div className="ci-total-row ci-discount-total">
-                    <span>Senior Discounts ({seniorCount})</span>
+                    <span>Senior Discounts ({discountConfig.seniorPercent}%) ({seniorCount})</span>
                     <span>-{money(seniorTotal)}</span>
                   </div>
                 )}
@@ -2186,13 +2268,13 @@ export default function CashierInterface() {
         <span className="sr-only">Payment requested via {activeBillRequest.paymentMethod}</span>
       )}
 
-      {/* Cashier-Authorized Void Order / Items Modal (Direct authorization) */}
+      {/* Cashier-Authorized Void Order / Items Modal */}
       <VoidOrderModal
         isOpen={isVoidModalOpen}
         order={voidTargetOrder}
         tableLabel={selectedTableGroup?.group.displayLabel || 'Table'}
         initialItemId={voidInitialItemId}
-        requirePassword={false}
+        requireStaffCode={true}
         onClose={() => {
           setIsVoidModalOpen(false)
           setVoidTargetOrder(null)
@@ -2200,6 +2282,86 @@ export default function CashierInterface() {
         }}
         onConfirmVoid={handleConfirmVoid}
       />
+
+      {/* Batch Void Staff Code Authorization Modal */}
+      {isBatchVoidAuthOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() => !isAuthorizingBatchVoid && setIsBatchVoidAuthOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-rose-50/70">
+              <div className="flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <h3 className="text-sm font-black text-[#14274E]">
+                  Authorize Void ({selectedVoidItemIds.size} Items)
+                </h3>
+              </div>
+              <button
+                type="button"
+                disabled={isAuthorizingBatchVoid}
+                onClick={() => setIsBatchVoidAuthOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteBatchVoidWithAuth} className="p-5 space-y-4">
+              <p className="text-xs text-slate-500 font-medium">
+                Enter an existing active staff code to authorize voiding{' '}
+                <strong>{selectedVoidItemIds.size}</strong> selected item(s).
+              </p>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-black uppercase tracking-wider text-slate-700">
+                  Staff Code Authorization <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="password"
+                  required
+                  autoFocus
+                  disabled={isAuthorizingBatchVoid}
+                  value={batchVoidAuthCode}
+                  onChange={(e) => {
+                    setBatchVoidAuthCode(e.target.value)
+                    if (batchVoidAuthError) setBatchVoidAuthError(null)
+                  }}
+                  placeholder="Enter 4-digit staff code"
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:border-[#14274E] focus:ring-2 focus:ring-[#14274E]/10 outline-none font-mono font-black"
+                />
+              </div>
+
+              {batchVoidAuthError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold">
+                  {batchVoidAuthError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isAuthorizingBatchVoid}
+                  onClick={() => setIsBatchVoidAuthOpen(false)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAuthorizingBatchVoid || !batchVoidAuthCode.trim()}
+                  className="px-4 py-2 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-xs"
+                >
+                  {isAuthorizingBatchVoid ? 'Verifying...' : 'Authorize & Void'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Cashier Traditional Invoice Preview & Confirmation Modal */}
       {selectedTableGroup && (

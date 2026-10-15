@@ -7,6 +7,7 @@ import { logCashierAction } from '@/services/cashierAuditService'
 import { broadcastMenuItemStatus } from '@/hooks/useRealtimeMenu'
 import { fetchTablesByIds } from '@/services/tableService'
 import { recordServiceOrderPunched } from '@/services/serviceShiftService'
+import { isZeroRevenueEventDay } from '@/services/businessDayService'
 
 const DINING_TYPE_MAP: Record<DiningType, string> = {
   'dine-in': 'DINE-IN',
@@ -121,12 +122,15 @@ export async function createOrder(
       null)
   const activeStaffId = rawStaffId && rawStaffId < 1000000000000 ? rawStaffId : null
 
+  const isZeroRev = isZeroRevenueEventDay()
+  const effectiveTotal = isZeroRev ? 0 : total
+
   // 1. Insert the order
   const payload: Record<string, unknown> = {
     TABLE_ID: tableId,
     ORDER_STATUS: 'REQUESTED',
     ORDER_TYPE: DINING_TYPE_MAP[diningType],
-    TOTAL_BILL: total,
+    TOTAL_BILL: effectiveTotal,
     REQUESTED_FROM: validRequestedFrom,
     SERVER_NOTE: serverNote?.trim() || null,
     GUEST_COUNT: partySize,
@@ -158,7 +162,7 @@ export async function createOrder(
         TABLE_ID: tableId,
         ORDER_STATUS: 'REQUESTED',
         ORDER_TYPE: DINING_TYPE_MAP[diningType],
-        TOTAL_BILL: total,
+        TOTAL_BILL: effectiveTotal,
         REQUESTED_FROM: validRequestedFrom,
         SERVER_NOTE: serverNote?.trim() || null,
         GUEST_COUNT: partySize,
@@ -1039,9 +1043,12 @@ export async function settleTableOrders(
     const rawList = itemsByOrder.get(oId) || []
     const compressed = compressItems(rawList)
     const totalItemCount = rawList.length
-    const subtotal = Number(o['SUBTOTAL_BILL']) || Number(o['TOTAL_BILL']) || 0
-    const total = Number(o['TOTAL_BILL']) || subtotal
-    const discount = Math.max(subtotal - total, 0)
+    const isZeroRev = isZeroRevenueEventDay()
+    const rawSubtotal = Number(o['SUBTOTAL_BILL']) || Number(o['TOTAL_BILL']) || 0
+    const rawTotal = Number(o['TOTAL_BILL']) || rawSubtotal
+    const subtotal = isZeroRev ? 0 : rawSubtotal
+    const total = isZeroRev ? 0 : rawTotal
+    const discount = isZeroRev ? 0 : Math.max(rawSubtotal - rawTotal, 0)
 
     const rawOrderDay = Number(o['BUSINESS_DAY_ID']) || null
     const safeOrderDay = rawOrderDay && rawOrderDay < 1000000000000 ? rawOrderDay : attrDayId
@@ -1063,7 +1070,7 @@ export async function settleTableOrders(
       FROM_CASHIER_ID: attrStaffId ?? safeOrderStaff,
       TABLE_NUM: safeTableNum,
       ORDER_TYPE: String(o['ORDER_TYPE'] || 'DINE-IN'),
-      REQUESTED_FROM: String(o['REQUESTED_FROM'] || 'Cashier'),
+      REQUESTED_FROM: String(o['REQUESTED_FROM'] || '').toLowerCase() === 'customer' ? 'Customer' : 'Service',
       GUEST_COUNT: Math.max(Number(o['GUEST_COUNT']) || tableGuestMap.get(tId) || 1, 1),
       ITEM_COUNT: totalItemCount,
       SUBTOTAL_BILL: subtotal,
@@ -1090,6 +1097,21 @@ export async function settleTableOrders(
         .insert(completedRows)
       if (histErr) {
         console.warn('[orderService] Order_History archive warning:', histErr)
+      } else {
+        // Report settled revenue to tied event if business day is linked to an event
+        const totalSettledRevenue = completedRows.reduce((sum, r) => sum + (Number(r.TOTAL_BILL) || 0), 0)
+        if (totalSettledRevenue > 0) {
+          try {
+            const { getActiveBusinessDay } = await import('./businessDayService')
+            const activeDay = await getActiveBusinessDay()
+            if (activeDay?.eventId) {
+              const { incrementEventRevenue } = await import('./eventService')
+              await incrementEventRevenue(activeDay.eventId, totalSettledRevenue)
+            }
+          } catch (evSyncErr) {
+            console.warn('[orderService] Failed to report revenue to event:', evSyncErr)
+          }
+        }
       }
     } catch (insertEx) {
       console.warn('[orderService] Archive exception:', insertEx)

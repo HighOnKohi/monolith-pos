@@ -137,13 +137,13 @@ export async function validateCashierStaff(staffId: number): Promise<CashierStaf
   }
 
   // 3. Check Role Authorization
-  // Authorized roles for Cashier interface: CASHIER only
+  // Authorized roles for Cashier interface: CASHIER or MANAGER
   const normalizedRole = staff.staffRole?.toUpperCase() || ''
 
-  if (normalizedRole !== 'CASHIER') {
+  if (normalizedRole !== 'CASHIER' && normalizedRole !== 'MANAGER') {
     return {
       valid: false,
-      error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only CASHIER staff can operate the checkout terminal.`,
+      error: `Staff #${staff.codeId} (${staff.staffName}) is assigned as ${staff.staffRole}. Only CASHIER or MANAGER staff can operate the checkout terminal.`,
     }
   }
 

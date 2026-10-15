@@ -14,6 +14,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { MenuItem } from '@/types/menu'
 import type { CartItem, DiningType } from '@/types/cart'
+import { isZeroRevenueEventDay } from '@/services/businessDayService'
 
 const TAX_RATE = 0.05
 
@@ -396,13 +397,13 @@ export function useSharedCart(tableId: number | null): UseSharedCartReturn {
   // ── Derived state ─────────────────────────────────────────────────────────────
 
   const { items } = cartState
-
+  const isZeroRev = isZeroRevenueEventDay()
   const total = useMemo(
-    () => items.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0),
-    [items],
+    () => isZeroRev ? 0 : items.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0),
+    [items, isZeroRev],
   )
-  const subtotal = useMemo(() => total / (1 + TAX_RATE), [total])
-  const tax = useMemo(() => total - subtotal, [total, subtotal])
+  const subtotal = useMemo(() => isZeroRev ? 0 : total / (1 + TAX_RATE), [total, isZeroRev])
+  const tax = useMemo(() => isZeroRev ? 0 : total - subtotal, [total, subtotal, isZeroRev])
   const itemCount = useMemo(
     () => items.reduce((sum, ci) => sum + ci.quantity, 0),
     [items],

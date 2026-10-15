@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import { Store, ShieldCheck, Clock } from 'lucide-react'
+import { Store, Clock } from 'lucide-react'
 import { BusinessDayManagementTab } from '@/pages/OrderLogs/components/BusinessDayManagementTab'
-import { CashierAuditLogsTab } from '@/pages/OrderLogs/components/CashierAuditLogsTab'
 import { MenuScheduleConfigTab } from '@/pages/AdminPanel/components/MenuScheduleConfigTab'
 
 export default function AdminPanelPage() {
-  const [activeTab, setActiveTab] = useState<'business-day' | 'audit' | 'schedule-config'>('business-day')
+  const [activeTab, setActiveTab] = useState<'business-day' | 'configurations'>('business-day')
 
   return (
     <div className="order-logs-page-container staff-page space-y-4 pb-12">
@@ -16,7 +15,7 @@ export default function AdminPanelPage() {
             Admin Panel
           </h1>
           <p className="text-xs text-slate-500 font-medium mt-0.5">
-            Manage business day lifecycles, configure scheduled menu cutoff times, and inspect staff operational audit trails.
+            Manage business days and configure store settings &amp; discounts.
           </p>
         </div>
 
@@ -32,33 +31,20 @@ export default function AdminPanelPage() {
             }`}
           >
             <Store className="w-4 h-4 text-emerald-600" />
-            <span>Business Day &amp; Daily Summary</span>
+            <span>Business Days</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setActiveTab('schedule-config')}
+            onClick={() => setActiveTab('configurations')}
             className={`px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
-              activeTab === 'schedule-config'
+              activeTab === 'configurations'
                 ? 'bg-white text-[#14274E] shadow-xs'
                 : 'text-slate-500 hover:text-slate-800'
             }`}
           >
             <Clock className="w-4 h-4 text-amber-500" />
-            <span>Morning Menu Cutoff</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('audit')}
-            className={`px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
-              activeTab === 'audit'
-                ? 'bg-white text-[#14274E] shadow-xs'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4 text-[#14274E]" />
-            <span>Staff Operational Audit</span>
+            <span>Configurations</span>
           </button>
         </div>
       </div>
@@ -66,10 +52,8 @@ export default function AdminPanelPage() {
       {/* ── Tab Content ── */}
       {activeTab === 'business-day' ? (
         <BusinessDayManagementTab />
-      ) : activeTab === 'schedule-config' ? (
-        <MenuScheduleConfigTab />
       ) : (
-        <CashierAuditLogsTab />
+        <MenuScheduleConfigTab />
       )}
     </div>
   )
